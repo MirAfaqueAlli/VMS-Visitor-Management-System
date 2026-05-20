@@ -174,5 +174,3 @@ Contributions to enhance VMS are welcome!
 
 ---
 
-## 📄 License
-Distributed under the ISC License. See `backend/package.json` for details.
