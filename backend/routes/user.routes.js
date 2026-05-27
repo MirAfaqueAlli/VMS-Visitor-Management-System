@@ -4,12 +4,12 @@
 const express = require('express');
 const router  = express.Router();
 const ctrl    = require('../controllers/user.controller');
-const { protect }   = require('../middlewares/auth.middleware');
+const { protect, optionalProtect } = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
 
 // Public-ish: list hosts (employees) by department — used by visitor public form
 // Supports ?unit_code=HQ for public forms; authenticated requests use req.db
-router.get('/hosts', ctrl.listHosts);
+router.get('/hosts', optionalProtect, ctrl.listHosts);
 
 // Protected routes — super_admin or unit_admin
 router.get('/',    protect, authorize('super_admin', 'unit_admin'), ctrl.listUsers);
