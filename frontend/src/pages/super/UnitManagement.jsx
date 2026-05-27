@@ -56,6 +56,17 @@ export default function UnitManagement() {
     if (!unitForm.name.trim() || !unitForm.code.trim()) {
       return toast.error('Unit name and code are required.');
     }
+    if (includeAdmin) {
+      const nameVal = adminForm.full_name.trim();
+      const emailVal = adminForm.email.trim();
+      const passVal = adminForm.password.trim();
+      const codeVal = adminForm.employee_code.trim();
+      if (nameVal || emailVal || passVal || codeVal) {
+        if (!nameVal || !emailVal || !passVal || !codeVal) {
+          return toast.error('All admin fields (Name, Email, Password, and Employee Code) are required.');
+        }
+      }
+    }
     setSaving(true);
     try {
       const payload = { ...unitForm, code: unitForm.code.toUpperCase().trim() };
@@ -316,8 +327,8 @@ export default function UnitManagement() {
                     <input className={inputCls} value={adminForm.phone} onChange={setAdmin('phone')} placeholder="+91 9000000001" />
                   </div>
                   <div>
-                    <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Employee Code</label>
-                    <input className={`${inputCls} font-mono`} value={adminForm.employee_code} onChange={setAdmin('employee_code')} placeholder="HQ-ADM-001" />
+                    <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Employee Code *</label>
+                    <input className={`${inputCls} font-mono`} value={adminForm.employee_code} onChange={setAdmin('employee_code')} placeholder="HQ-ADM-001" required={includeAdmin} />
                   </div>
                 </div>
                 <div>

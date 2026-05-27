@@ -105,6 +105,13 @@ const createUnit = async (req, res) => {
 
     if (!name || !code) return sendError(res, 'name and code are required.', 400);
 
+    if (unit_admin) {
+      const { full_name: adminName, email: adminEmail, password: adminPass, employee_code: adminCode } = unit_admin;
+      if (!adminName || !adminName.trim() || !adminEmail || !adminEmail.trim() || !adminPass || !adminPass.trim() || !adminCode || !adminCode.trim()) {
+        return sendError(res, 'Unit admin name, email, password, and employee code are required when creating an admin.', 400);
+      }
+    }
+
     const sanitizedCode = code.toUpperCase().trim();
 
     // Check uniqueness
