@@ -48,36 +48,17 @@ const listPublicDepartments = async (req, res) => {
 // ── List Departments (authenticated) ──────────────────────────────────────────
 const listDepartments = async (req, res) => {
   try {
-    let rows;
-
-    if (isSuperAdmin(req.user) || isUnitAdmin(req.user)) {
-      // See all departments in their unit DB
-      [rows] = await req.db.query(
-        `SELECT d.id, d.name, d.code, d.description, d.is_active, d.created_at,
-                d.unit_id,
-                COUNT(DISTINCT u.id) AS user_count,
-                COUNT(DISTINCT des.id) AS designation_count
-         FROM departments d
-         LEFT JOIN users u   ON u.department_id = d.id AND u.is_active = 1 AND u.deleted_at IS NULL
-         LEFT JOIN designations des ON des.department_id = d.id AND des.is_active = 1
-         WHERE d.is_active = 1
-         GROUP BY d.id ORDER BY d.name ASC`
-      );
-    } else {
-      // dept_admin / employee / security / receptionist → only see their own department
-      [rows] = await req.db.query(
-        `SELECT d.id, d.name, d.code, d.description, d.is_active, d.created_at,
-                d.unit_id,
-                COUNT(DISTINCT u.id) AS user_count,
-                COUNT(DISTINCT des.id) AS designation_count
-         FROM departments d
-         LEFT JOIN users u   ON u.department_id = d.id AND u.is_active = 1 AND u.deleted_at IS NULL
-         LEFT JOIN designations des ON des.department_id = d.id AND des.is_active = 1
-         WHERE d.id = ? AND d.is_active = 1
-         GROUP BY d.id`,
-        [req.user.department_id]
-      );
-    }
+    const [rows] = await req.db.query(
+      `SELECT d.id, d.name, d.code, d.description, d.is_active, d.created_at,
+              d.unit_id,
+              COUNT(DISTINCT u.id) AS user_count,
+              COUNT(DISTINCT des.id) AS designation_count
+       FROM departments d
+       LEFT JOIN users u   ON u.department_id = d.id AND u.is_active = 1 AND u.deleted_at IS NULL
+       LEFT JOIN designations des ON des.department_id = d.id AND des.is_active = 1
+       WHERE d.is_active = 1
+       GROUP BY d.id ORDER BY d.name ASC`
+    );
 
     return sendSuccess(res, rows, 'Departments fetched successfully.');
   } catch (err) {
