@@ -556,6 +556,7 @@ const listRequests = async (req, res) => {
     if (req.user.role_type === 'employee') {
       conditions.push('(vr.host_user_id = ? OR vr.requester_user_id = ?)');
       params.push(req.user.id, req.user.id);
+    }
 
     // unit_admin and super_admin see all (req.db already scoped to their unit)
 
