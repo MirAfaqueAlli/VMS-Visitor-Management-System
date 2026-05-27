@@ -16,6 +16,17 @@ import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import StatusBadge from "../../components/shared/StatusBadge";
 
+const CATEGORY_LABELS = {
+  EMP:               'Employee Visit',
+  EMPLOYEE_VISIT:    'Employee Visit',
+  INTER_UNIT_VISIT:  'Employee Visit',
+  INTER_UNIT_INVITE: 'Employee Visit',
+  VENDOR:            'Vendor',
+  PRIOR:             'Prior Approval',
+  SPOT:              'Walk-in',
+  PERSONAL_VISIT:    'Personal Visit',
+};
+
 // ── Relative time helper (no external deps) ────────────────────────────────
 function timeAgo(dateStr) {
  const diff = Date.now() - new Date(dateStr).getTime();
@@ -90,8 +101,16 @@ function ApprovalCard({ item, onActionSuccess }) {
  <h3 className="font-semibold text-loud text-lg leading-tight truncate">
  {item.visitor_name || item.requester_name || "Unknown Visitor"}
  </h3>
- <StatusBadge status={item.visitor_type_code} />
+ <span
+   className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
+   style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
+ >
+   {CATEGORY_LABELS[item.visit_category] ?? item.visit_category ?? 'Visit'}
+ </span>
  </div>
+ {item.visitor_phone && (
+ <p className="text-xs text-faint mt-0.5 mb-1">📞 {item.visitor_phone}</p>
+ )}
 
  {/* Purpose */}
  <p className="text-muted text-sm leading-relaxed line-clamp-2 mb-3">
@@ -184,9 +203,7 @@ function ApprovalCard({ item, onActionSuccess }) {
  <button
  onClick={handleConfirm}
  disabled={submitting}
- className={`flex items-center gap-2 btn-primary"
- : "bg-accent hover:bg-accent"
- }`}
+ className="flex items-center gap-2 btn-primary"
  >
  {submitting ? (
  <Loader2 strokeWidth={2} className="w-3.5 h-3.5 animate-spin" />

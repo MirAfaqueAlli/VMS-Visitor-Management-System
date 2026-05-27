@@ -48,3 +48,9 @@ backend/uploads/qrcodes/*
 !backend/uploads/qrcodes/.gitkeep
 backend/uploads/visitor-photos/*
 !backend/uploads/visitor-photos/.gitkeep
+
+# AI agent / planning artifacts
+implementation_plan.md
+phase0_prompt.md
+phase2_prompt.md
+phase3_prompt.md

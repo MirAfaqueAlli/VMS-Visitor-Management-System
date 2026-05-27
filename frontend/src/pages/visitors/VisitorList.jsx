@@ -121,7 +121,7 @@ export default function VisitorList() {
  ) : (
  visitors.map((visitor) => (
  <tr
- key={visitor.visitor_id}
+ key={visitor.id || visitor.visitor_id}
  className="border-b border-subtle hover:bg-bg-primary/50 transition-colors duration-300"
  >
  <td className="py-4 px-4">
@@ -168,7 +168,7 @@ export default function VisitorList() {
  <td className="py-4 px-4 text-right">
  <button
  onClick={() =>
- navigate(`/visitors/${visitor.visitor_id}`)
+ navigate(`/visitors/${visitor.id || visitor.visitor_id}`)
  }
  className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-accent hover:bg-accent hover:text-white transition-colors duration-300"
  title="View Details"

@@ -37,7 +37,9 @@ export default function CheckOut() {
  const handleCheckout = async () => {
  setSubmitting(true);
  try {
- await apiClient.post("/gate/checkout", checkoutData);
+ await apiClient.post(`/gate/checkout/${checkoutData.visit_log_id}`, {
+ remarks: checkoutData.remarks || undefined,
+ });
  toast.success("Visitor checked out successfully");
  setShowModal(false);
  fetchActiveVisitors(); // Refresh list
@@ -101,6 +103,9 @@ export default function CheckOut() {
  <User className="w-4 h-4 text-accent" />
  {visitor.visitor_name}
  </div>
+ {visitor.visitor_phone && (
+ <div className="text-xs text-faint pl-6 mt-0.5">📞 {visitor.visitor_phone}</div>
+ )}
  <div className="text-sm text-muted pl-6 mt-1 line-clamp-1">
  {visitor.purpose}
  </div>

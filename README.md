@@ -1,178 +1,314 @@
 # 🚪 Visitor Management System (VMS)
 
-A robust, modern, and highly secure **Visitor Management System (VMS)** built using a decoupled React (frontend) and Node.js/Express (backend) architecture. The system streamlines visitor registrations, manages check-ins/check-outs, processes approvals from organizational administrators, and facilitates gate security clearance using dynamic QR codes and badge verification.
+A secure, multi-tenant **Visitor Management System** built for government offices, PSUs, and secured premises. It digitises the complete visitor lifecycle — registration → approval → gate pass → check-in/check-out — with role-based access control, QR code gate passes, SMS/email notifications, and financial year archiving.
 
 ---
 
 ## 🌟 Key Features
 
-### 🏢 Organization & Department Management
-- **Multi-Tenant Capability**: Support registration and management of multiple organizations.
-- **Department Routing**: Department-level hierarchies to streamline visitor routing and approval workflows.
-
-### ✍️ Visitor Registration & Workflow
-- **Public & Guided Requests**: Visitors can request gate passes through a public page or be registered directly.
-- **Biometric & Verification Ready**: Upload visitor photos and ID proofs securely.
-- **QR Code Gate Passes**: Automatic generation of secure, unique QR codes for passes to enable rapid scan-to-verify.
-
-### 🛡️ Multi-Level Access Control & Permissions
-- **Role-Based Access (RBAC)**: Custom panels and functionalities tailored for **Super Admins**, **Org Admins**, **Department Admins**, and **Security Personnel**.
-- **Real-Time Approval System**: Immediate notifications and action logs for request approvals.
-
-### 📊 Analytics & Reporting
-- **Visitor Logs**: Searchable, paginated audit trails of visitor entries, exits, and active presence.
-- **Export & Insight Panels**: View real-time stats of current visitors, pending clearances, and historical logs.
+| Feature | Details |
+|---|---|
+| **4 Visitor Types** | Employee Visit, Vendor/AMC, Prior Approval, Spot Walk-in |
+| **Approval Workflow** | Host / Unit Admin approval flow |
+| **QR Code Gate Passes** | Auto-generated, printable, scan-to-verify |
+| **Role-Based Access** | 7 roles: Super Admin, Unit Admin, Employee, Security, Receptionist, Auditor |
+| **Multi-Unit / Multi-Tenant** | Each unit has its own isolated MySQL database |
+| **SMS & Email Alerts** | Visitor notified on approval/rejection |
+| **Financial Year Archive** | Backup + purge old records per Indian FY (Apr–Mar) |
+| **Audit Logs** | Full immutable trail of all actions |
+| **Reports & Analytics** | Overview charts, department breakdowns, host activity |
+| **Public Registration** | Visitors self-register via shareable public link |
 
 ---
 
 ## 💻 Tech Stack
 
-| Component | Technology | Description |
-| :--- | :--- | :--- |
-| **Frontend** | React 19, Vite, TailwindCSS | Ultra-fast, responsive user interface with clean and harmonized UI patterns. |
-| **Backend** | Node.js, Express 5 | High-performance API server with rate-limiting, sanitization, and structured routing. |
-| **Database** | MySQL | Relational data integrity for organizations, departments, users, and logs. |
-| **Security** | JSON Web Tokens (JWT), Bcrypt, Helmet | Comprehensive authentication, secure HTTP headers, and hashed user credentials. |
+| Layer | Technology |
+|---|---|
+| **Frontend** | React 19, Vite, Vanilla CSS (custom design system) |
+| **Backend** | Node.js, Express 5, mysql2 |
+| **Database** | MySQL 8 — one central DB + one isolated DB per unit |
+| **Auth** | JWT (RS256), bcrypt, Helmet, express-rate-limit |
+| **Notifications** | Nodemailer (SMTP), Fast2SMS (optional) |
+| **Gate Passes** | QR code generation via `qrcode` library |
 
 ---
 
-## 🚀 Getting Started
+## 📋 Prerequisites
 
-### 📋 Prerequisites
-- **Node.js** (v18 or higher recommended)
-- **npm** (v9 or higher)
-- **MySQL Database Server** (v8.x recommended)
+Before you begin, make sure you have:
 
----
-
-### 🗄️ 1. Database Setup
-
-All database schema scripts are organized in the `/database` directory:
-
-1. Log in to your MySQL terminal or client (e.g., MySQL Workbench, phpMyAdmin):
-   ```sql
-   CREATE DATABASE vms_db;
-   ```
-2. Run the **full setup schema** to initialize all tables, relationships, and indexes:
-   ```bash
-   mysql -u your_user -p vms_db < database/vms_full_setup.sql
-   ```
-3. (Optional) Run the **seed data script** to load pre-configured roles, initial departments, and test users:
-   ```bash
-   mysql -u your_user -p vms_db < database/seed_data.sql
-   ```
+- **Node.js** v18 or higher — [Download](https://nodejs.org/)
+- **npm** v9 or higher (comes with Node.js)
+- **MySQL Server** v8.x — [Download](https://dev.mysql.com/downloads/mysql/)
+- A MySQL user with **CREATE DATABASE** privileges (root works for local dev)
 
 ---
 
-### ⚙️ 2. Backend Setup & Configuration
+## 🚀 First-Time Setup (Step by Step)
 
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Set up your environment variables. Copy the `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-4. Edit the newly created `.env` file with your local MySQL database credentials, SMTP configuration (for email notifications), and a secure secret key for signing JWTs:
-   ```env
-   DB_HOST=localhost
-   DB_USER=root
-   DB_PASSWORD=your_mysql_password
-   DB_NAME=vms_db
-   JWT_SECRET=your_super_secret_jwt_key
-   ```
-5. Start the backend in development mode (with hot-reloading via `nodemon`):
-   ```bash
-   npm run dev
-   ```
-   *The server runs by default on `http://localhost:5000`.*
+### Step 1 — Clone & enter the project
 
----
-
-### 🎨 3. Frontend Setup & Configuration
-
-1. Navigate to the frontend directory:
-   ```bash
-   cd ../frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Configure the environment variables. Copy the `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-4. If necessary, adjust the API connection URL:
-   ```env
-   VITE_API_URL=http://localhost:5000/api
-   ```
-5. Run the frontend dev server:
-   ```bash
-   npm run dev
-   ```
-   *The client app will launch at `http://localhost:5173`.*
-
----
-
-## 📂 Project Directory Structure
-
-```filepath
-├── backend/
-│   ├── controllers/      # API Request handlers (Users, Passes, Visitors, etc.)
-│   ├── routes/           # Express router endpoints mapped to controllers
-│   ├── middlewares/      # JWT Authentication & authorization guards
-│   ├── uploads/          # Dynamic files (Visitor pictures, QR codes, ID proofs)
-│   ├── db.js             # MySQL Connection Pool initializer
-│   ├── server.js         # Express app bootstrap & security config
-│   ├── .env.example      # Backend environment template
-│   └── package.json
-├── database/
-│   ├── vms_full_setup.sql# Master SQL database schema setup
-│   ├── vms_schema.sql    # Clean tables database schema (without seeds)
-│   ├── migrate_saas.sql  # Database migrations
-│   └── seed_data.sql     # Initial seed database records
-├── frontend/
-│   ├── src/
-│   │   ├── components/   # Shared presentation components (Sidebar, Navbar, Cards)
-│   │   ├── context/      # AuthContext and App State providers
-│   │   ├── pages/        # Router views (Dashboard, Gate Control, Admin, Registration)
-│   │   ├── App.jsx       # Layout structure & routing mappings
-│   │   └── main.jsx
-│   ├── index.html
-│   ├── .env.example      # Frontend environment template
-│   └── package.json
-└── README.md             # This master documentation file
+```bash
+git clone <your-repo-url>
+cd <project-folder>
 ```
 
 ---
 
-## 🔒 Security Best Practices Implemented
+### Step 2 — Configure the Backend
 
-- **Password Hashing**: Done securely using `bcrypt` on the backend before database insertion.
-- **SQL Injection Defense**: Uses prepared statements via the `mysql2/promise` package.
-- **CORS Protection**: Access limits configured dynamically using customizable white-lists.
-- **Secure Headers**: Configured using Express `helmet` middleware.
-- **API Rate Limiting**: Avoids brute-force attacks via standard `express-rate-limit`.
-- **Environment Isolation**: No hardcoded API keys, passwords, or emails; all configurations load strictly from isolated `.env` environments.
+```bash
+cd backend
+```
+
+**Install dependencies:**
+```bash
+npm install
+```
+
+**Create your `.env` file:**
+```bash
+# On Windows
+copy .env.example .env
+
+# On Mac/Linux
+cp .env.example .env
+```
+
+**Edit `.env` with your settings:**
+```env
+# MySQL connection
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_mysql_password
+
+# Central database name (created automatically)
+DB_CENTRAL_NAME=vms_central
+
+# JWT secret — use any long random string
+JWT_SECRET=replace_with_a_long_random_secret_key_here
+
+# (Optional) Email notifications via SMTP
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your@gmail.com
+SMTP_PASS=your_gmail_app_password
+EMAIL_FROM="VMS System" <your@gmail.com>
+```
+
+> 💡 Email and SMS are optional. The system works fully without them — notifications are simply skipped.
 
 ---
 
-## 🤝 Contributing
+### Step 3 — Initialize the Database
 
-Contributions to enhance VMS are welcome!
-1. Fork the project.
-2. Create a Feature Branch (`git checkout -b feature/AmazingFeature`).
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-4. Push to the Branch (`git push origin feature/AmazingFeature`).
-5. Open a Pull Request.
+Run the reset script. It will:
+- Create the `vms_central` database from scratch
+- Apply the full schema (tables, indexes, lookup data)
+- Leave it empty so you set up your own org and admin
+
+```bash
+npm run reset-db
+```
+
+Expected output:
+```
+✅  Connected to MySQL at localhost:3306
+[ 1 / 3 ]  Dropping unit databases…   → none found
+[ 2 / 3 ]  Recreating central database: vms_central
+[ 3 / 3 ]  Verifying clean state…
+✅  Organizations: empty ✓
+✅  Units: empty ✓
+✅  Users: empty ✓
+✅  Clean reset complete!
+```
+
+> ⚠️ **Do NOT manually run any SQL files.** The `reset-db` script handles everything automatically.
+
+---
+
+### Step 4 — Start the Backend
+
+```bash
+npm run dev
+```
+
+The API server starts at **`http://localhost:5000`**
+
+---
+
+### Step 5 — Configure & Start the Frontend
+
+Open a new terminal:
+
+```bash
+cd frontend
+npm install
+```
+
+**Create your `.env` file:**
+```bash
+# Windows
+copy .env.example .env
+
+# Mac/Linux
+cp .env.example .env
+```
+
+The default `.env` content is already correct for local development:
+```env
+VITE_API_URL=http://localhost:5000/api
+```
+
+**Start the frontend:**
+```bash
+npm run dev
+```
+
+The app opens at **`http://localhost:5173`**
+
+---
+
+### Step 6 — Initialize the System (First Run Only)
+
+Open your browser and go to:
+
+```
+http://localhost:5173/setup
+```
+
+You will see the **Setup Wizard**. Fill in:
+
+| Field | Description |
+|---|---|
+| Organization Name | Your company / department name |
+| Organization Code | Short unique code (e.g. `MYCO`) |
+| Super Admin Name | Your full name |
+| Super Admin Email | Your login email |
+| Super Admin Password | Minimum 8 characters |
+
+Click **"Initialize System"** — this creates your organization and Super Admin account.
+
+> This setup page is only accessible once. After initialization it becomes inaccessible.
+
+---
+
+### Step 7 — Log In and Configure
+
+Go to:
+```
+http://localhost:5173/login
+```
+
+Log in with the Super Admin credentials you just created.
+
+**From the dashboard, complete the following:**
+
+1. **Create a Unit** → *Super Admin → Unit Management → New Unit*  
+   *(Each unit gets its own isolated database, auto-provisioned)*
+
+2. **Add Departments** → *Unit Admin → User Management → Departments*
+
+3. **Create Users** → *Unit Admin → User Management → New User*  
+   Assign roles: `unit_admin`, `employee`, `security`, `receptionist`
+
+4. **Share the Public Link** → Visitors can self-register at:
+   ```
+   http://localhost:5173/public-request
+   ```
+
+---
+
+## 📂 Project Structure
+
+```
+VMS/
+├── backend/
+│   ├── controllers/          # Business logic (one file per feature)
+│   ├── routes/               # Express route definitions
+│   ├── middlewares/          # JWT auth, RBAC, file upload, validation
+│   ├── services/             # DB manager, email, QR code, notifications
+│   ├── utils/                # Audit logger, response helpers, pass numbering
+│   ├── scripts/
+│   │   ├── reset_db.js       # ← Full DB wipe + fresh schema (run to reset)
+│   │   └── seed_unit.js      # Dev-only: seeds demo data into a unit
+│   ├── uploads/              # Runtime files (gitignored)
+│   │   ├── visitor-photos/
+│   │   ├── qrcodes/
+│   │   └── id-proofs/
+│   ├── .env.example          # ← Copy this to .env and fill in your values
+│   ├── server.js
+│   └── package.json
+│
+├── database/
+│   ├── vms_central_schema.sql  # Central DB schema (used by reset_db.js)
+│   └── vms_unit_schema.sql     # Per-unit DB schema (used by provisionUnitDb)
+│
+├── frontend/
+│   └── src/
+│       ├── api/              # Axios client with auth + unit headers
+│       ├── components/       # Layout (Sidebar, Navbar) + shared components
+│       ├── context/          # AuthContext (user, token, activeUnit)
+│       ├── hooks/            # useAuth hook
+│       └── pages/
+│           ├── admin/        # User mgmt, Departments, FY Archive
+│           ├── approvals/    # Approval inbox
+│           ├── audit/        # Audit log viewer
+│           ├── auth/         # Login, Setup wizard
+│           ├── dashboard/    # Overview + live stats
+│           ├── gate/         # Check-in, Check-out, Gate Pass print
+│           ├── reports/      # Charts + tabular reports
+│           ├── requests/     # New request, request list/detail
+│           ├── super/        # Unit management, Global users
+│           └── visitors/     # Visitor registry
+│
+├── .gitignore
+└── README.md
+```
+
+---
+
+## 👥 User Roles
+
+| Role | Access |
+|---|---|
+| `super_admin` | Full system access, manages all units |
+| `unit_admin` | Full access within their unit |
+| `employee` | Raises visit requests, approves requests directed to them |
+| `security` | Gate check-in / check-out |
+| `receptionist` | Visitor registration, gate operations |
+| `unit_auditor` | Read-only: reports and audit logs for their unit |
+| `global_auditor` | Read-only: reports and audit logs across all units |
+
+---
+
+## 🔄 Resetting to a Clean Slate
+
+To completely wipe all data and start fresh:
+
+```bash
+cd backend
+npm run reset-db
+```
+
+Then go to `http://localhost:5173/setup` and re-initialize.
+
+---
+
+## 🔒 Security
+
+- Passwords hashed with **bcrypt** (cost factor 12)
+- All API routes protected by **JWT Bearer tokens**
+- Super admin and unit users stored in **separate databases** (token-bound pool isolation)
+- **CORS** restricted to configured `CLIENT_URL`
+- **Rate limiting** on all `/api/` routes
+- **Helmet** sets secure HTTP headers
+- No credentials, secrets, or generated files in the repository
 
 ---
 
 ## 📄 License
-Distributed under the ISC License. See `backend/package.json` for details.
+
+Distributed under the **ISC License**. See `backend/package.json` for details.

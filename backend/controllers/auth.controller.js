@@ -1,214 +1,243 @@
 // backend/controllers/auth.controller.js
 'use strict';
 
-const bcrypt  = require('bcrypt');
-const jwt     = require('jsonwebtoken');
-const db      = require('../db');
+const bcrypt = require('bcrypt');
+const jwt    = require('jsonwebtoken');
+const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-const sanitizeUser = (user) => ({
-  id:              user.id,
-  full_name:       user.full_name,
-  email:           user.email,
-  phone:           user.phone,
-  designation:     user.designation,
-  employee_code:   user.employee_code,
-  role:            user.role_type,         // expose as "role" for frontend compat
-  role_type:       user.role_type,         // also expose directly
-  organization_id: user.organization_id,
-  department_id:   user.department_id,     // null for org_admin
-  organization_name: user.organization_name || null,
-  department_name:   user.department_name  || null,
-  last_login_at:   user.last_login_at,
+const sanitizeUser = (user, unitDb = 'central', unitName = null) => ({
+  id:             user.id,
+  full_name:      user.full_name,
+  email:          user.email,
+  phone:          user.phone || null,
+  designation:    user.designation || null,
+  designation_id: user.designation_id || null,
+  employee_code:  user.employee_code,
+  role:           user.role_type,
+  role_type:      user.role_type,
+  department_id:  user.department_id || null,
+  department_name: user.department_name || null,
+  unit_id:        user.unit_id || null,
+  unit_name:      unitName || user.unit_name || null,
+  unit_db:        unitDb,
+  last_login_at:  user.last_login_at,
   // Convenience flags
-  is_org_admin:    user.role_type === 'org_admin',
-  is_dept_admin:   user.role_type === 'dept_admin',
+  is_super_admin:    user.role_type === 'super_admin',
+  is_unit_admin:     user.role_type === 'unit_admin',
+  is_dept_admin:     user.role_type === 'dept_admin',
+  is_global_auditor: user.role_type === 'global_auditor',
+  is_unit_auditor:   user.role_type === 'unit_auditor',
 });
 
-// ─── Login ────────────────────────────────────────────────────────────────────
+// ── Login ─────────────────────────────────────────────────────────────────────
 
+/**
+ * POST /api/auth/login
+ * Body: { email, password, unit_id? | unit_code? }
+ *
+ * Login flow:
+ * 1. Check vms_central.users → super_admin / global_auditor
+ * 2. If not found: require unit_id (from dropdown) or legacy unit_code
+ *    → look up unit in central → query that unit's DB
+ */
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, unit_code } = req.body;
+    const unitId = req.body.unit_id ? parseInt(req.body.unit_id) : null;
 
-    const [rows] = await db.query(
-      `SELECT u.id, u.organization_id, u.department_id,
-              u.employee_code, u.full_name, u.email, u.phone,
-              u.designation, u.password_hash, u.is_active,
-              u.last_login_at, u.role_type,
-              o.name AS organization_name,
-              d.name AS department_name
-       FROM users u
-       JOIN organizations o ON o.id = u.organization_id
-       LEFT JOIN departments d ON d.id = u.department_id
-       WHERE u.email = ? AND u.is_active = 1 AND u.deleted_at IS NULL`,
-      [email]
+    if (!email || !password) {
+      return sendError(res, 'Email and password are required.', 400);
+    }
+
+    let user        = null;
+    let unitDb      = 'central';
+    let unitName    = null;
+    let dbPool      = centralPool;
+
+    // ── Step 1: Check central DB (super_admin / global_auditor) ──────────────
+    const [centralRows] = await centralPool.query(
+      `SELECT id, role_type, full_name, email, phone, employee_code,
+              password_hash, is_active, last_login_at,
+              NULL AS department_id, NULL AS department_name,
+              NULL AS unit_id, NULL AS designation, NULL AS designation_id
+       FROM users
+       WHERE (email = ? OR phone = ?) AND deleted_at IS NULL`,
+      [email, email]
     );
 
-    if (rows.length === 0) return sendError(res, 'Invalid credentials.', 401);
+    if (centralRows.length > 0) {
+      user   = centralRows[0];
+      unitDb = 'central';
+      dbPool = centralPool;
+    }
 
-    const user = rows[0];
+    // ── Step 2: Not in central → search unit DB by unit_id or unit_code ────────
+    if (!user) {
+      if (!unitId && !unit_code) {
+        return sendError(res, 'Please select your unit / branch to sign in.', 400);
+      }
+
+      // Find the unit's database name from central
+      let unitRows;
+      if (unitId) {
+        [unitRows] = await centralPool.query(
+          `SELECT id, name, db_name, db_status FROM units WHERE id = ? AND is_active = 1`,
+          [unitId]
+        );
+      } else {
+        [unitRows] = await centralPool.query(
+          `SELECT id, name, db_name, db_status FROM units WHERE code = ? AND is_active = 1`,
+          [unit_code.toUpperCase().trim()]
+        );
+      }
+
+      if (unitRows.length === 0) {
+        return sendError(res, 'Unit not found. Please select a valid unit.', 404);
+      }
+
+      const unit = unitRows[0];
+
+      if (unit.db_status !== 'ACTIVE') {
+        return sendError(res, 'This unit database is not active. Please contact the system administrator.', 503);
+      }
+
+      unitDb   = unit.db_name;
+      unitName = unit.name;
+      dbPool   = getPool(unitDb);
+
+      const [unitUserRows] = await dbPool.query(
+        `SELECT u.id, u.role_type, u.full_name, u.email, u.phone, u.employee_code,
+                u.password_hash, u.is_active, u.last_login_at,
+                u.department_id, u.unit_id, u.designation, u.designation_id,
+                d.name AS department_name
+         FROM users u
+         LEFT JOIN departments d ON d.id = u.department_id
+         WHERE (u.email = ? OR u.phone = ?) AND u.deleted_at IS NULL`,
+        [email, email]
+      );
+
+      if (unitUserRows.length === 0) {
+        return sendError(res, 'Invalid credentials.', 401);
+      }
+
+      user = unitUserRows[0];
+    }
+
+    // ── Step 3: Verify password ───────────────────────────────────────────────
+    if (!user.is_active) {
+      return sendError(res, 'Your account has been deactivated. Please contact an administrator.', 401);
+    }
+
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) return sendError(res, 'Invalid credentials.', 401);
 
-    const payload = { userId: user.id, role: user.role_type };
-    const token   = jwt.sign(payload, process.env.JWT_SECRET, {
+    // ── Step 4: Issue JWT with unit_db ────────────────────────────────────────
+    const payload = {
+      userId:  user.id,
+      role:    user.role_type,
+      unit_db: unitDb,          // ← key for multi-DB routing in auth.middleware
+    };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '8h',
     });
 
-    db.query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id])
+    // ── Step 5: Update last_login_at ──────────────────────────────────────────
+    dbPool.query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id])
       .catch(err => console.error('[AuthController] last_login_at update failed:', err.message));
 
+    // ── Step 6: Audit log ─────────────────────────────────────────────────────
     await logAudit({
-      userId: user.id, action: 'LOGIN', module: 'AUTH',
-      recordType: 'USER', recordId: user.id,
-      ipAddress: req.ip, userAgent: req.headers['user-agent'] || null,
+      db:                 unitDb !== 'central' ? dbPool : null,
+      isSuperAdminAction: unitDb === 'central',
+      sourceUnit:         unitDb,
+      userId:             user.id,
+      action:             'LOGIN',
+      module:             'AUTH',
+      recordType:         'USER',
+      recordId:           user.id,
+      ipAddress:          req.ip,
+      userAgent:          req.headers['user-agent'] || null,
     });
 
-    return sendSuccess(res, { token, user: sanitizeUser(user) }, 'Login successful.', 200);
+    return sendSuccess(
+      res,
+      { token, user: sanitizeUser(user, unitDb, unitName) },
+      'Login successful.',
+      200
+    );
   } catch (err) {
     console.error('[AuthController] login error:', err.message);
     return sendError(res, 'Login failed due to a server error.', 500);
   }
 };
 
-// ─── Register Organization ────────────────────────────────────────────────────
+// ── Get Me ────────────────────────────────────────────────────────────────────
+
 /**
- * POST /api/auth/register-org  (public — no JWT required)
- *
- * Body:
- *   org:   { name, code, type, city, state, phone, email }
- *   admin: { full_name, email, phone, password, employee_code, designation? }
- *
- * Creates the organization + the first org_admin user in one transaction,
- * then returns a JWT so the admin can start using the system immediately.
+ * GET /api/auth/me
+ * Uses req.db (resolved by auth middleware) to re-fetch the user's full profile.
  */
-const registerOrg = async (req, res) => {
-  const conn = await db.getConnection();
+const getMe = async (req, res) => {
   try {
-    const { org, admin } = req.body;
+    const isCentral = req.user.unit_db === 'central';
+    let rows;
 
-    if (!org || !admin) {
-      return sendError(res, 'org and admin objects are required.', 400);
+    if (isCentral) {
+      [rows] = await req.db.query(
+        `SELECT id, role_type, full_name, email, phone, employee_code,
+                is_active, last_login_at,
+                NULL AS department_id, NULL AS department_name,
+                NULL AS unit_id, NULL AS designation, NULL AS designation_id
+         FROM users WHERE id = ?`,
+        [req.user.id]
+      );
+    } else {
+      [rows] = await req.db.query(
+        `SELECT u.id, u.role_type, u.full_name, u.email, u.phone, u.employee_code,
+                u.is_active, u.last_login_at, u.department_id, u.unit_id,
+                u.designation, u.designation_id, d.name AS department_name
+         FROM users u
+         LEFT JOIN departments d ON d.id = u.department_id
+         WHERE u.id = ?`,
+        [req.user.id]
+      );
     }
 
-    const { name, code, type, city, state, phone: orgPhone, email: orgEmail } = org;
-    const { full_name, email, phone, password, employee_code, designation } = admin;
+    if (!rows.length) return sendError(res, 'User not found.', 404);
 
-    if (!name || !code || !full_name || !email || !phone || !password || !employee_code) {
-      return sendError(res, 'Missing required fields in org or admin.', 400);
+    // Get unit name from central if unit user
+    let unitName = null;
+    if (!isCentral && rows[0].unit_id) {
+      const [uRows] = await centralPool.query(
+        'SELECT name FROM units WHERE id = ?', [rows[0].unit_id]
+      );
+      unitName = uRows[0]?.name || null;
     }
-
-    // Check org code uniqueness
-    const [existingOrg] = await conn.query(
-      `SELECT id FROM organizations WHERE code = ? LIMIT 1`, [code]
-    );
-    if (existingOrg.length > 0) {
-      conn.release();
-      return sendError(res, 'An organization with this code already exists.', 409);
-    }
-
-    // Check admin email uniqueness
-    const [existingUser] = await conn.query(
-      `SELECT id FROM users WHERE email = ? OR phone = ? LIMIT 1`,
-      [email, phone]
-    );
-    if (existingUser.length > 0) {
-      conn.release();
-      return sendError(res, 'A user with this email or phone already exists.', 409);
-    }
-
-    await conn.beginTransaction();
-
-    // 1. Create organization
-    const [orgResult] = await conn.query(
-      `INSERT INTO organizations (name, code, type, city, state, phone, email, is_active, setup_complete, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, FALSE, NOW(), NOW())`,
-      [name, code, type || null, city || null, state || null, orgPhone || null, orgEmail || null]
-    );
-    const organizationId = orgResult.insertId;
-
-    // 2. Hash password
-    const password_hash = await bcrypt.hash(password, 12);
-
-    // 3. Create org_admin user (department_id = NULL for org_admin)
-    const [userResult] = await conn.query(
-      `INSERT INTO users (organization_id, department_id, role_type, full_name, email, phone,
-                          password_hash, employee_code, designation, is_active, created_at, updated_at)
-       VALUES (?, NULL, 'org_admin', ?, ?, ?, ?, ?, ?, TRUE, NOW(), NOW())`,
-      [organizationId, full_name, email, phone, password_hash, employee_code, designation || null]
-    );
-    const userId = userResult.insertId;
-
-    await conn.commit();
-    conn.release();
-
-    // 4. Issue JWT immediately
-    const payload = { userId, role: 'org_admin' };
-    const token   = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN || '8h',
-    });
-
-    const newUser = {
-      id: userId, full_name, email, phone, designation: designation || null,
-      employee_code, role_type: 'org_admin', organization_id: organizationId,
-      department_id: null, organization_name: name, department_name: null,
-      last_login_at: null, is_org_admin: true, is_dept_admin: false,
-    };
-
-    await logAudit({
-      userId, action: 'REGISTER_ORG', module: 'AUTH',
-      recordType: 'ORGANIZATION', recordId: organizationId,
-      newValues: { org_name: name, org_code: code },
-      ipAddress: req.ip, userAgent: req.headers['user-agent'] || null,
-    });
 
     return sendSuccess(
       res,
-      { token, user: sanitizeUser(newUser), organization_id: organizationId },
-      'Organization registered successfully.',
-      201
+      sanitizeUser(rows[0], req.user.unit_db, unitName),
+      'User profile retrieved successfully.',
+      200
     );
-  } catch (err) {
-    try { await conn.rollback(); } catch (_) {}
-    conn.release();
-    console.error('[AuthController] registerOrg error:', err.message);
-    return sendError(res, 'Failed to register organization.', 500);
-  }
-};
-
-// ─── Get Me ───────────────────────────────────────────────────────────────────
-
-const getMe = async (req, res) => {
-  try {
-    // Re-fetch with org + dept names
-    const [rows] = await db.query(
-      `SELECT u.*, o.name AS organization_name, d.name AS department_name
-       FROM users u
-       JOIN organizations o ON o.id = u.organization_id
-       LEFT JOIN departments d ON d.id = u.department_id
-       WHERE u.id = ?`,
-      [req.user.id]
-    );
-    if (!rows.length) return sendError(res, 'User not found.', 404);
-    return sendSuccess(res, sanitizeUser(rows[0]), 'User profile retrieved successfully.', 200);
   } catch (err) {
     console.error('[AuthController] getMe error:', err.message);
     return sendError(res, 'Failed to retrieve user profile.', 500);
   }
 };
 
-// ─── Change Password ──────────────────────────────────────────────────────────
+// ── Change Password ───────────────────────────────────────────────────────────
 
 const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     const userId = req.user.id;
 
-    const [rows] = await db.query(
+    const [rows] = await req.db.query(
       'SELECT id, password_hash FROM users WHERE id = ? AND is_active = 1 AND deleted_at IS NULL',
       [userId]
     );
@@ -218,12 +247,19 @@ const changePassword = async (req, res) => {
     if (!isMatch) return sendError(res, 'Current password is incorrect.', 400);
 
     const newHash = await bcrypt.hash(newPassword, 12);
-    await db.query('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, userId]);
+    await req.db.query('UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?', [newHash, userId]);
 
     await logAudit({
-      userId, action: 'CHANGE_PASSWORD', module: 'AUTH',
-      recordType: 'USER', recordId: userId,
-      ipAddress: req.ip, userAgent: req.headers['user-agent'] || null,
+      db:                 req.user.unit_db !== 'central' ? req.db : null,
+      isSuperAdminAction: req.user.unit_db === 'central',
+      sourceUnit:         req.user.unit_db,
+      userId,
+      action:             'CHANGE_PASSWORD',
+      module:             'AUTH',
+      recordType:         'USER',
+      recordId:           userId,
+      ipAddress:          req.ip,
+      userAgent:          req.headers['user-agent'] || null,
     });
 
     return sendSuccess(res, null, 'Password changed successfully.', 200);
@@ -233,4 +269,4 @@ const changePassword = async (req, res) => {
   }
 };
 
-module.exports = { login, registerOrg, getMe, changePassword };
+module.exports = { login, getMe, changePassword };

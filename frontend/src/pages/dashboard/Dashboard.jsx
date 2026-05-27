@@ -12,11 +12,25 @@ import {
  UserPlus,
  ClipboardList,
  Activity,
+ Users,
+ Building2,
+ TrendingUp,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import apiClient from "../../api/axios";
 import useAuth from "../../hooks/useAuth";
 import StatusBadge from "../../components/shared/StatusBadge";
+
+const CATEGORY_LABELS = {
+  EMP:               'Employee Visit',
+  EMPLOYEE_VISIT:    'Employee Visit',
+  INTER_UNIT_VISIT:  'Employee Visit',
+  INTER_UNIT_INVITE: 'Employee Visit',
+  VENDOR:            'Vendor',
+  PRIOR:             'Prior Approval',
+  SPOT:              'Walk-in',
+  PERSONAL_VISIT:    'Personal Visit',
+};
 
 /* ─── Shared Utilities ───────────────────────────────────────────────────── */
 function StatCard({ icon: Icon, label, value, accentBg, className = "", onClick }) {
@@ -455,7 +469,7 @@ function EmployeeDashboard() {
  <div className="flex items-center gap-2">
  <button
  onClick={() =>
- handleApprove(row.id ?? row.approval_id)
+ handleApprove(row.visit_request_id ?? row.id)
  }
  className="btn-dark text-xs py-1.5 px-3 font-semibold tracking-wide uppercase"
  >
@@ -463,7 +477,7 @@ function EmployeeDashboard() {
  </button>
  <button
  onClick={() =>
- handleReject(row.id ?? row.approval_id)
+ handleReject(row.visit_request_id ?? row.id)
  }
  className="btn-secondary text-xs py-1.5 px-3 font-semibold tracking-wide uppercase"
  >
@@ -723,7 +737,7 @@ function AdminDashboard() {
  <div className="flex items-center gap-2">
  <button
  onClick={() =>
- handleApprove(row.id ?? row.approval_id)
+ handleApprove(row.visit_request_id ?? row.id)
  }
  className="inline-flex items-center gap-1 text-xs btn-primary text-white hover:bg-accent transition-colors font-semibold uppercase"
  >
@@ -731,7 +745,7 @@ function AdminDashboard() {
  </button>
  <button
  onClick={() =>
- handleReject(row.id ?? row.approval_id)
+ handleReject(row.visit_request_id ?? row.id)
  }
  className="inline-flex items-center gap-1 text-xs btn-secondary text-warning hover:bg-accent hover:text-white transition-colors font-semibold uppercase"
  >
@@ -751,26 +765,168 @@ function AdminDashboard() {
  {/* Quick links */}
  <div className="mt-8 flex flex-wrap gap-3">
  <button
- onClick={() => navigate("/reports")}
- className="btn-primary text-white text-sm uppercase tracking-widest hover:bg-accent transition-colors flex items-center gap-2"
+  onClick={() => navigate("/reports")}
+  className="btn-primary text-white text-sm uppercase tracking-widest hover:bg-accent transition-colors flex items-center gap-2"
  >
- <Activity strokeWidth={1.5} size={14} /> View Reports
- </button>
- <button
- onClick={() => navigate("/admin")}
- className="btn-secondary text-accent text-sm uppercase tracking-widest hover:bg-mixed-bg transition-colors"
+  <Activity strokeWidth={1.5} size={14} /> View Reports
+  </button>
+  <button
+  onClick={() => navigate("/admin")}
+  className="btn-secondary text-accent text-sm uppercase tracking-widest hover:bg-mixed-bg transition-colors"
  >
- Manage Users
- </button>
- </div>
- </div>
+  Manage Users
+  </button>
+  </div>
+  </div>
  );
 }
 
+function SuperAdminDashboard() {
+  const navigate  = useNavigate();
+  const { user, isGlobalAuditor, setActiveUnit } = useAuth();
+  const [units,   setUnits]   = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [unitsRes, summaryRes] = await Promise.all([
+        apiClient.get('/units'),
+        apiClient.get('/reports/global-summary'),
+      ]);
+      setUnits(unitsRes.data?.data ?? []);
+      setSummary(summaryRes.data?.data ?? {});
+    } catch { /* silent */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  if (loading) return <Spinner />;
+
+  const hour     = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  const s = summary ?? {};
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="mb-10">
+        <p className="text-[11px] tracking-widest uppercase text-accent mb-1">
+          {greeting} — {user?.full_name?.split(' ')[0] ?? 'Admin'}
+        </p>
+        <h1 className="text-2xl font-bold text-loud">System <em className="italic">Overview</em></h1>
+        <p className="text-faint mt-2">Live statistics across all units and branches.</p>
+      </div>
+
+      {/* ── Stat Cards ── */}
+      {/* Row 1: Units */}
+      <p className="text-[10px] uppercase tracking-widest text-faint mb-3 font-semibold">Units</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-5 mb-8">
+        <StatCard icon={Building2}    label="Total Units"     value={s.total_units ?? units.length}
+          onClick={isGlobalAuditor ? null : () => navigate('/super/units')} />
+        <StatCard icon={CheckCircle2} label="Active Units"    value={s.active_units ?? 0}
+          onClick={isGlobalAuditor ? null : () => navigate('/super/units')} />
+        <StatCard icon={AlertCircle}  label="Provisioning"   value={s.provisioning_units ?? 0} />
+      </div>
+
+      {/* Row 2: Visits */}
+      <p className="text-[10px] uppercase tracking-widest text-faint mb-3 font-semibold">Visits</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 mb-10">
+        <StatCard icon={TrendingUp}  label="Total Visits"       value={s.total_visits?.toLocaleString() ?? 0} />
+        <StatCard icon={Calendar}    label="This Month"         value={s.this_month_visits?.toLocaleString() ?? 0} />
+        <StatCard icon={Clock}       label="Today&apos;s Visits" value={s.today_visits ?? 0} />
+        <StatCard icon={UserCheck}   label="Currently Inside"   value={s.currently_inside ?? 0} />
+      </div>
+
+      {/* ── Units table (compact) ── */}
+      <div className="vms-card overflow-hidden mb-6">
+        <div className="px-5 py-4 flex items-center justify-between"
+             style={{ borderBottom: '1px solid var(--color-border)' }}>
+          <h2 className="text-[14px] font-semibold text-loud flex items-center gap-2">
+            <Building2 strokeWidth={1.5} size={16} className="text-accent" />
+            Units / Branches
+          </h2>
+          {!isGlobalAuditor && (
+            <button onClick={() => navigate('/super/units')}
+              className="text-xs text-accent hover:underline">
+              Manage All →
+            </button>
+          )}
+        </div>
+        {units.length === 0 ? (
+          <EmptyState message="No units created yet." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm font-sans">
+              <TableHead cols={['Unit', 'Code', 'Type', 'DB Status', 'Actions']} />
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {units.slice(0, 8).map((u, i) => (
+                  <tr key={u.id ?? i} className="hover:bg-surface-hover transition-colors">
+                    <td className="px-5 py-3 font-medium text-loud whitespace-nowrap">{u.name}</td>
+                    <td className="px-5 py-3 text-faint font-mono">{u.code}</td>
+                    <td className="px-5 py-3 text-muted">{u.type}</td>
+                    <td className="px-5 py-3">
+                      <span className={`text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider ${
+                        u.db_status === 'ACTIVE'       ? 'text-green-700 bg-green-100' :
+                        u.db_status === 'PROVISIONING' ? 'text-amber-700 bg-amber-100' :
+                                                         'text-red-700 bg-red-100'
+                      }`}>
+                        {u.db_status}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      <button onClick={() => {
+                        if (isGlobalAuditor) {
+                          setActiveUnit({ id: u.id, name: u.name, db_name: u.db_name });
+                          toast.success(`Entering audit context for: ${u.name}`);
+                        } else {
+                          navigate('/super/units');
+                        }
+                      }}
+                        className="text-xs text-accent hover:underline">
+                        {isGlobalAuditor ? 'Audit Unit' : 'Manage'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Quick actions */}
+      <div className="flex flex-wrap gap-3">
+        {!isGlobalAuditor && (
+          <button onClick={() => navigate('/super/units')}
+            className="btn-primary text-white text-sm uppercase tracking-widest flex items-center gap-2">
+            <Plus strokeWidth={1.5} size={14} /> Add New Unit
+          </button>
+        )}
+        <button onClick={() => navigate('/reports')}
+          className="btn-secondary text-accent text-sm uppercase tracking-widest flex items-center gap-2">
+          <Activity strokeWidth={1.5} size={14} /> View Reports
+        </button>
+        <button onClick={() => navigate('/audit-logs')}
+          className="btn-secondary text-accent text-sm uppercase tracking-widest flex items-center gap-2">
+          <ClipboardList strokeWidth={1.5} size={14} /> Audit Logs
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
 /* ─── Root Dashboard Router ──────────────────────────────────────────────── */
 export default function Dashboard() {
- const { hasRole } = useAuth();
- if (hasRole("security", "receptionist")) return <SecurityDashboard />;
- if (hasRole("employee")) return <EmployeeDashboard />;
- return <AdminDashboard />;
+  const { hasRole, isSuperAdmin, isGlobalAuditor, activeUnit } = useAuth();
+  if ((isSuperAdmin || isGlobalAuditor) && !activeUnit) return <SuperAdminDashboard />;
+  if (hasRole("security", "receptionist"))              return <SecurityDashboard />;
+  if (hasRole("employee"))                              return <EmployeeDashboard />;
+  return <AdminDashboard />;
 }
+
+

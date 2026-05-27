@@ -7,22 +7,20 @@ const ctrl    = require('../controllers/department.controller');
 const { protect }   = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
 
-// Public: list departments for visitor form (no auth) — supports ?organization_id=
+// Public — external visitor form (no auth required, uses unit_code or unit_id query param)
 router.get('/public', ctrl.listPublicDepartments);
 
-// Also expose on base path as public (same handler) — used by PublicRequest.jsx
-// The protect middleware comes AFTER so unauthed requests with org_id param still work
+// Authenticated list — falls back to public if unit_code/unit_id is provided without auth
 router.get('/', (req, res, next) => {
-  // If the request has organization_id query param and no Authorization header, treat as public
-  if (req.query.organization_id && !req.headers.authorization) {
+  if ((req.query.unit_code || req.query.unit_id) && !req.headers.authorization) {
     return ctrl.listPublicDepartments(req, res);
   }
-  next(); // fall through to protected route below
+  next();
 }, protect, ctrl.listDepartments);
 
-// org_admin only: create / update / deactivate departments
-router.post('/',      protect, authorize('org_admin'), ctrl.createDepartment);
-router.put('/:id',    protect, authorize('org_admin'), ctrl.updateDepartment);
-router.delete('/:id', protect, authorize('org_admin'), ctrl.deactivateDepartment);
+// Create/Update/Delete — super_admin or unit_admin
+router.post('/',      protect, authorize('super_admin', 'unit_admin'), ctrl.createDepartment);
+router.put('/:id',    protect, authorize('super_admin', 'unit_admin'), ctrl.updateDepartment);
+router.delete('/:id', protect, authorize('super_admin', 'unit_admin'), ctrl.deactivateDepartment);
 
 module.exports = router;

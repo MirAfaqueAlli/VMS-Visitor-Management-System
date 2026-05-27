@@ -86,8 +86,9 @@ export default function RequestDetail() {
   if (loading) return <Spinner />;
   if (!request) return <div className="text-center py-20" style={{ color: 'var(--color-text-faint)' }}>Request not found.</div>;
 
-  const isHost = String(request.host_user_id) === String(user?.id);
-  const canApprove = isHost && request.status === 'PENDING';
+  const isHost    = String(request.host_user_id) === String(user?.id);
+  const isAdmin   = ['super_admin', 'unit_admin'].includes(user?.role_type);
+  const canApprove = (isHost || isAdmin) && request.status === 'PENDING';
   const companions = request.companions ?? [];
   const timeline = request.approval_history ?? [];
 
@@ -108,6 +109,14 @@ export default function RequestDetail() {
             <h1 className="text-[16px] font-bold" style={{ color: 'var(--color-text)' }}>Request #{request.id}</h1>
             <StatusBadge status={request.status} />
             <StatusBadge status={request.visit_category} />
+            {(request.force_created === 1 || request.force_created === true) && (
+              <span
+                className="text-[10px] px-2 py-0.5 rounded font-medium"
+                style={{ background: '#fef3c7', color: '#92400e' }}
+              >
+                ⚠ Created with conflict
+              </span>
+            )}
           </div>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -134,7 +143,14 @@ export default function RequestDetail() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5 divide-y md:divide-y-0 md:divide-x"
              style={{ '--tw-divide-opacity': 1, borderColor: 'var(--color-border)' }}>
           {[
-            { label: 'Visitor', icon: User, lines: [request.visitor_name ?? request.company_name, request.visitor_email, request.visitor_phone] },
+            {
+            label: 'Visitor', icon: User,
+            lines: [
+              request.visitor_name ?? request.company_name ?? 'Visitor TBD',
+              request.visitor_phone ? `📞 ${request.visitor_phone}` : null,
+              request.visitor_email ? `✉ ${request.visitor_email}` : null,
+            ].filter(Boolean),
+          },
             { label: 'Host',    icon: Building2, lines: [request.host_name, request.host_designation, request.host_email] },
             { label: 'Visit',   icon: Calendar, lines: [fmtDate(request.visit_date), `${request.visit_start_time ?? '—'} – ${request.visit_end_time ?? '—'}`, request.department_name, request.purpose] },
           ].map(({ label, icon: Icon, lines }) => (
@@ -153,6 +169,23 @@ export default function RequestDetail() {
           ))}
         </div>
       </div>
+
+      {/* Inter-unit banner */}
+      {(request.visit_category === 'INTER_UNIT_VISIT' || request.visit_category === 'INTER_UNIT_INVITE') &&
+        request.target_unit_id && (
+          <div
+            className="vms-card p-4 flex items-center gap-3"
+            style={{ background: 'var(--color-info-bg)' }}
+          >
+            <span
+              className="text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: 'var(--color-info)' }}
+            >
+              Inter-Unit Request — Target Unit ID: {request.target_unit_id}
+            </span>
+          </div>
+        )
+      }
 
       {/* Gate pass */}
       {request.pass_number && (

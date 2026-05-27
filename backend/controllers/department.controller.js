@@ -1,36 +1,43 @@
 // backend/controllers/department.controller.js
 'use strict';
 
-const pool = require('../db');
+const { centralPool, getPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
-const { isOrgAdmin } = require('../middlewares/rbac.middleware');
+const { logAudit }               = require('../utils/auditLogger.util');
+const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 
-// ── Public: list departments (no auth — for visitor's dept picker) ─────────────
+// ── Public: list departments (no auth — for visitor public form) ───────────────
 /**
- * GET /api/departments/public
- * Returns all active departments with minimal info.
- * Called by the external visitor's prior-approval form.
+ * GET /api/departments/public?unit_code=HQ
+ * Returns active departments for a given unit (by unit_code).
+ * Called by the external visitor prior-approval form.
  */
 const listPublicDepartments = async (req, res) => {
   try {
-    const { organization_id } = req.query;
-    let rows;
-    if (organization_id) {
-      [rows] = await pool.query(
-        `SELECT id, name, code, description
-         FROM departments
-         WHERE is_active = TRUE AND organization_id = ?
-         ORDER BY name ASC`,
-        [parseInt(organization_id, 10)]
+    const { unit_code, unit_id } = req.query;
+
+    let dbPool = null;
+
+    if (unit_code) {
+      const [unitRows] = await centralPool.query(
+        `SELECT db_name FROM units WHERE code = ? AND is_active = 1 AND db_status = 'ACTIVE'`,
+        [unit_code.toUpperCase().trim()]
       );
+      if (unitRows.length === 0) return sendError(res, 'Unit not found.', 404);
+      dbPool = getPool(unitRows[0].db_name);
+    } else if (unit_id) {
+      const [unitRows] = await centralPool.query(
+        `SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = 'ACTIVE'`, [unit_id]
+      );
+      if (unitRows.length === 0) return sendError(res, 'Unit not found.', 404);
+      dbPool = getPool(unitRows[0].db_name);
     } else {
-      [rows] = await pool.query(
-        `SELECT id, name, code, description
-         FROM departments
-         WHERE is_active = TRUE
-         ORDER BY name ASC`
-      );
+      return sendError(res, 'unit_code or unit_id query param is required.', 400);
     }
+
+    const [rows] = await dbPool.query(
+      `SELECT id, name, code, description FROM departments WHERE is_active = 1 ORDER BY name ASC`
+    );
     return sendSuccess(res, rows, 'Departments fetched successfully.');
   } catch (err) {
     console.error('[DepartmentController] listPublicDepartments error:', err.message);
@@ -42,28 +49,36 @@ const listPublicDepartments = async (req, res) => {
 const listDepartments = async (req, res) => {
   try {
     let rows;
-    if (isOrgAdmin(req.user)) {
-      // org_admin sees all departments with user counts
-      [rows] = await pool.query(
+
+    if (isSuperAdmin(req.user) || isUnitAdmin(req.user)) {
+      // See all departments in their unit DB
+      [rows] = await req.db.query(
         `SELECT d.id, d.name, d.code, d.description, d.is_active, d.created_at,
-                COUNT(u.id) AS user_count
+                d.unit_id,
+                COUNT(DISTINCT u.id) AS user_count,
+                COUNT(DISTINCT des.id) AS designation_count
          FROM departments d
-         LEFT JOIN users u ON u.department_id = d.id AND u.is_active = 1 AND u.deleted_at IS NULL
-         WHERE d.is_active = TRUE AND d.deleted_at IS NULL
+         LEFT JOIN users u   ON u.department_id = d.id AND u.is_active = 1 AND u.deleted_at IS NULL
+         LEFT JOIN designations des ON des.department_id = d.id AND des.is_active = 1
+         WHERE d.is_active = 1
          GROUP BY d.id ORDER BY d.name ASC`
       );
     } else {
-      // Other roles only see their own department
-      [rows] = await pool.query(
+      // dept_admin / employee / security / receptionist → only see their own department
+      [rows] = await req.db.query(
         `SELECT d.id, d.name, d.code, d.description, d.is_active, d.created_at,
-                COUNT(u.id) AS user_count
+                d.unit_id,
+                COUNT(DISTINCT u.id) AS user_count,
+                COUNT(DISTINCT des.id) AS designation_count
          FROM departments d
-         LEFT JOIN users u ON u.department_id = d.id AND u.is_active = 1 AND u.deleted_at IS NULL
-         WHERE d.id = ? AND d.is_active = TRUE AND d.deleted_at IS NULL
+         LEFT JOIN users u   ON u.department_id = d.id AND u.is_active = 1 AND u.deleted_at IS NULL
+         LEFT JOIN designations des ON des.department_id = d.id AND des.is_active = 1
+         WHERE d.id = ? AND d.is_active = 1
          GROUP BY d.id`,
         [req.user.department_id]
       );
     }
+
     return sendSuccess(res, rows, 'Departments fetched successfully.');
   } catch (err) {
     console.error('[DepartmentController] listDepartments error:', err.message);
@@ -72,27 +87,70 @@ const listDepartments = async (req, res) => {
 };
 
 // ── Create Department ─────────────────────────────────────────────────────────
+/**
+ * POST /api/departments
+ * Body: { name, code, description?, unit_id (required for super_admin), designations?: ['Manager','Engineer'] }
+ *
+ * If unit_admin: unit_id is taken from req.user.unit_id
+ * If super_admin: unit_id must be provided in body
+ */
 const createDepartment = async (req, res) => {
   try {
-    const { name, code, description, organization_id } = req.body;
+    const { name, code, description, unit_id, designations = [] } = req.body;
     if (!name || !code) return sendError(res, 'name and code are required.', 400);
 
-    const effectiveOrgId = organization_id || req.user.organization_id;
+    const effectiveUnitId = isUnitAdmin(req.user) ? req.user.unit_id : (unit_id || null);
+    if (!effectiveUnitId) return sendError(res, 'unit_id is required.', 400);
 
-    const [result] = await pool.query(
-      `INSERT INTO departments (organization_id, name, code, description, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, TRUE, NOW(), NOW())`,
-      [effectiveOrgId, name, code, description || null]
-    );
+    const conn = await req.db.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    const [newDept] = await pool.query(
-      `SELECT d.id, d.name, d.code, d.description, d.is_active, d.created_at,
-              0 AS user_count
-       FROM departments d WHERE d.id = ?`,
-      [result.insertId]
-    );
+      const [result] = await conn.query(
+        `INSERT INTO departments (unit_id, name, code, description, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, NOW(), NOW())`,
+        [effectiveUnitId, name, code.toUpperCase().trim(), description || null]
+      );
+      const deptId = result.insertId;
 
-    return sendSuccess(res, newDept[0], 'Department created successfully.', 201);
+      // Bulk insert designations if provided
+      const createdDesignations = [];
+      if (Array.isArray(designations) && designations.length > 0) {
+        for (const desName of designations) {
+          const trimmed = desName.trim();
+          if (!trimmed) continue;
+          try {
+            const [desResult] = await conn.query(
+              `INSERT INTO designations (department_id, name, is_active, created_at, updated_at) VALUES (?, ?, 1, NOW(), NOW())`,
+              [deptId, trimmed]
+            );
+            createdDesignations.push({ id: desResult.insertId, name: trimmed });
+          } catch (_) {} // skip duplicates
+        }
+      }
+
+      await conn.commit();
+
+      await logAudit({
+        db:        req.db,
+        userId:    req.user.id,
+        action:    'CREATE_DEPARTMENT',
+        module:    'ADMIN',
+        recordType: 'DEPARTMENT',
+        recordId:  deptId,
+        newValues: { name, code, designation_count: createdDesignations.length },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || null,
+      });
+
+      const [newDept] = await req.db.query('SELECT * FROM departments WHERE id = ?', [deptId]);
+      return sendSuccess(res, { ...newDept[0], designations: createdDesignations }, 'Department created successfully.', 201);
+    } catch (txErr) {
+      await conn.rollback();
+      throw txErr;
+    } finally {
+      conn.release();
+    }
   } catch (err) {
     console.error('[DepartmentController] createDepartment error:', err.message);
     if (err.code === 'ER_DUP_ENTRY') return sendError(res, 'A department with this code already exists.', 409);
@@ -106,23 +164,37 @@ const updateDepartment = async (req, res) => {
     const { id } = req.params;
     const { name, code, description } = req.body;
 
-    const [existing] = await pool.query(`SELECT id FROM departments WHERE id = ? AND deleted_at IS NULL`, [id]);
+    const [existing] = await req.db.query('SELECT id FROM departments WHERE id = ?', [id]);
     if (existing.length === 0) return sendError(res, 'Department not found.', 404);
 
-    await pool.query(
-      `UPDATE departments SET name = COALESCE(?, name), code = COALESCE(?, code),
-       description = COALESCE(?, description), updated_at = NOW() WHERE id = ?`,
-      [name || null, code || null, description || null, id]
+    await req.db.query(
+      `UPDATE departments SET
+         name        = COALESCE(?, name),
+         code        = COALESCE(?, code),
+         description = COALESCE(?, description),
+         updated_at  = NOW()
+       WHERE id = ?`,
+      [name || null, code ? code.toUpperCase().trim() : null, description || null, id]
     );
 
-    const [updated] = await pool.query(
-      `SELECT d.id, d.name, d.code, d.description, d.is_active,
-              COUNT(u.id) AS user_count
+    const [updated] = await req.db.query(
+      `SELECT d.*, COUNT(DISTINCT u.id) AS user_count
        FROM departments d
        LEFT JOIN users u ON u.department_id = d.id AND u.is_active = 1
        WHERE d.id = ? GROUP BY d.id`,
       [id]
     );
+
+    await logAudit({
+      db:        req.db,
+      userId:    req.user.id,
+      action:    'UPDATE_DEPARTMENT',
+      module:    'ADMIN',
+      recordType: 'DEPARTMENT',
+      recordId:  parseInt(id),
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] || null,
+    });
 
     return sendSuccess(res, updated[0], 'Department updated successfully.');
   } catch (err) {
@@ -136,7 +208,8 @@ const updateDepartment = async (req, res) => {
 const deactivateDepartment = async (req, res) => {
   try {
     const { id } = req.params;
-    const [[deptData]] = await pool.query(
+
+    const [[deptData]] = await req.db.query(
       `SELECT d.id, COUNT(u.id) AS user_count
        FROM departments d
        LEFT JOIN users u ON u.department_id = d.id AND u.is_active = 1 AND u.deleted_at IS NULL
@@ -149,7 +222,7 @@ const deactivateDepartment = async (req, res) => {
       return sendError(res, `Cannot deactivate — ${deptData.user_count} user(s) are still assigned.`, 409);
     }
 
-    await pool.query(`UPDATE departments SET is_active = FALSE, updated_at = NOW() WHERE id = ?`, [id]);
+    await req.db.query('UPDATE departments SET is_active = 0, updated_at = NOW() WHERE id = ?', [id]);
     return sendSuccess(res, { id: parseInt(id) }, 'Department deactivated successfully.');
   } catch (err) {
     console.error('[DepartmentController] deactivateDepartment error:', err.message);
@@ -157,4 +230,6 @@ const deactivateDepartment = async (req, res) => {
   }
 };
 
-module.exports = { listPublicDepartments, listDepartments, createDepartment, updateDepartment, deactivateDepartment };
+module.exports = {
+  listPublicDepartments, listDepartments, createDepartment, updateDepartment, deactivateDepartment
+};

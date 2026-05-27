@@ -85,6 +85,11 @@ export default function GatePass() {
  <p className="text-3xl font-bold text-loud leading-tight mb-4">
  {passData.visitor_name}
  </p>
+ {passData.visitor_phone && (
+ <p className="text-sm text-muted mb-4 flex items-center gap-1">
+ 📞 {passData.visitor_phone}
+ </p>
+ )}
 
  <div className="space-y-3">
  <div>
@@ -105,7 +110,7 @@ export default function GatePass() {
  <div className="shrink-0 p-2 bg-white rounded-md shadow-soft-sm border border-subtle">
  {passData.qr_code_path ? (
  <img
- src={`http://localhost:5000/${passData.qr_code_path}`}
+ src={`${import.meta.env.VITE_API_URL?.replace('/api', '') ?? 'http://localhost:5000'}/${passData.qr_code_path}`}
  alt="QR Code"
  className="w-24 h-24 object-contain"
  crossOrigin="anonymous"

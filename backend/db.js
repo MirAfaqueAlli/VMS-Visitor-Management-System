@@ -1,14 +1,9 @@
-const mysql = require('mysql2/promise');
-require('dotenv').config();
+// backend/db.js
+// Re-exports the centralPool from dbManager.
+// Controllers being migrated to multi-DB should use req.db instead.
+// This file keeps backward compatibility during the migration.
+'use strict';
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+const { centralPool } = require('./services/dbManager');
 
-module.exports = pool;
+module.exports = centralPool;

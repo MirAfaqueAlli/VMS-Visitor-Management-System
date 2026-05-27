@@ -14,6 +14,17 @@ import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import StatusBadge from "../../components/shared/StatusBadge";
 
+const CATEGORY_LABELS = {
+  EMP:               'Employee Visit',
+  EMPLOYEE_VISIT:    'Employee Visit',
+  INTER_UNIT_VISIT:  'Employee Visit',
+  INTER_UNIT_INVITE: 'Employee Visit',
+  VENDOR:            'Vendor',
+  PRIOR:             'Prior Approval',
+  SPOT:              'Walk-in',
+  PERSONAL_VISIT:    'Personal Visit',
+};
+
 export default function RequestList() {
  const [requests, setRequests] = useState([]);
  const [loading, setLoading] = useState(true);
@@ -115,10 +126,12 @@ export default function RequestList() {
  }}
  className="block w-full sm:w-48 pl-4 pr-10 py-3 bg-bg-primary border border-subtle rounded-full text-loud focus:outline-none focus:ring-2 focus:ring-accent appearance-none cursor-pointer"
  >
- <option value="">All Statuses</option>
- <option value="PENDING">Pending</option>
- <option value="APPROVED">Approved</option>
- <option value="REJECTED">Rejected</option>
+  <option value="">All Statuses</option>
+  <option value="PENDING">Pending</option>
+  <option value="APPROVED">Approved</option>
+  <option value="REJECTED">Rejected</option>
+  <option value="COMPLETED">Completed</option>
+  <option value="CANCELLED">Cancelled</option>
  </select>
  <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
  <Filter className="h-4 w-4 text-faint" />
@@ -174,16 +187,22 @@ export default function RequestList() {
  key={request.id}
  className="border-b border-subtle hover:bg-bg-primary/50 transition-colors duration-300"
  >
- <td className="py-4 px-4">
- <div className="font-medium text-loud">
- {request.Visitor?.full_name ||
- request.visitor_name ||
- "N/A"}
- </div>
- <div className="mt-1">
- <StatusBadge status={request.visit_category} />
- </div>
- </td>
+  <td className="py-4 px-4">
+  <div className="font-medium text-loud">
+  {request.visitor_name || request.company_name || "N/A"}
+  </div>
+  {request.visitor_phone && (
+  <div className="text-xs text-faint mt-0.5">{request.visitor_phone}</div>
+  )}
+  <div className="mt-1">
+  <span
+    className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
+    style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
+  >
+    {CATEGORY_LABELS[request.visit_category] ?? request.visit_category}
+  </span>
+  </div>
+  </td>
  <td className="py-4 px-4">
  <div className="text-loud flex items-center gap-1.5">
  <UserCheck

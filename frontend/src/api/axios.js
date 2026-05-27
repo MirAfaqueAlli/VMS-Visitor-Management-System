@@ -14,6 +14,21 @@ apiClient.interceptors.request.use(
  if (token) {
  config.headers.Authorization = `Bearer ${token}`;
  }
+
+ // Support dynamic unit overriding for central admins
+ const activeUnitStr = localStorage.getItem("vms_active_unit");
+ if (activeUnitStr) {
+   try {
+     const activeUnit = JSON.parse(activeUnitStr);
+     if (activeUnit.id && activeUnit.db_name) {
+       config.headers["X-Unit-Id"] = activeUnit.id;
+       config.headers["X-Unit-Db"] = activeUnit.db_name;
+     }
+   } catch (e) {
+     console.error("Failed to parse active unit:", e);
+   }
+ }
+
  return config;
  },
  (error) => Promise.reject(error),

@@ -8,16 +8,21 @@ require("dotenv").config();
 const db = require("./db");
 
 const authRoutes = require("./routes/auth.routes");
+const setupRoutes        = require("./routes/setup.routes");
 const visitorRoutes = require("./routes/visitor.routes");
 const visitRequestRoutes = require("./routes/visitRequest.routes");
 const approvalRoutes = require("./routes/approval.routes");
 const otpRoutes = require("./routes/otp.routes");
 const gateRoutes = require("./routes/gate.routes");
 const gatePassRoutes = require("./routes/gatePass.routes");
-const userRoutes = require("./routes/user.routes");
-const reportRoutes = require("./routes/report.routes");
-const departmentRoutes = require("./routes/department.routes");
+const userRoutes        = require("./routes/user.routes");
+const reportRoutes      = require("./routes/report.routes");
+const departmentRoutes  = require("./routes/department.routes");
 const organizationRoutes = require("./routes/organization.routes");
+const unitRoutes        = require("./routes/unit.routes");
+const designationRoutes = require("./routes/designation.routes");
+const centralUserRoutes = require("./routes/centralUser.routes");
+const archiveRoutes     = require("./routes/archive.routes");
 
 const app = express();
 
@@ -52,6 +57,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ── API Routes ──────────────────────────────────────────────────────────────
+app.use("/api/setup",        setupRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/visitors", visitorRoutes);
 app.use("/api/visit-requests", visitRequestRoutes);
@@ -61,24 +67,26 @@ app.use("/api/gate", gateRoutes);
 app.use("/api/passes", gatePassRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/reports", reportRoutes);
-app.use("/api/departments", departmentRoutes);
-app.use("/api/organizations", organizationRoutes);
+app.use("/api/departments",    departmentRoutes);
+app.use("/api/organizations",  organizationRoutes);
+app.use("/api/units",          unitRoutes);
+app.use("/api/designations",   designationRoutes);
+app.use("/api/central-users",  centralUserRoutes);
+app.use("/api/archive",        archiveRoutes);
 
 // Basic health check route
 app.get("/api/health", async (req, res) => {
   try {
-    await db.query("SELECT 1");
-    res
-      .status(200)
-      .json({
-        status: "OK",
-        message: "Server is running securely and DB is connected",
-      });
-  } catch (error) {
-    console.error("Database connection failed:", error);
-    res
-      .status(500)
-      .json({ status: "ERROR", message: "Database connection failed" });
+    const { centralPool } = require('./services/dbManager');
+    await centralPool.query("SELECT 1");
+    res.status(200).json({
+      status:    "OK",
+      message:   "VMS backend running — central DB connected",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("Health check failed:", err.message);
+    res.status(500).json({ status: "ERROR", message: "Central DB connection failed" });
   }
 });
 
