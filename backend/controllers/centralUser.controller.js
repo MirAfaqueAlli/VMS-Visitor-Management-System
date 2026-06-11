@@ -2,6 +2,7 @@
 'use strict';
 
 const bcrypt = require('bcrypt');
+const { validatePassword } = require('../utils/passwordValidator.util');
 const { centralPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit } = require('../utils/auditLogger.util');
@@ -43,6 +44,10 @@ const createCentralUser = async (req, res) => {
     if (role_type === 'super_admin') {
       return sendError(res, 'Additional super_admin accounts cannot be created through the UI. Contact the system DBA.', 403);
     }
+
+    // Enforce password policy
+    const { valid, errors } = validatePassword(password);
+    if (!valid) return sendError(res, errors[0], 400);
 
     const hash = await bcrypt.hash(password, 12);
 

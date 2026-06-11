@@ -96,7 +96,20 @@ CREATE TABLE IF NOT EXISTS global_audit_logs (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
+-- Public visitor OTP logs (central DB — no unit affiliation required)
+CREATE TABLE IF NOT EXISTS public_otp_logs (
+    id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    identifier       VARCHAR(255)              NOT NULL,
+    identifier_type  ENUM('phone','email')     NOT NULL,
+    otp_code         VARCHAR(6)                NOT NULL,
+    is_used          BOOLEAN                   NOT NULL DEFAULT FALSE,
+    expires_at       DATETIME                  NOT NULL,
+    created_at       DATETIME                  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_pub_otp (identifier, identifier_type, is_used)
+);
+
 SET FOREIGN_KEY_CHECKS = 1;
+
 
 -- Roles
 INSERT INTO roles (name, slug, description, is_active) VALUES

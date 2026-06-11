@@ -4,6 +4,8 @@ import { Plus, X, Building2, Users, Layers, CheckCircle, AlertCircle, Globe } fr
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
+import PasswordStrength from '../../components/PasswordStrength';
+import { validatePassword } from '../../utils/passwordValidator';
 
 const EMPTY_UNIT = {
   name: '', code: '', city: '', state: '', phone: '', email: '',
@@ -65,6 +67,10 @@ export default function UnitManagement() {
         if (!nameVal || !emailVal || !passVal || !codeVal) {
           return toast.error('All admin fields (Name, Email, Password, and Employee Code) are required.');
         }
+        const { valid: pwValid } = validatePassword(passVal);
+        if (!pwValid) {
+          return toast.error('Admin password does not meet the strength requirements.');
+        }
       }
     }
     setSaving(true);
@@ -108,7 +114,7 @@ export default function UnitManagement() {
         </div>
 
         {/* Stats row */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
             { label: 'Total Units',  value: units.length,                                        icon: Building2,    color: 'var(--color-info)' },
             { label: 'Active',       value: units.filter(u => u.db_status === 'ACTIVE').length,  icon: CheckCircle,  color: '#22c55e' },
@@ -138,9 +144,8 @@ export default function UnitManagement() {
           <div className="vms-card flex flex-col items-center justify-center py-16 gap-3">
             <Globe size={32} style={{ color: 'var(--color-text-faint)' }} />
             <p className="text-[13px]" style={{ color: 'var(--color-text-faint)' }}>
-              No units yet. Create your first unit to get started.
+              No units yet. Use the <strong>Create Unit</strong> button above to get started.
             </p>
-            <button className="btn-primary" onClick={openCreate}><Plus size={14} /> Create Unit</button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -190,7 +195,7 @@ export default function UnitManagement() {
                           className={`px-2 py-0.5 text-[10px] font-semibold rounded transition-all ${
                             activeUnit?.id === unit.id
                               ? 'bg-green-500/10 text-green-600 border border-green-500/20'
-                              : 'bg-amber-500/10 text-amber-600 border border-amber-500/20 hover:bg-amber-500 hover:text-white'
+                              : 'bg-blue-500/10 text-blue-600 border border-blue-500/20 hover:bg-blue-500 hover:text-white'
                           }`}
                         >
                           {activeUnit?.id === unit.id ? 'Managing' : 'Manage'}
@@ -218,12 +223,14 @@ export default function UnitManagement() {
 
       {/* Create Unit slide-over — fixed full-height panel */}
       <aside
-        className={`fixed right-0 top-0 h-full z-50 flex flex-col transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
+        className="fixed right-0 top-0 h-full z-50 flex flex-col"
         style={{
-          width:      '600px',
+          width: 'min(600px, 100vw)',
           background: 'var(--color-bg-secondary)',
           borderLeft: '1px solid var(--color-border)',
-          boxShadow:  '-8px 0 32px rgba(0,0,0,0.15)',
+          boxShadow: '-8px 0 32px rgba(0,0,0,0.15)',
+          transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
+          transition: 'transform 300ms ease-in-out',
         }}
       >
         {/* Header */}
@@ -254,7 +261,7 @@ export default function UnitManagement() {
               Unit Details
             </p>
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Unit Name *</label>
                   <input className={inputCls} value={unitForm.name} onChange={setUnit('name')} placeholder="e.g. Head Office" />
@@ -275,7 +282,7 @@ export default function UnitManagement() {
                 <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>City</label>
                 <input className={inputCls} value={unitForm.city} onChange={setUnit('city')} placeholder="e.g. Mumbai" />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>State</label>
                   <input className={inputCls} value={unitForm.state} onChange={setUnit('state')} placeholder="Maharashtra" />
@@ -311,7 +318,7 @@ export default function UnitManagement() {
 
             {includeAdmin && (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Full Name *</label>
                     <input className={inputCls} value={adminForm.full_name} onChange={setAdmin('full_name')} placeholder="Admin Name" />
@@ -321,7 +328,7 @@ export default function UnitManagement() {
                     <input className={inputCls} type="email" value={adminForm.email} onChange={setAdmin('email')} placeholder="admin@unit.com" />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Phone</label>
                     <input className={inputCls} value={adminForm.phone} onChange={setAdmin('phone')} placeholder="+91 9000000001" />
@@ -333,7 +340,8 @@ export default function UnitManagement() {
                 </div>
                 <div>
                   <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Password *</label>
-                  <input className={inputCls} type="password" value={adminForm.password} onChange={setAdmin('password')} placeholder="Minimum 8 characters" autoComplete="new-password" />
+                  <input className={inputCls} type="password" value={adminForm.password} onChange={setAdmin('password')} placeholder="Min 8 chars, uppercase, number, symbol" autoComplete="new-password" />
+                  <PasswordStrength password={adminForm.password} />
                 </div>
 
                 {/* Info box */}
@@ -362,7 +370,7 @@ export default function UnitManagement() {
           <button className="btn-primary flex-1" onClick={handleSubmit} disabled={saving}>
             {saving ? (
               <span className="flex items-center gap-1.5 justify-center">
-                <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'rgba(15,23,42,0.2)', borderTopColor: '#0f172a' }} />
+                <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} />
                 Provisioning DB…
               </span>
             ) : (

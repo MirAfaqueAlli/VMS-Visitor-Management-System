@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Check,
@@ -14,6 +15,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  AlertTriangle,
+  X,
 } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
@@ -24,16 +27,15 @@ const ALL_CATEGORIES = [
   { id: "EMPLOYEE_VISIT", label: "Employee Visit",      desc: "Visit or invite a fellow employee" },
   { id: "PERSONAL_VISIT", label: "Personal Visit",      desc: "Family / friend visiting you" },
   { id: "VENDOR",         label: "Vendor / Contractor", desc: "Service and maintenance vendor" },
-  { id: "PRIOR",          label: "Prior Approval",      desc: "Pre-scheduled official visit" },
   { id: "SPOT",           label: "Spot Walk-in",        desc: "Urgent unplanned visit" },
 ];
 
 const ROLE_CATEGORIES = {
   security:     ["SPOT"],
   employee:     ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR"],
-  unit_admin:   ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "PRIOR", "SPOT"],
-  receptionist: ["EMPLOYEE_VISIT", "VENDOR", "PRIOR", "SPOT"],
-  org_admin:    ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "PRIOR", "SPOT"],
+  unit_admin:   ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT"],
+  receptionist: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
+  org_admin:    ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT"],
 };
 
 export default function NewRequest() {
@@ -44,6 +46,9 @@ export default function NewRequest() {
   const [hosts, setHosts] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [selectedDeptId, setSelectedDeptId] = useState("");
+
+  // ── Conflict confirmation modal state ─────────────────────────────────────────
+  const [conflictModal, setConflictModal] = useState(null); // null | { types, host_conflict, visitor_conflict, pendingPayload }
 
   // ── Visitor phone lookup state ────────────────────────────────────────────────
   const [visitorLookupState, setVisitorLookupState] = useState("idle"); // idle | loading | found | not_found
@@ -69,6 +74,19 @@ export default function NewRequest() {
   const [empDeptId,      setEmpDeptId]      = useState("");
   const [employees,      setEmployees]      = useState([]);
   const [selectedEmpId,  setSelectedEmpId]  = useState("");
+
+  // ── Unit Admin EMPLOYEE_VISIT state ──────────────────────────────────────────
+  const [adminVisitorDeptId, setAdminVisitorDeptId] = useState("");
+  const [adminVisitorEmpId, setAdminVisitorEmpId] = useState("");
+  const [adminVisitorAllEmployees, setAdminVisitorAllEmployees] = useState([]);
+  const [adminVisitorEmployees, setAdminVisitorEmployees] = useState([]);
+
+  const [adminHostUnitId, setAdminHostUnitId] = useState("");
+  const [adminHostDeptId, setAdminHostDeptId] = useState("");
+  const [adminHostEmpId, setAdminHostEmpId] = useState("");
+  const [adminHostDepts, setAdminHostDepts] = useState([]);
+  const [allAdminHostEmployees, setAllAdminHostEmployees] = useState([]);
+  const [adminHostEmployees, setAdminHostEmployees] = useState([]);
 
   const role = user?.role_type || user?.role || "employee";
   const allowedIds = ROLE_CATEGORIES[role] ?? ["EMPLOYEE_VISIT", "VENDOR"];
@@ -120,6 +138,18 @@ export default function NewRequest() {
     };
     fetchDropdownData();
   }, []);
+
+  // Fetch all employees of the current unit admin's unit
+  useEffect(() => {
+    if (user?.role_type === "unit_admin" && formData.visit_category === "EMPLOYEE_VISIT") {
+      apiClient.get("/users/hosts", { params: { include_all: 'true', roles: 'employee', _t: Date.now() } })
+        .then(res => {
+          setAdminVisitorAllEmployees(res.data?.data ?? []);
+          setAdminVisitorEmployees(res.data?.data ?? []);
+        })
+        .catch(() => {});
+    }
+  }, [user?.role_type, formData.visit_category]);
 
   // ── Visitor phone lookup ───────────────────────────────────────────────────────
   const handleVisitorLookup = async () => {
@@ -200,10 +230,35 @@ export default function NewRequest() {
       .catch(() => {});
   }, []);
 
+  // ── Time helper: add minutes to "HH:MM" string ────────────────────────────────
+  const addMinutesToTime = (timeStr, minutes) => {
+    const [h, m] = timeStr.split(':').map(Number);
+    const total = h * 60 + m + minutes;
+    const hh = String(Math.floor(total / 60) % 24).padStart(2, '0');
+    const mm = String(total % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
+
+  const getCurrentTimeHHMM = () => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  };
+
   // ── Standard handlers ─────────────────────────────────────────────────────────
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [name]: value };
+      // Auto-fill end time when start time is set
+      if (name === 'visit_start_time' && value) {
+        const auto30 = addMinutesToTime(value, 30);
+        // Only auto-fill if end is empty OR currently before/equal to new start
+        if (!prev.visit_end_time || prev.visit_end_time <= value) {
+          next.visit_end_time = auto30;
+        }
+      }
+      return next;
+    });
   };
 
   const handleDeptChange = async (e) => {
@@ -214,7 +269,9 @@ export default function NewRequest() {
 
     if (deptId) {
       try {
-        const hostsRes = await apiClient.get(`/users/hosts?department_id=${deptId}`);
+        const hostsRes = await apiClient.get(`/users/hosts`, {
+          params: { department_id: deptId, _t: Date.now() }
+        });
         setHosts(hostsRes.data.data || []);
       } catch (err) {
         console.warn("Failed to load hosts", err);
@@ -241,6 +298,20 @@ export default function NewRequest() {
     setEmpDepartments([]);
     setSelectedEmpId("");
     setEmployees([]);
+    setAllUnitEmployees([]);
+  };
+
+  const resetAdminEmpVisitState = () => {
+    setAdminVisitorDeptId("");
+    setAdminVisitorEmpId("");
+    setAdminVisitorAllEmployees([]);
+    setAdminVisitorEmployees([]);
+    setAdminHostUnitId("");
+    setAdminHostDeptId("");
+    setAdminHostEmpId("");
+    setAdminHostDepts([]);
+    setAllAdminHostEmployees([]);
+    setAdminHostEmployees([]);
   };
 
   const handleEmpUnitChange = async (e) => {
@@ -250,35 +321,131 @@ export default function NewRequest() {
     setEmpDepartments([]);
     setSelectedEmpId("");
     setEmployees([]);
+    setAllUnitEmployees([]);
     if (uId) {
       try {
-        const res = await apiClient.get("/departments/public", { params: { unit_id: uId } });
-        setEmpDepartments(res.data?.data ?? []);
-      } catch {
-        toast.error("Failed to load departments.");
+        // Load departments and ALL employees in this unit independently
+        const _t = Date.now(); // cache-buster — prevents 304 stale responses
+        const [deptResult, empResult] = await Promise.allSettled([
+          apiClient.get("/departments/public", { params: { unit_id: uId, _t } }),
+          apiClient.get("/users/hosts", { params: { unit_id: uId, include_all: 'true', roles: 'employee', _t } }),
+        ]);
+
+        let hasDepts = false;
+        // Handle departments (independent of employee fetch)
+        if (deptResult.status === 'fulfilled') {
+          const depts = deptResult.value.data?.data ?? [];
+          setEmpDepartments(depts);
+          if (depts.length > 0) {
+            hasDepts = true;
+          }
+        } else {
+          console.error("[NewRequest] Failed to load departments for unit", uId, deptResult.reason);
+        }
+
+        // Handle employees (independent of department fetch)
+        if (empResult.status === 'fulfilled') {
+          const list = (empResult.value.data?.data ?? []).filter(
+            (emp) => !(String(emp.id) === String(user?.id) && String(emp.unit_id) === String(user?.unit_id))
+          );
+          console.log("[NewRequest] Loaded", empResult.value.data?.data?.length, "employees from unit", uId, "→ after self-filter:", list.length);
+          setAllUnitEmployees(list);
+          // If there are departments, we force department selection before listing employees
+          if (hasDepts) {
+            setEmployees([]);
+          } else {
+            setEmployees(list);
+          }
+        } else {
+          console.error("[NewRequest] Failed to load employees for unit", uId, empResult.reason);
+          toast.error("Failed to load employees from the selected unit.");
+        }
+      } catch (err) {
+        console.error("[NewRequest] Unexpected error in handleEmpUnitChange:", err);
+        toast.error("Failed to load unit data.");
       }
     }
   };
 
-  const handleEmpDeptChange = async (e) => {
+
+  const [allUnitEmployees, setAllUnitEmployees] = useState([]);
+
+  const handleEmpDeptChange = (e) => {
     const dId = e.target.value;
     setEmpDeptId(dId);
     setSelectedEmpId("");
-    setEmployees([]);
-    if (dId && selectedUnitId) {
+    if (!dId) {
+      // Department selection is mandatory; clear employees if unselected
+      setEmployees([]);
+    } else {
+      // Filter client-side strictly by selected department
+      const filtered = allUnitEmployees.filter(
+        (emp) => String(emp.department_id) === String(dId) && !(String(emp.id) === String(user?.id) && String(emp.unit_id) === String(user?.unit_id))
+      );
+      setEmployees(filtered);
+    }
+  };
+
+  const handleAdminVisitorDeptChange = (e) => {
+    const dId = e.target.value;
+    setAdminVisitorDeptId(dId);
+    setAdminVisitorEmpId("");
+    if (!dId) {
+      setAdminVisitorEmployees(adminVisitorAllEmployees);
+    } else {
+      const filtered = adminVisitorAllEmployees.filter(emp => String(emp.department_id) === String(dId));
+      setAdminVisitorEmployees(filtered);
+    }
+  };
+
+  const handleAdminHostUnitChange = async (e) => {
+    const uId = e.target.value;
+    setAdminHostUnitId(uId);
+    setAdminHostDeptId("");
+    setAdminHostEmpId("");
+    setAdminHostDepts([]);
+    setAdminHostEmployees([]);
+    setAllAdminHostEmployees([]);
+    if (uId) {
       try {
-        const res = await apiClient.get("/users/hosts", {
-          params: { department_id: dId, unit_id: selectedUnitId },
-        });
-        setEmployees(res.data?.data ?? []);
-      } catch {
-        toast.error("Failed to load employees.");
+        const _t = Date.now();
+        const [deptResult, empResult] = await Promise.allSettled([
+          apiClient.get("/departments/public", { params: { unit_id: uId, _t } }),
+          apiClient.get("/users/hosts", { params: { unit_id: uId, include_all: 'true', roles: 'employee', _t } }),
+        ]);
+
+        if (deptResult.status === 'fulfilled') {
+          setAdminHostDepts(deptResult.value.data?.data ?? []);
+        }
+        if (empResult.status === 'fulfilled') {
+          setAllAdminHostEmployees(empResult.value.data?.data ?? []);
+          setAdminHostEmployees(empResult.value.data?.data ?? []);
+        }
+      } catch (err) {
+        console.error(err);
       }
+    }
+  };
+
+  const handleAdminHostDeptChange = (e) => {
+    const dId = e.target.value;
+    setAdminHostDeptId(dId);
+    setAdminHostEmpId("");
+    if (!dId) {
+      setAdminHostEmployees(allAdminHostEmployees);
+    } else {
+      const filtered = allAdminHostEmployees.filter(emp => String(emp.department_id) === String(dId));
+      setAdminHostEmployees(filtered);
     }
   };
 
   // ── Category change ────────────────────────────────────────────────────────────
   const handleCategoryChange = (category) => {
+    const isSpot = category === 'SPOT';
+    const isSecurity = ['security', 'receptionist', 'unit_admin'].includes(role);
+    const now = isSpot && isSecurity ? getCurrentTimeHHMM() : '';
+    const end = now ? addMinutesToTime(now, 30) : '';
+
     setFormData((prev) => ({
       ...prev,
       visit_category: category,
@@ -289,12 +456,15 @@ export default function NewRequest() {
       visitor_name:  "",
       visitor_email: "",
       visitor_id:    "",
+      visit_start_time: now,
+      visit_end_time:   end,
     }));
     resetVisitorLookup();
     setSelectedDeptId("");
     setHosts([]);
     setVisitMode("visiting");
     resetEmpVisitState();
+    resetAdminEmpVisitState();
   };
 
   // ── Companions ─────────────────────────────────────────────────────────────────
@@ -318,32 +488,34 @@ export default function NewRequest() {
   };
 
   // ── Submit ─────────────────────────────────────────────────────────────────────
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+  const buildPayload = () => {
+    const payload = { ...formData };
+    const cat = payload.visit_category;
 
-    try {
-      const payload = { ...formData };
-      const cat = payload.visit_category;
+    if (cat !== "VENDOR") {
+      delete payload.company_name;
+      delete payload.vendor_email;
+      delete payload.contact_person;
+      delete payload.gst_number;
+      delete payload.work_order_ref;
+      delete payload.service_type;
+    }
 
-      // Clean up vendor-only fields
-      if (cat !== "VENDOR") {
-        delete payload.company_name;
-        delete payload.vendor_email;
-        delete payload.contact_person;
-        delete payload.gst_number;
-        delete payload.work_order_ref;
-        delete payload.service_type;
-      }
-
-      // ── EMPLOYEE_VISIT special payload ────────────────────────────────────
-      if (cat === "EMPLOYEE_VISIT") {
-        const isVisiting = visitMode === "visiting"; // I am the visitor
-        const isHosting  = visitMode === "hosting";  // I am the host
+    if (cat === "EMPLOYEE_VISIT") {
+      if (isUnitAdmin) {
+        const selectedVisitor = adminVisitorAllEmployees.find(emp => String(emp.id) === String(adminVisitorEmpId));
+        payload.visitor_name   = selectedVisitor?.full_name || null;
+        payload.visitor_phone  = selectedVisitor?.phone     || null;
+        payload.visitor_email  = selectedVisitor?.email     || null;
+        payload.host_user_id   = Number(adminHostEmpId)     || null;
+        payload.department_id  = Number(adminHostDeptId)    || null;
+        payload.target_unit_id = Number(adminHostUnitId)    || null;
+        payload.request_source = "HOST";
+      } else {
+        const isVisiting = visitMode === "visiting";
+        const isHosting  = visitMode === "hosting";
         payload.request_source = isVisiting ? "SELF" : "HOST";
-
         if (isVisiting) {
-          // Visitor = me; host = selected employee
           payload.visitor_name   = user?.full_name || null;
           payload.visitor_phone  = user?.phone     || null;
           payload.visitor_email  = user?.email     || null;
@@ -351,50 +523,68 @@ export default function NewRequest() {
           payload.department_id  = Number(empDeptId)     || null;
           payload.target_unit_id = Number(selectedUnitId) || null;
         } else if (isHosting) {
-          // Host = me; visitor = selected employee
           const selectedEmp = employees.find(emp => String(emp.id) === String(selectedEmpId));
           payload.visitor_name   = selectedEmp?.full_name || null;
           payload.visitor_phone  = selectedEmp?.phone     || null;
           payload.visitor_email  = selectedEmp?.email     || null;
           payload.target_unit_id = Number(selectedUnitId) || null;
-          // host_user_id and department_id resolved by backend from req.user
         }
-
-        // Convert numeric fields
-        if (payload.host_user_id)   payload.host_user_id   = Number(payload.host_user_id);
-        if (payload.department_id)  payload.department_id  = Number(payload.department_id);
-        if (payload.target_unit_id) payload.target_unit_id = Number(payload.target_unit_id);
-      } else {
-        // Visitor details come directly from formData (phone lookup or manual entry)
-        // The backend auto-finds or auto-creates the visitor record from the phone number.
-        payload.visitor_phone = formData.visitor_phone?.trim() || null;
-        // For vendors: visitor_name = contact_person (who physically visits), fallback to company_name
-        if (cat === 'VENDOR') {
-          payload.visitor_name  = formData.contact_person?.trim() || formData.company_name?.trim() || null;
-          payload.visitor_email = formData.vendor_email?.trim() || null;
-        } else {
-          payload.visitor_name  = formData.visitor_name?.trim() || null;
-          payload.visitor_email = formData.visitor_email?.trim() || null;
-        }
-        payload.visitor_id    = null; // backend resolves this
-
-        // Standard numeric conversions — use || null so 0 doesn't become a bad FK
-        payload.host_user_id    = Number(payload.host_user_id)  || user?.id  || null;
-        payload.department_id   = Number(payload.department_id) || user?.department_id || null;
-        payload.organization_id = Number(payload.organization_id) || null;
       }
+      if (payload.host_user_id)   payload.host_user_id   = Number(payload.host_user_id);
+      if (payload.department_id)  payload.department_id  = Number(payload.department_id);
+      if (payload.target_unit_id) payload.target_unit_id = Number(payload.target_unit_id);
+    } else {
+      payload.visitor_phone = formData.visitor_phone?.trim() || null;
+      if (cat === 'VENDOR') {
+        payload.visitor_name  = formData.contact_person?.trim() || formData.company_name?.trim() || null;
+        payload.visitor_email = formData.vendor_email?.trim() || null;
+      } else {
+        payload.visitor_name  = formData.visitor_name?.trim() || null;
+        payload.visitor_email = formData.visitor_email?.trim() || null;
+      }
+      payload.visitor_id    = null;
+      payload.host_user_id    = Number(payload.host_user_id)  || user?.id  || null;
+      payload.department_id   = Number(payload.department_id) || user?.department_id || null;
+      payload.organization_id = Number(payload.organization_id) || null;
+    }
 
-      payload.accompanying_count = Number(payload.accompanying_count);
-      if (!payload.visit_start_time) payload.visit_start_time = null;
-      if (!payload.visit_end_time)   payload.visit_end_time   = null;
-      // visitor_id is resolved by backend; remove it from payload to avoid confusion
-      delete payload.visitor_id;
+    payload.accompanying_count = Number(payload.accompanying_count);
+    if (!payload.visit_start_time) payload.visit_start_time = null;
+    if (!payload.visit_end_time)   payload.visit_end_time   = null;
+    delete payload.visitor_id;
+    return payload;
+  };
 
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    // ── Time order validation ──────────────────────────────────────────────────
+    const { visit_start_time, visit_end_time } = formData;
+    if (visit_start_time && visit_end_time && visit_end_time <= visit_start_time) {
+      toast.error('End time must be after start time.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const payload = buildPayload();
       console.log('[NewRequest] Submitting payload:', JSON.stringify(payload, null, 2));
       await apiClient.post("/visit-requests", payload);
       toast.success("Visit request created successfully");
       navigate("/requests");
     } catch (error) {
+      const data = error.response?.data;
+      // ── Conflict detected → show confirmation modal instead of toast ──────
+      if (error.response?.status === 409 && data?.conflict) {
+        setConflictModal({
+          types:           data.types || [],
+          host_conflict:   data.host_conflict   || null,
+          visitor_conflict: data.visitor_conflict || null,
+          pendingPayload:  buildPayload(),
+        });
+        setLoading(false);
+        return;
+      }
       console.error('[NewRequest] Submit error:', error.response?.data);
       const zodErrors = error.response?.data?.errors;
       if (Array.isArray(zodErrors) && zodErrors.length > 0) {
@@ -403,22 +593,40 @@ export default function NewRequest() {
           .join(' | ');
         toast.error(`Validation failed — ${details}`, { duration: 8000 });
       } else {
-        toast.error(error.response?.data?.message || "Failed to create request");
+        toast.error(data?.message || "Failed to create request");
       }
     } finally {
       setLoading(false);
     }
   };
 
+  // ── Force submit (override conflict) ──────────────────────────────────────────
+  const handleForceSubmit = async () => {
+    if (!conflictModal) return;
+    setLoading(true);
+    setConflictModal(null);
+    try {
+      const payload = { ...conflictModal.pendingPayload, force_create: true };
+      await apiClient.post("/visit-requests", payload);
+      toast.success("Visit request created (conflict overridden).");
+      navigate("/requests");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to create request");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ── Derived booleans ──────────────────────────────────────────────────────────
+  const isUnitAdmin   = user?.role_type === "unit_admin";
   const cat           = formData.visit_category;
   const isVendor      = cat === "VENDOR";
   const isEmpVisit    = cat === "EMPLOYEE_VISIT";
-  const isSelfHosting = !isAdminOrStaff && !isEmpVisit;
+  const isSelfHosting = !isAdminOrStaff && !isEmpVisit && !isUnitAdmin;
 
   // Hide the standard visitor phone fields and host picker for EMPLOYEE_VISIT
   const showVisitorFields = !isVendor && !isEmpVisit;
-  const showHostPicker    = !isSelfHosting && !isEmpVisit;
+  const showHostPicker    = (!isSelfHosting || isUnitAdmin) && !isEmpVisit;
 
   // Shared input style
   const inputCls = "w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300";
@@ -491,7 +699,7 @@ export default function NewRequest() {
             </div>
 
             {/* Time */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-loud flex items-center gap-2">
                   <Clock className="w-4 h-4 text-accent" />
@@ -510,15 +718,21 @@ export default function NewRequest() {
                 <input
                   type="time"
                   name="visit_end_time"
+                  min={formData.visit_start_time || undefined}
                   value={formData.visit_end_time}
                   onChange={handleInputChange}
                   className={inputCls}
                 />
+                {formData.visit_start_time && formData.visit_end_time && formData.visit_end_time <= formData.visit_start_time && (
+                  <p className="text-xs font-medium" style={{ color: '#ef4444' }}>
+                    ⚠ End time must be after {formData.visit_start_time}
+                  </p>
+                )}
               </div>
             </div>
 
             {/* ── EMPLOYEE VISIT — mode selector + cascading employee picker ── */}
-            {isEmpVisit && (
+            {isEmpVisit && !isUnitAdmin && (
               <div className="md:col-span-2 space-y-5">
 
                 {/* Mode toggle */}
@@ -526,7 +740,7 @@ export default function NewRequest() {
                   <label className="block text-sm font-medium text-loud mb-2">
                     What are you doing?
                   </label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {[
                       { mode: "visiting", label: "I'm visiting someone",  desc: "You are the visitor — they must approve" },
                       { mode: "hosting",  label: "I'm hosting someone",   desc: "You are the host — auto-approved" },
@@ -581,8 +795,8 @@ export default function NewRequest() {
                   </select>
                 </div>
 
-                {/* Department picker */}
-                {selectedUnitId && (
+                {/* Department picker — mandatory */}
+                {selectedUnitId && empDepartments.length > 0 && (
                   <div className="space-y-2">
                     <label className="block text-sm font-medium text-loud flex items-center gap-1.5">
                       <Building className="w-4 h-4 text-accent" />
@@ -592,8 +806,7 @@ export default function NewRequest() {
                       value={empDeptId}
                       onChange={handleEmpDeptChange}
                       required
-                      disabled={empDepartments.length === 0}
-                      className={`${inputCls} disabled:opacity-50`}
+                      className={inputCls}
                     >
                       <option value="">— Select Department —</option>
                       {empDepartments.map(d => (
@@ -603,26 +816,34 @@ export default function NewRequest() {
                   </div>
                 )}
 
-                {/* Employee picker */}
-                {empDeptId && (
+                {/* Employee picker — disabled until department is selected if departments exist */}
+                {selectedUnitId && (
                   <div className="space-y-2">
                     <label className="block text-sm font-medium text-loud flex items-center gap-1.5">
                       <User className="w-4 h-4 text-accent" />
                       {visitMode === "visiting" ? "Select Host Employee *" : "Select Visitor (Employee) *"}
+                      {employees.length > 0 && (
+                        <span className="text-xs text-faint font-normal ml-1">({employees.length} found)</span>
+                      )}
                     </label>
                     <select
                       value={selectedEmpId}
                       onChange={e => setSelectedEmpId(e.target.value)}
                       required
-                      disabled={employees.length === 0}
+                      disabled={empDepartments.length > 0 ? !empDeptId || employees.length === 0 : employees.length === 0}
                       className={`${inputCls} disabled:opacity-50`}
                     >
                       <option value="">
-                        {employees.length === 0 ? "— No employees found —" : "— Select Employee —"}
+                        {empDepartments.length > 0 && !empDeptId
+                          ? "— Select Department First —"
+                          : employees.length === 0
+                            ? (empDepartments.length > 0 ? "— No users found in this department —" : "— No users found in this unit —")
+                            : "— Select Person —"
+                        }
                       </option>
                       {employees.map(emp => (
                         <option key={emp.id} value={emp.id}>
-                          {emp.full_name} ({emp.designation_name || emp.role_type})
+                          {emp.full_name} ({emp.department_name ? `${emp.department_name} · ` : ''}{emp.designation_name || emp.role_type})
                         </option>
                       ))}
                     </select>
@@ -633,11 +854,144 @@ export default function NewRequest() {
                     )}
                     {visitMode === "visiting" && (
                       <p className="text-xs text-faint mt-1">
-                        ⏳ The selected employee will need to approve your visit.
+                        ⏳ The selected person will need to approve your visit.
                       </p>
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ── EMPLOYEE VISIT for Unit Admin ── */}
+            {isEmpVisit && isUnitAdmin && (
+              <div className="md:col-span-2 space-y-6">
+                
+                {/* Section header or info */}
+                <div className="p-4 rounded-md border border-subtle bg-mixed-bg text-sm">
+                  <p className="text-loud font-medium">
+                    Arrange Employee Visit
+                  </p>
+                  <p className="text-xs text-muted mt-1">
+                    Select a visitor from your unit and a host from any unit.
+                  </p>
+                </div>
+
+                {/* VISITOR SIDE: Fixed to admin's own unit */}
+                <div className="space-y-4 p-5 rounded-md border border-subtle bg-bg-primary/30">
+                  <h3 className="text-sm font-semibold text-accent uppercase tracking-wider flex items-center gap-2">
+                    <User className="w-4 h-4" />
+                    Visitor (From your unit: {user?.unit_name || 'My Unit'})
+                  </h3>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Visitor Department */}
+                    <div className="space-y-2">
+                      <label className="block text-xs font-medium text-muted">Select Department</label>
+                      <select
+                        value={adminVisitorDeptId}
+                        onChange={handleAdminVisitorDeptChange}
+                        className={inputCls}
+                      >
+                        <option value="">— All Departments —</option>
+                        {departments.map(d => (
+                          <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Visitor Employee */}
+                    <div className="space-y-2">
+                      <label className="block text-xs font-medium text-muted">Select Employee *</label>
+                      <select
+                        value={adminVisitorEmpId}
+                        onChange={e => setAdminVisitorEmpId(e.target.value)}
+                        required
+                        disabled={adminVisitorEmployees.length === 0}
+                        className={`${inputCls} disabled:opacity-50`}
+                      >
+                        <option value="">
+                          {adminVisitorEmployees.length === 0 ? "— No users found —" : "— Select Person —"}
+                        </option>
+                        {adminVisitorEmployees.map(emp => (
+                          <option key={emp.id} value={emp.id}>
+                            {emp.full_name} ({emp.department_name ? `${emp.department_name} · ` : ''}{emp.designation_name || emp.role_type})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* HOST SIDE: Pick any unit */}
+                <div className="space-y-4 p-5 rounded-md border border-subtle bg-bg-primary/30">
+                  <h3 className="text-sm font-semibold text-accent uppercase tracking-wider flex items-center gap-2">
+                    <Building className="w-4 h-4" />
+                    Host (Any Unit)
+                  </h3>
+
+                  <div className="space-y-4">
+                    {/* Host Unit */}
+                    <div className="space-y-2">
+                      <label className="block text-xs font-medium text-muted">Select Host's Unit *</label>
+                      <select
+                        value={adminHostUnitId}
+                        onChange={handleAdminHostUnitChange}
+                        required
+                        className={inputCls}
+                      >
+                        <option value="">— Select Unit —</option>
+                        {units.map(u => (
+                          <option key={u.id} value={u.id}>
+                            {u.name}{u.city ? ` — ${u.city}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {adminHostUnitId && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Host Department */}
+                        {adminHostDepts.length > 0 && (
+                          <div className="space-y-2">
+                            <label className="block text-xs font-medium text-muted">Filter by Department</label>
+                            <select
+                              value={adminHostDeptId}
+                              onChange={handleAdminHostDeptChange}
+                              className={inputCls}
+                            >
+                              <option value="">— All Departments —</option>
+                              {adminHostDepts.map(d => (
+                                <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {/* Host Employee */}
+                        <div className="space-y-2">
+                          <label className="block text-xs font-medium text-muted">Select Host *</label>
+                          <select
+                            value={adminHostEmpId}
+                            onChange={e => setAdminHostEmpId(e.target.value)}
+                            required
+                            disabled={adminHostEmployees.length === 0}
+                            className={`${inputCls} disabled:opacity-50`}
+                          >
+                            <option value="">
+                              {adminHostEmployees.length === 0 ? "— No users found —" : "— Select Person —"}
+                            </option>
+                            {adminHostEmployees.map(emp => (
+                              <option key={emp.id} value={emp.id}>
+                                {emp.full_name} ({emp.department_name ? `${emp.department_name} · ` : ''}{emp.designation_name || emp.role_type})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
               </div>
             )}
 
@@ -930,23 +1284,24 @@ export default function NewRequest() {
         )}
 
         {/* ── Companions ─────────────────────────────────────────────────────── */}
-        <div className="vms-card rounded-md p-8 shadow-card">
-          <div className="flex justify-between items-center mb-6">
+        <div className="vms-card rounded-md p-5 sm:p-8 shadow-card">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
             <h2 className="text-xl text-loud flex items-center gap-2">
-              <span className="w-8 h-8 rounded-full bg-mixed-bg text-accent flex items-center justify-center text-sm font-bold">
+              <span className="w-8 h-8 rounded-full bg-mixed-bg text-accent flex items-center justify-center text-sm font-bold shrink-0">
                 {isVendor ? "4" : "3"}
               </span>
-              <Users className="w-5 h-5 text-accent" />
-              Companions ({formData.accompanying_count})
+              <Users className="w-5 h-5 text-accent shrink-0" />
+              <span>Companions <span className="text-base font-normal text-muted">({formData.accompanying_count})</span></span>
             </h2>
             <button
               type="button"
               onClick={addCompanion}
-              className="btn-secondary text-accent text-xs font-medium uppercase tracking-wider hover:bg-mixed-bg transition-colors flex items-center gap-1"
+              className="btn-secondary text-accent text-xs font-medium uppercase tracking-wider hover:bg-mixed-bg transition-colors flex items-center gap-1 self-start sm:self-auto"
             >
               <Plus className="w-3 h-3" /> Add Companion
             </button>
           </div>
+
 
           {formData.companions.length === 0 ? (
             <div className="text-center py-6 text-faint italic border border-dashed border-subtle rounded-md">
@@ -1029,6 +1384,121 @@ export default function NewRequest() {
           </button>
         </div>
       </form>
+
+      {/* ── Schedule Conflict Modal — portalled to document.body to escape transform containing block ── */}
+      {conflictModal && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setConflictModal(null)}
+          />
+          {/* Dialog */}
+          <div
+            className="relative w-full max-w-md rounded-xl shadow-2xl overflow-hidden"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-start justify-between px-6 pt-5 pb-4"
+              style={{ borderBottom: '1px solid var(--color-border)' }}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                  style={{ background: '#fef3c7' }}
+                >
+                  <AlertTriangle className="w-5 h-5" style={{ color: 'var(--color-warning)' }} strokeWidth={2} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base" style={{ color: 'var(--color-text)' }}>
+                    Schedule Conflict Detected
+                  </h3>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-faint)' }}>
+                    Review the conflicts below before proceeding
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setConflictModal(null)}
+                className="p-1 rounded-full hover:bg-bg-primary transition-colors"
+                style={{ color: 'var(--color-text-faint)' }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Conflict details */}
+            <div className="px-6 py-4 space-y-3">
+              {/* HOST_BUSY */}
+              {conflictModal.types.includes('HOST_BUSY') && conflictModal.host_conflict && (
+                <div
+                  className="rounded-lg px-4 py-3 space-y-1"
+                  style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}
+                >
+                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#c2410c' }}>
+                    🔴 Host is already busy
+                  </p>
+                  <p className="text-sm" style={{ color: '#9a3412' }}>
+                    <strong>{conflictModal.host_conflict.visitor_name}</strong> is already visiting the host during{' '}
+                    <strong>{conflictModal.host_conflict.time_window}</strong>.
+                  </p>
+                </div>
+              )}
+
+              {/* VISITOR_BUSY */}
+              {conflictModal.types.includes('VISITOR_BUSY') && conflictModal.visitor_conflict && (
+                <div
+                  className="rounded-lg px-4 py-3 space-y-1"
+                  style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}
+                >
+                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#c2410c' }}>
+                    🔴 Visitor already has another visit
+                  </p>
+                  <p className="text-sm" style={{ color: '#9a3412' }}>
+                    This visitor already has a request at{' '}
+                    <strong>{conflictModal.visitor_conflict.dept_name}</strong> during{' '}
+                    <strong>{conflictModal.visitor_conflict.time_window}</strong>.
+                  </p>
+                </div>
+              )}
+
+              <p className="text-xs pt-1" style={{ color: 'var(--color-text-faint)' }}>
+                You can go back and adjust the time, or continue anyway to override the conflict.
+                Overridden requests are flagged with a ⚠ badge for admin review.
+              </p>
+            </div>
+
+            {/* Footer */}
+            <div
+              className="flex items-center justify-end gap-3 px-6 py-4"
+              style={{ borderTop: '1px solid var(--color-border)' }}
+            >
+              <button
+                onClick={() => setConflictModal(null)}
+                className="btn-secondary text-sm px-5 py-2"
+              >
+                Go Back &amp; Change Time
+              </button>
+              <button
+                onClick={handleForceSubmit}
+                disabled={loading}
+                className="btn-primary text-sm px-5 py-2 flex items-center gap-2 disabled:opacity-60"
+                style={{ background: 'var(--color-accent)', color: '#fff' }}
+              >
+                {loading
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <AlertTriangle className="w-3.5 h-3.5" strokeWidth={2} />
+                }
+                Continue Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      , document.body)}
+
+
+
     </div>
   );
 }

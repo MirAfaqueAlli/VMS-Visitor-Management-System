@@ -80,8 +80,14 @@ const createDepartment = async (req, res) => {
     const { name, code, description, unit_id, designations = [] } = req.body;
     if (!name || !code) return sendError(res, 'name and code are required.', 400);
 
-    const effectiveUnitId = isUnitAdmin(req.user) ? req.user.unit_id : (unit_id || null);
-    if (!effectiveUnitId) return sendError(res, 'unit_id is required.', 400);
+    // For unit_admin: use their own unit_id.
+    // For super_admin managing a unit: prefer body unit_id, then fall back to the
+    // X-Unit-Id header that the frontend sends whenever activeUnit is set.
+    const headerUnitId = req.headers['x-unit-id'] ? parseInt(req.headers['x-unit-id'], 10) : null;
+    const effectiveUnitId = isUnitAdmin(req.user)
+      ? req.user.unit_id
+      : (unit_id || headerUnitId || null);
+    if (!effectiveUnitId) return sendError(res, 'unit_id is required — please select a unit to manage first.', 400);
 
     const conn = await req.db.getConnection();
     try {

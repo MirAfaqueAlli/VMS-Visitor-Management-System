@@ -2,6 +2,7 @@
 'use strict';
 
 const bcrypt = require('bcrypt');
+const { validatePassword } = require('../utils/passwordValidator.util');
 const { centralPool, getPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
@@ -60,10 +61,10 @@ const listUsers = async (req, res) => {
  */
 const listHosts = async (req, res) => {
   try {
-    const { department_id, unit_code, unit_id } = req.query;
-    if (!department_id) return sendError(res, 'department_id query param is required.', 400);
+    const { department_id, unit_code, unit_id, include_all } = req.query;
 
     let dbPool = null;
+    const isCrossUnit = !!(unit_id || unit_code); // visiting a specific unit by ID or code
 
     // Resolve DB from unit_id (preferred) or unit_code (legacy), else use req.db
     if (unit_id) {
@@ -81,27 +82,73 @@ const listHosts = async (req, res) => {
       if (unitRows.length === 0) return sendError(res, 'Unit not found.', 404);
       dbPool = getPool(unitRows[0].db_name);
     } else if (req.db) {
-      // Authenticated request — use req.db
       dbPool = req.db;
     } else {
       return sendError(res, 'unit_id or unit_code is required for host lookup.', 400);
     }
 
-    const [rows] = await dbPool.query(
-      `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
-              u.role_type, u.department_id, u.unit_id,
-              des.name AS designation_name,
-              d.name AS department_name
-       FROM users u
-       LEFT JOIN departments d   ON d.id   = u.department_id
-       LEFT JOIN designations des ON des.id = u.designation_id
-       WHERE u.department_id = ?
-         AND u.role_type IN ('employee', 'unit_admin')
-         AND u.is_active = 1
-         AND u.deleted_at IS NULL
-       ORDER BY u.full_name ASC`,
-      [parseInt(department_id, 10)]
-    );
+    // Build role filter:
+    // - If caller explicitly passes `roles` param (e.g. "employee" or "employee,unit_admin"),
+    //   honour that exactly — used by Employee Visit picker to show only employees.
+    // - Otherwise fall back to legacy logic:
+    //   cross-unit → all staff roles; same-unit dept-filter → employee only.
+    let roleFilter;
+    if (req.query.roles) {
+      const SAFE_ROLES = ['employee', 'unit_admin', 'receptionist', 'security', 'unit_auditor'];
+      const allowedRoles = req.query.roles
+        .split(',')
+        .map(r => r.trim())
+        .filter(r => SAFE_ROLES.includes(r))
+        .map(r => `'${r}'`)
+        .join(', ');
+      roleFilter = allowedRoles.length > 0
+        ? `u.role_type IN (${allowedRoles})`
+        : `u.role_type = 'employee'`; // fallback safety
+    } else {
+      roleFilter = isCrossUnit
+        ? `u.role_type IN ('employee', 'unit_admin', 'receptionist', 'security')`
+        : `u.role_type = 'employee'`;
+    }
+
+    let rows;
+    if (include_all === 'true' || !department_id) {
+      // No department filter — return all eligible users in the unit
+      [rows] = await dbPool.query(
+        `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
+                u.role_type, u.department_id, u.unit_id,
+                des.name AS designation_name,
+                d.name AS department_name
+         FROM users u
+         LEFT JOIN departments d    ON d.id   = u.department_id
+         LEFT JOIN designations des ON des.id = u.designation_id
+         WHERE ${roleFilter}
+           AND u.is_active = 1
+           AND u.deleted_at IS NULL
+         ORDER BY u.full_name ASC`
+      );
+    } else {
+      // Department-scoped lookup
+      [rows] = await dbPool.query(
+        `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
+                u.role_type, u.department_id, u.unit_id,
+                des.name AS designation_name,
+                d.name AS department_name
+         FROM users u
+         LEFT JOIN departments d    ON d.id   = u.department_id
+         LEFT JOIN designations des ON des.id = u.designation_id
+         WHERE u.department_id = ?
+           AND ${roleFilter}
+           AND u.is_active = 1
+           AND u.deleted_at IS NULL
+         ORDER BY u.full_name ASC`,
+        [parseInt(department_id, 10)]
+      );
+    }
+
+    // Debug log for cross-unit employee lookup troubleshooting
+    if (isCrossUnit) {
+      console.log(`[UserController] listHosts: unit_id=${unit_id || unit_code} → ${rows.length} hosts found (roleFilter: ${roleFilter}, include_all: ${include_all}, department_id: ${department_id || 'none'})`);
+    }
 
     return sendSuccess(res, rows, 'Hosts fetched successfully.');
   } catch (err) {
@@ -109,6 +156,7 @@ const listHosts = async (req, res) => {
     return sendError(res, 'Failed to fetch hosts.', 500);
   }
 };
+
 
 // ── Get User By ID ────────────────────────────────────────────────────────────
 const getUserById = async (req, res) => {
@@ -161,9 +209,13 @@ const createUser = async (req, res) => {
     }
 
     // Determine effective unit_id and dept_id
+    // For unit_admin: use their own unit_id.
+    // For super_admin managing a unit: prefer body unit_id, then the X-Unit-Id header
+    // that the frontend sends automatically when activeUnit is set.
+    const headerUnitId = req.headers['x-unit-id'] ? parseInt(req.headers['x-unit-id'], 10) : null;
     const effectiveUnitId = isUnitAdmin(req.user)
       ? req.user.unit_id
-      : (unit_id || req.user.unit_id || null);
+      : (unit_id || headerUnitId || null);
 
     const effectiveDeptId = department_id || null;
     // dept is required for non-admin roles
@@ -179,6 +231,10 @@ const createUser = async (req, res) => {
     if (existing.length > 0) {
       return sendError(res, 'A user with this email, phone, or employee code already exists in this unit.', 409);
     }
+
+    // Enforce password policy
+    const { valid, errors } = validatePassword(password);
+    if (!valid) return sendError(res, errors[0], 400);
 
     const password_hash = await bcrypt.hash(password, 12);
 

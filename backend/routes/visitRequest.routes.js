@@ -20,12 +20,12 @@ const maybeNumber = z.preprocess(
 // ── Validation schema ─────────────────────────────────────────────────────────
 
 const requestSchema = z.object({
-  visit_category:   z.enum(['EMPLOYEE_VISIT', 'EMP', 'VENDOR', 'PRIOR', 'SPOT', 'PERSONAL_VISIT', 'INTER_UNIT_VISIT', 'INTER_UNIT_INVITE']),
+  visit_category:   z.enum(['EMPLOYEE_VISIT', 'VENDOR', 'SPOT', 'PERSONAL_VISIT']),
   request_source:   z.enum(['SELF', 'HOST', 'RECEPTION']).optional().nullable(),
   host_user_id:     maybeNumber.optional(),
   department_id:    maybeNumber.optional(),
   unit_id:          maybeNumber.optional(),
-  target_unit_id:   maybeNumber.optional(),
+  target_unit_id:   maybeNumber.optional(), // EMPLOYEE_VISIT cross-unit: route request to host's unit DB
   visitor_id:       maybeNumber.optional(),
   purpose:          z.string().min(3, 'Purpose must be at least 3 characters'),
   visit_date:       z.string().min(1, 'Visit date is required'),
@@ -102,5 +102,30 @@ router.get('/:id', protect, ctrl.getRequest);
 
 // Cancel request
 router.put('/:id/cancel', protect, ctrl.cancelRequest);
+
+// ── Host-level visitor blocking (host blocks by phone from a visit request) ──
+// my-blocked-visitors must come BEFORE /:id to avoid param collision
+router.get(
+  '/my-blocked-visitors',
+  protect,
+  authorize('super_admin', 'unit_admin', 'employee'),
+  ctrl.getHostBlacklist
+);
+
+// Unblock a visitor from the host's personal blacklist
+router.delete(
+  '/blocked-visitors/:blockId',
+  protect,
+  authorize('super_admin', 'unit_admin', 'employee'),
+  ctrl.unblockVisitor
+);
+
+// Block visitor by phone from a specific visit request (host or admin)
+router.post(
+  '/:id/blacklist-visitor',
+  protect,
+  authorize('super_admin', 'unit_admin', 'employee'),
+  ctrl.blacklistVisitorFromRequest
+);
 
 module.exports = router;

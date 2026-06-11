@@ -12,12 +12,8 @@ import toast from "react-hot-toast";
 import StatusBadge from "../../components/shared/StatusBadge";
 
 const CATEGORY_LABELS = {
-  EMP:               'Employee Visit',
   EMPLOYEE_VISIT:    'Employee Visit',
-  INTER_UNIT_VISIT:  'Employee Visit',
-  INTER_UNIT_INVITE: 'Employee Visit',
   VENDOR:            'Vendor',
-  PRIOR:             'Prior Approval',
   SPOT:              'Walk-in',
   PERSONAL_VISIT:    'Personal Visit',
 };
@@ -340,7 +336,7 @@ export default function CheckIn() {
     return (
       <div className="max-w-xl mx-auto py-20 px-4 text-center">
         <div className="vms-card rounded-md p-10 shadow-card">
-          <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+          <AlertCircle className="w-12 h-12 text-blue-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-loud mb-2">Gate Pass Not Generated</h2>
           <p className="text-muted mb-6">A gate pass must be generated before check-in can proceed.</p>
           <button onClick={() => navigate("/requests")} className="btn-primary">
@@ -364,7 +360,7 @@ export default function CheckIn() {
 
         {/* ── Left: Visitor Info Card ────────────────────────────────────── */}
         <div className="lg:col-span-4">
-          <div className="vms-card rounded-md p-6 shadow-card sticky top-8 space-y-5">
+          <div className="vms-card rounded-md p-5 sm:p-6 shadow-card lg:sticky lg:top-8 space-y-5">
             <h2
               className="text-lg font-semibold text-loud pb-3"
               style={{ borderBottom: "1px solid var(--color-border)" }}
@@ -419,6 +415,16 @@ export default function CheckIn() {
                 <p className="text-sm text-loud leading-relaxed">{request.purpose}</p>
               </div>
 
+              {/* Scheduled Date */}
+              {request.visit_date && (
+                <div>
+                  <p className="text-xs text-faint mb-1">Scheduled Date</p>
+                  <p className="text-sm font-semibold text-loud">
+                    {new Date(request.visit_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </p>
+                </div>
+              )}
+
               {/* Category + Status */}
               <div
                 className="pt-3 flex flex-wrap gap-2"
@@ -445,7 +451,7 @@ export default function CheckIn() {
               <h3 className="text-[16px] font-semibold text-loud mb-4 flex items-center gap-2">
                 {passVerified
                   ? <CheckCircle2 className="w-5 h-5 text-green-500" />
-                  : <Scan className="w-5 h-5 text-amber-500" />}
+                  : <Scan className="w-5 h-5 text-blue-500" />}
                 Step 1: Verify Gate Pass
               </h3>
 
@@ -560,10 +566,10 @@ export default function CheckIn() {
                                     bottom: corner.includes('bottom') ? 0 : 'auto',
                                     left:   corner.includes('left')   ? 0 : 'auto',
                                     right:  corner.includes('right')  ? 0 : 'auto',
-                                    borderTop:    corner.includes('top')    ? '3px solid #f59e0b' : 'none',
-                                    borderBottom: corner.includes('bottom') ? '3px solid #f59e0b' : 'none',
-                                    borderLeft:   corner.includes('left')   ? '3px solid #f59e0b' : 'none',
-                                    borderRight:  corner.includes('right')  ? '3px solid #f59e0b' : 'none',
+                                    borderTop:    corner.includes('top')    ? '3px solid #3b82f6' : 'none',
+                                    borderBottom: corner.includes('bottom') ? '3px solid #3b82f6' : 'none',
+                                    borderLeft:   corner.includes('left')   ? '3px solid #3b82f6' : 'none',
+                                    borderRight:  corner.includes('right')  ? '3px solid #3b82f6' : 'none',
                                     borderRadius: corner === 'top-left'     ? '6px 0 0 0'
                                                 : corner === 'top-right'    ? '0 6px 0 0'
                                                 : corner === 'bottom-left'  ? '0 0 0 6px'
@@ -575,7 +581,7 @@ export default function CheckIn() {
                               <div
                                 className="absolute left-1 right-1 h-0.5"
                                 style={{
-                                  background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)',
+                                  background: 'linear-gradient(90deg, transparent, #3b82f6, transparent)',
                                   animation: 'qr-scan-line 1.8s ease-in-out infinite',
                                   top: '50%',
                                 }}
@@ -587,11 +593,11 @@ export default function CheckIn() {
                         {qrScanActive && (
                           <div
                             className="absolute bottom-3 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5"
-                            style={{ background: 'rgba(0,0,0,0.7)', color: '#f59e0b' }}
+                            style={{ background: 'rgba(0,0,0,0.7)', color: '#3b82f6' }}
                           >
                             <span
                               className="w-2 h-2 rounded-full inline-block"
-                              style={{ background: '#f59e0b', animation: 'pulse 1s infinite' }}
+                              style={{ background: '#3b82f6', animation: 'pulse 1s infinite' }}
                             />
                             Scanning for QR code…
                           </div>

@@ -9,7 +9,8 @@ const { authorize } = require('../middlewares/rbac.middleware');
 
 // ── Public (no auth) ──────────────────────────────────────────────────────────
 // Must be declared BEFORE the protect middleware routes to avoid auth checks.
-router.get('/public', ctrl.getPublicUnits);
+router.get('/public',         ctrl.getPublicUnits);
+router.get('/by-code/:code',  ctrl.getUnitByCode);   // unit-scoped login URL
 
 // All unit routes require super_admin or global_auditor (read-only for auditor enforced in controller)
 router.get('/',    protect, authorize('super_admin', 'global_auditor'), ctrl.listUnits);

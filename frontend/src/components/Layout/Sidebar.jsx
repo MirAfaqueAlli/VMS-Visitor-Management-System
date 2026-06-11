@@ -17,7 +17,7 @@ const unitNavItems = [
   { label: 'Gate Security',  icon: Shield,          path: '/gate',      roles: ['security', 'receptionist', 'unit_admin'] },
   { label: 'Reports',        icon: BarChart3,       path: '/reports',   roles: ['unit_admin', 'unit_auditor'] },
   { label: 'Audit Logs',     icon: ShieldAlert,     path: '/audit-logs',roles: ['unit_admin', 'unit_auditor'] },
-  { label: 'User Management',icon: Settings,        path: '/admin',     roles: ['unit_admin'] },
+  { label: 'User Management',icon: Settings,        path: '/admin',     roles: ['unit_admin'], end: true },
 ];
 
 // Central (super admin-only) links
@@ -35,7 +35,7 @@ const superAdminUnitItems = [
   { label: 'Visitors',        icon: Users,         path: '/visitors' },
   { label: 'Visit Requests',  icon: ClipboardList, path: '/requests' },
   { label: 'Gate Security',   icon: Shield,        path: '/gate' },
-  { label: 'User Management', icon: Settings,      path: '/admin' },
+  { label: 'User Management', icon: Settings,      path: '/admin', end: true },
 ];
 
 const auditorNavItems = [
@@ -45,11 +45,13 @@ const auditorNavItems = [
 ];
 
 // ── Reusable NavItem ──────────────────────────────────────────────────────────
-function NavItem({ label, icon: Icon, path }) {
+function NavItem({ label, icon: Icon, path, end, onClick }) {
   return (
     <NavLink
       to={path}
+      end={!!end}
       className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+      onClick={onClick}
     >
       <Icon size={15} strokeWidth={1.8} className="shrink-0" />
       <span>{label}</span>
@@ -69,7 +71,7 @@ function SectionLabel({ children, color }) {
   );
 }
 
-export default function Sidebar() {
+export default function Sidebar({ isOpen, onClose }) {
   const {
     user, hasRole, logout,
     isSuperAdmin, isUnitAdmin, isGlobalAuditor,
@@ -86,25 +88,23 @@ export default function Sidebar() {
 
   return (
     <aside
-      className="fixed left-0 top-0 h-screen flex flex-col z-30"
+      className={`sidebar-panel fixed left-0 top-0 h-screen flex flex-col z-30${isOpen ? ' is-open' : ''}`}
       style={{
         width:       'var(--sidebar-width, 220px)',
         background:  'var(--sidebar-bg)',
         borderRight: '1px solid var(--sidebar-border)',
       }}
     >
-      {/* ── Logo ─────────────────────────────────────────────────────── */}
       <div
         className="px-4 h-16 flex items-center gap-2.5 shrink-0"
         style={{ borderBottom: '1px solid var(--sidebar-border)' }}
       >
         <div
-          className="w-6 h-6 rounded flex items-center justify-center shrink-0"
-          style={{ background: 'var(--sidebar-active-bg)' }}
+          className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 overflow-hidden"
         >
-          <Shield size={13} style={{ color: 'var(--sidebar-active-text)' }} strokeWidth={2.2} />
+          <img src="/logo.png" alt="VMS Logo" className="w-full h-full object-cover" />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-white font-semibold text-[13px] leading-none tracking-tight">VMS</p>
           <p className="text-[10px] mt-0.5 truncate" style={{ color: 'var(--sidebar-text)' }}>
             {isSuperAdmin
@@ -112,12 +112,23 @@ export default function Sidebar() {
               : (user?.unit_name || user?.organization_name || 'Visitor Management')}
           </p>
         </div>
+        {/* Close button — mobile only */}
+        <button
+          onClick={onClose}
+          className="lg:hidden p-1 rounded transition-colors"
+          style={{ color: 'var(--sidebar-text)' }}
+          onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+          onMouseLeave={e => e.currentTarget.style.color = 'var(--sidebar-text)'}
+          aria-label="Close menu"
+        >
+          <X size={16} />
+        </button>
       </div>
 
       {/* ── Active Unit banner ────────────────────────────────────────── */}
       {(isSuperAdmin || isGlobalAuditor) && activeUnit && (
-        <div className="px-3 py-2.5 mx-2.5 mt-3 bg-amber-500/10 border border-amber-500/20 rounded flex flex-col gap-1.5 shrink-0">
-          <p className="text-[9px] text-amber-500 uppercase font-bold tracking-widest leading-none">Active Unit</p>
+        <div className="px-3 py-2.5 mx-2.5 mt-3 bg-blue-500/10 border border-blue-500/20 rounded flex flex-col gap-1.5 shrink-0">
+          <p className="text-[9px] text-blue-400 uppercase font-bold tracking-widest leading-none">Active Unit</p>
           <div className="flex items-center justify-between gap-1.5">
             <span className="text-[11px] text-white font-semibold truncate leading-none">{activeUnit.name}</span>
             <button
@@ -143,18 +154,18 @@ export default function Sidebar() {
             {/* Section 1 — Central */}
             <SectionLabel>Central Admin</SectionLabel>
             {superAdminCentralItems.map(item => (
-              <NavItem key={item.path} {...item} />
+              <NavItem key={item.path} {...item} onClick={onClose} />
             ))}
 
             {/* Amber divider with unit name */}
             <div className="px-2 pt-3 pb-1">
               <div
                 className="flex items-center gap-2"
-                style={{ borderTop: '1px solid rgba(245,158,11,0.3)' }}
+                style={{ borderTop: '1px solid rgba(59,130,246,0.3)' }}
               >
                 <span
                   className="text-[9px] font-bold uppercase tracking-widest whitespace-nowrap pt-2 flex items-center gap-1"
-                  style={{ color: '#f59e0b' }}
+                  style={{ color: '#3b82f6' }}
                 >
                   <Building2 size={9} />
                   {activeUnit.name}
@@ -164,11 +175,12 @@ export default function Sidebar() {
 
             {/* Section 2 — Unit items */}
             {superAdminUnitItems.map(item => (
-              <NavItem key={item.path} {...item} />
+              <NavItem key={item.path} {...item} onClick={onClose} />
             ))}
             <NavLink
               to="/admin/departments"
               className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+              onClick={onClose}
             >
               <Settings size={15} strokeWidth={1.8} className="shrink-0" />
               <span>Departments</span>
@@ -176,18 +188,19 @@ export default function Sidebar() {
             <NavLink
               to="/admin/archive"
               className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+              onClick={onClose}
             >
               <FileArchive size={15} strokeWidth={1.8} className="shrink-0" />
               <span>FY Archive</span>
             </NavLink>
           </>
 
-        /* ══ SUPER ADMIN — no active unit ═══════════════════════════ */
+        /* ══ SUPER ADMIN — no active unit ═════════════════════════════ */
         ) : isSuperAdmin ? (
           <>
             <SectionLabel>Super Admin</SectionLabel>
             {superAdminCentralItems.map(item => (
-              <NavItem key={item.path} {...item} />
+              <NavItem key={item.path} {...item} onClick={onClose} />
             ))}
           </>
 
@@ -196,7 +209,7 @@ export default function Sidebar() {
           <>
             <SectionLabel>Auditor</SectionLabel>
             {auditorNavItems.map(item => (
-              <NavItem key={item.path} {...item} />
+              <NavItem key={item.path} {...item} onClick={onClose} />
             ))}
           </>
 
@@ -206,13 +219,14 @@ export default function Sidebar() {
             <SectionLabel>Main Menu</SectionLabel>
             {unitNavItems.map(({ label, icon, path, roles }) => {
               if (roles && !hasRole(...roles)) return null;
-              return <NavItem key={path} label={label} icon={icon} path={path} />;
+              return <NavItem key={path} label={label} icon={icon} path={path} onClick={onClose} />;
             })}
             {isUnitAdmin && (
               <>
                 <NavLink
                   to="/admin/departments"
                   className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+                  onClick={onClose}
                 >
                   <Settings size={15} strokeWidth={1.8} className="shrink-0" />
                   <span>Departments</span>

@@ -4,6 +4,8 @@
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
+
 
 // ── getDashboard ──────────────────────────────────────────────────────────────
 const getDashboard = async (req, res) => {
@@ -106,6 +108,7 @@ const getDashboard = async (req, res) => {
         pending_count:         pendingApproval.length,
       },
     }, 'Dashboard data retrieved successfully.');
+
   } catch (err) {
     console.error('[GateController] getDashboard error:', err.message);
     return sendError(res, 'Failed to retrieve dashboard data.', 500);
@@ -166,6 +169,26 @@ const checkIn = async (req, res) => {
     if (request.pass_number !== pass_number) {
       conn.release();
       return sendError(res, 'Gate pass number mismatch. Verification failed.', 403);
+    }
+
+    // Verify visit date is strictly today
+    if (request.visit_date) {
+      const vDate = new Date(request.visit_date);
+      const yyyy = vDate.getFullYear();
+      const mm = String(vDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(vDate.getDate()).padStart(2, '0');
+      const visitDateStr = `${yyyy}-${mm}-${dd}`;
+
+      const today = new Date();
+      const tYyyy = today.getFullYear();
+      const tMm = String(today.getMonth() + 1).padStart(2, '0');
+      const tDd = String(today.getDate()).padStart(2, '0');
+      const todayStr = `${tYyyy}-${tMm}-${tDd}`;
+
+      if (visitDateStr !== todayStr) {
+        conn.release();
+        return sendError(res, `Check-in is only allowed on the scheduled date: ${visitDateStr}. Today is ${todayStr}.`, 403);
+      }
     }
 
     // Department isolation — non-admin security/receptionist sees only their dept
@@ -281,15 +304,90 @@ const checkIn = async (req, res) => {
     );
     const visitLogId = logInsert.insertId;
 
+    // Mark gate pass as USED and start the 24-hour QR validity window
     await conn.query(
-      "UPDATE gate_passes SET status = 'USED' WHERE id = ?",
+      "UPDATE gate_passes SET status = 'USED', qr_expires_at = DATE_ADD(NOW(), INTERVAL 24 HOUR) WHERE id = ?",
       [request.gate_pass_id]
     );
 
     await conn.commit();
     conn.release();
 
-    // ── 6. Write employee_visitor_log for host's personal history ─────────────
+    // ── Socket.IO: notify all security/gate users that a visitor just checked in ─
+    // Fetch host and dept name for the payload (reuse data we already have)
+    const [hostInfoRows] = await req.db.query(
+      'SELECT full_name FROM users WHERE id = ?', [request.host_user_id]
+    );
+    const [deptInfoRows] = await req.db.query(
+      'SELECT name FROM departments WHERE id = ?', [request.department_id]
+    );
+
+    const hostName = hostInfoRows[0]?.full_name || null;
+
+    emitToUnitSecurity(req.user.unit_id, 'visit:checkin', {
+      visit_request_id: requestId,
+      visitor_name:     request.visitor_name,
+      visitor_phone:    request.visitor_phone,
+      pass_number:      request.pass_number,
+      host_name:        hostName,
+      department_name:  deptInfoRows[0]?.name || null,
+      check_in_at:      new Date().toISOString(),
+      visit_log_id:     visitLogId,
+    });
+
+    // Notify the host user directly
+    if (request.host_user_id) {
+      emitToUser(request.host_user_id, req.user.unit_db, 'visit:checkin', {
+        visit_request_id: requestId,
+        visitor_name:     request.visitor_name,
+        visitor_phone:    request.visitor_phone,
+        pass_number:      request.pass_number,
+        host_name:        hostName,
+        department_name:  deptInfoRows[0]?.name || null,
+        check_in_at:      new Date().toISOString(),
+        visit_log_id:     visitLogId,
+      });
+    }
+
+    // ── Meeting conflict detection ─────────────────────────────────────────────
+    // Check if the same host already has another ACTIVE visit log (i.e. is currently
+    // in a meeting with a different visitor). If so, alert security immediately.
+    setImmediate(async () => {
+      try {
+        const [conflictRows] = await req.db.query(
+          `SELECT vr.visitor_name, vr.id AS visit_request_id
+           FROM visit_logs vl
+           JOIN gate_passes    gp ON gp.id = vl.gate_pass_id
+           JOIN visit_requests vr ON vr.id = gp.visit_request_id
+           WHERE vl.status = 'ACTIVE'
+             AND vr.host_user_id = ?
+             AND vl.id != ?
+           LIMIT 1`,
+          [request.host_user_id, visitLogId]
+        );
+
+        if (conflictRows.length > 0) {
+          const conflicting = conflictRows[0];
+          emitToUnitSecurity(req.user.unit_id, 'visit:conflict:meeting', {
+            new_visit_request_id:        requestId,
+            new_visitor_name:            request.visitor_name,
+            conflicting_visit_request_id: conflicting.visit_request_id,
+            conflicting_visitor_name:    conflicting.visitor_name,
+            host_name:                   hostName,
+            host_user_id:                request.host_user_id,
+            detected_at:                 new Date().toISOString(),
+          });
+          console.warn(
+            `[GateController] Meeting conflict: host #${request.host_user_id} (${hostName})` +
+            ` already in meeting with "${conflicting.visitor_name}" when "${request.visitor_name}" checked in.`
+          );
+        }
+      } catch (conflictErr) {
+        console.error('[GateController] conflict detection error:', conflictErr.message);
+      }
+    });
+
+
     // Done AFTER commit so a missing/broken table can't roll back the check-in.
     if (visitorId && request.host_user_id && request.department_id) {
       try {
@@ -392,7 +490,30 @@ const checkOut = async (req, res) => {
       [visitRequestId]
     );
 
+    // Direct checkout: mark method. Gate pass stays USED (valid within its 24h window).
+    await conn.query(
+      "UPDATE gate_passes SET checkout_method = 'DIRECT' WHERE id = ?",
+      [visitLog.gate_pass_id]
+    );
+
     await conn.commit();
+
+    // ── Socket.IO: notify all security/gate users that a visitor checked out ───
+    // Fetch visitor_name from visit_requests so the OS notification shows the real name
+    let checkoutVisitorName = null;
+    try {
+      const [vrName] = await req.db.query(
+        'SELECT visitor_name FROM visit_requests WHERE id = ?', [visitRequestId]
+      );
+      checkoutVisitorName = vrName[0]?.visitor_name || null;
+    } catch (_) { /* non-fatal — keep name null */ }
+
+    emitToUnitSecurity(req.user.unit_id, 'visit:checkout', {
+      visit_log_id:     visitLog.id,
+      visit_request_id: visitRequestId,
+      visitor_name:     checkoutVisitorName,
+      check_out_at:     checkOutTime.toISOString(),
+    });
 
     // ── 3. Audit log ──────────────────────────────────────────────────────────
     logAudit({
@@ -511,4 +632,140 @@ const getActiveVisitors = async (req, res) => {
   }
 };
 
-module.exports = { getDashboard, checkIn, checkOut, rejectAtGate, getActiveVisitors };
+// ── checkOutByQR ──────────────────────────────────────────────────────────────
+/**
+ * POST /api/gate/checkout/qr
+ *
+ * Checkout via QR scan. The visitor presents the same QR code used during check-in.
+ * - Gate pass must be USED and within its 24-hour validity window (qr_expires_at > NOW()).
+ * - ID verification must match the original check-in ID number.
+ * - On success: gate pass status = EXPIRED (immediately invalidated), checkout_method = QR_SCAN.
+ */
+const checkOutByQR = async (req, res) => {
+  const conn = await req.db.getConnection();
+  try {
+    const { pass_number } = req.body;
+
+    if (!pass_number) {
+      conn.release();
+      return sendError(res, 'pass_number is required.', 400);
+    }
+
+    // ── 1. Find gate pass — must be USED and within 24h validity window ────────
+    const [passRows] = await req.db.query(
+      `SELECT gp.*, vr.id AS visit_request_id
+       FROM gate_passes gp
+       JOIN visit_requests vr ON vr.id = gp.visit_request_id
+       WHERE gp.pass_number = ? AND gp.status = 'USED'
+       LIMIT 1`,
+      [pass_number.trim().toUpperCase()]
+    );
+
+    if (!passRows.length) {
+      conn.release();
+      return sendError(res, 'Gate pass not found or not in a checked-in state.', 404);
+    }
+
+    const gatePass = passRows[0];
+
+    // ── 2. Validate QR is within its 24-hour validity window ──────────────────
+    if (!gatePass.qr_expires_at || new Date() > new Date(gatePass.qr_expires_at)) {
+      conn.release();
+      return sendError(res, 'QR code has expired (24-hour window elapsed). Use direct checkout.', 410);
+    }
+
+    // ── 3. Find the active visit log for this gate pass ───────────────────────
+    const [logRows] = await req.db.query(
+      `SELECT * FROM visit_logs WHERE gate_pass_id = ? AND status = 'ACTIVE' LIMIT 1`,
+      [gatePass.id]
+    );
+
+    if (!logRows.length) {
+      conn.release();
+      return sendError(res, 'No active visit found for this gate pass.', 404);
+    }
+
+    const visitLog = logRows[0];
+
+    // ID verification removed — QR code match is sufficient for checkout
+
+    const checkOutTime   = new Date();
+    const checkInTime    = new Date(visitLog.check_in_at);
+    const visitRequestId = visitLog.visit_request_id;
+
+    // ── 5. Transaction: complete checkout + expire QR ─────────────────────────
+    await conn.beginTransaction();
+
+    await conn.query(
+      `UPDATE visit_logs
+       SET check_out_at = NOW(), status = 'COMPLETED', checked_out_by = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [req.user.id, visitLog.id]
+    );
+
+    await conn.query(
+      "UPDATE visit_requests SET status = 'COMPLETED', updated_at = NOW() WHERE id = ?",
+      [visitRequestId]
+    );
+
+    // QR checkout: immediately expire the gate pass so it cannot be reused
+    await conn.query(
+      `UPDATE gate_passes
+       SET status = 'EXPIRED', checkout_method = 'QR_SCAN', qr_expires_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [gatePass.id]
+    );
+
+    await conn.commit();
+
+    // ── Socket.IO: notify security ────────────────────────────────────────────
+    let checkoutVisitorName = null;
+    try {
+      const [vrName] = await req.db.query(
+        'SELECT visitor_name FROM visit_requests WHERE id = ?', [visitRequestId]
+      );
+      checkoutVisitorName = vrName[0]?.visitor_name || null;
+    } catch (_) {}
+
+    emitToUnitSecurity(req.user.unit_id, 'visit:checkout', {
+      visit_log_id:     visitLog.id,
+      visit_request_id: visitRequestId,
+      visitor_name:     checkoutVisitorName,
+      check_out_at:     checkOutTime.toISOString(),
+      checkout_method:  'QR_SCAN',
+    });
+
+    // ── Audit log ─────────────────────────────────────────────────────────────
+    logAudit({
+      db:        req.db,
+      userId:    req.user.id,
+      action:    'CHECK_OUT_QR',
+      module:    'GATE',
+      recordType: 'VISIT_LOG',
+      recordId:  visitLog.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] || null,
+    });
+
+    const durationMinutes = Math.round((checkOutTime - checkInTime) / 60000);
+
+    return sendSuccess(res, {
+      visit_log_id:     visitLog.id,
+      visit_request_id: visitRequestId,
+      check_in_at:      visitLog.check_in_at,
+      check_out_at:     checkOutTime,
+      duration_minutes: durationMinutes,
+      checkout_method:  'QR_SCAN',
+      checked_out_by:   req.user.id,
+    }, 'Visitor checked out via QR scan. Gate pass has been invalidated.');
+
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) {}
+    console.error('[GateController] checkOutByQR error:', err.message);
+    return sendError(res, 'QR checkout failed due to a server error.', 500);
+  } finally {
+    conn.release();
+  }
+};
+
+module.exports = { getDashboard, checkIn, checkOut, checkOutByQR, rejectAtGate, getActiveVisitors };

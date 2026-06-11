@@ -15,14 +15,12 @@ import {
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import StatusBadge from "../../components/shared/StatusBadge";
+import useSocketEvent from "../../hooks/useSocketEvent";
+import useAuth from "../../hooks/useAuth";
 
 const CATEGORY_LABELS = {
-  EMP:               'Employee Visit',
   EMPLOYEE_VISIT:    'Employee Visit',
-  INTER_UNIT_VISIT:  'Employee Visit',
-  INTER_UNIT_INVITE: 'Employee Visit',
   VENDOR:            'Vendor',
-  PRIOR:             'Prior Approval',
   SPOT:              'Walk-in',
   PERSONAL_VISIT:    'Personal Visit',
 };
@@ -49,7 +47,7 @@ function formatDate(dateStr) {
 }
 
 // ── Individual Approval Card ───────────────────────────────────────────────
-function ApprovalCard({ item, onActionSuccess }) {
+function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
  const [mode, setMode] = useState(null); // null | 'approve' | 'reject'
  const [remarks, setRemarks] = useState("");
  const [remarkError, setRemarkError] = useState("");
@@ -111,6 +109,13 @@ function ApprovalCard({ item, onActionSuccess }) {
  {item.visitor_phone && (
  <p className="text-xs text-faint mt-0.5 mb-1">📞 {item.visitor_phone}</p>
  )}
+
+ {isUnitAdmin && item.host_name && (
+    <p className="text-xs text-muted mt-1 mb-2 font-medium flex items-center gap-1.5">
+      <User strokeWidth={1.5} className="w-3.5 h-3.5 text-accent" />
+      <span>Host: <strong className="text-loud">{item.host_name}</strong> {item.department_name && <span className="text-faint">({item.department_name})</span>}</span>
+    </p>
+  )}
 
  {/* Purpose */}
  <p className="text-muted text-sm leading-relaxed line-clamp-2 mb-3">
@@ -236,6 +241,8 @@ function ApprovalCard({ item, onActionSuccess }) {
 
 // ── Main Page ──────────────────────────────────────────────────────────────
 export default function ApprovalInbox() {
+ const { user } = useAuth();
+ const isUnitAdmin = user?.role_type === "unit_admin";
  const [items, setItems] = useState([]);
  const [loading, setLoading] = useState(true);
 
@@ -262,6 +269,29 @@ export default function ApprovalInbox() {
  prev.filter((i) => i.visit_request_id !== visitRequestId),
  );
  };
+
+ /* Socket: new request arrives — prepend card live */
+ useSocketEvent('visit:request:new', (data) => {
+   setItems(prev => {
+     if (prev.some(i => i.visit_request_id === data.visit_request_id)) return prev;
+     return [{
+       visit_request_id: data.visit_request_id,
+       visitor_name:     data.visitor_name,
+       visitor_phone:    data.visitor_phone,
+       visit_date:       data.visit_date,
+       visit_start_time: data.visit_start_time,
+       visit_category:   data.visit_category,
+       purpose:          data.purpose,
+       assigned_at:      data.created_at,
+     }, ...prev];
+   });
+   toast.success('New visit request received!', { icon: '📋', duration: 5000 });
+ }, []);
+
+ /* Socket: own approve/reject from another view → remove card */
+ useSocketEvent('visit:actioned', (data) => {
+   setItems(prev => prev.filter(i => i.visit_request_id !== data.visit_request_id));
+ }, []);
 
  return (
  <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in">
@@ -342,6 +372,7 @@ export default function ApprovalInbox() {
  <ApprovalCard
  key={item.visit_request_id}
  item={item}
+ isUnitAdmin={isUnitAdmin}
  onActionSuccess={handleActionSuccess}
  />
  ))}

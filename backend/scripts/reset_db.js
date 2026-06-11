@@ -115,7 +115,7 @@ async function main() {
 
     await conn.query(`USE \`${CENTRAL_DB}\``);
 
-    const centralSchemaPath = path.join(__dirname, '../../database/vms_central_schema.sql');
+    const centralSchemaPath = path.join(__dirname, '../database/vms_central_schema.sql');
     await applySchema(conn, centralSchemaPath);
     console.log('');
 

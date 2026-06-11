@@ -1,12 +1,50 @@
 // backend/controllers/approval.controller.js
 'use strict';
 
-const { sendSuccess, sendError } = require('../utils/response.util');
-const { sendNotification }       = require('../services/notification.service');
-const emailService               = require('../services/email.service');
-const { logAudit }               = require('../utils/auditLogger.util');
-const { generateGatePass }       = require('../services/gatePass.service');
-const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { sendSuccess, sendError }       = require('../utils/response.util');
+const { sendNotification }             = require('../services/notification.service');
+const emailService                     = require('../services/email.service');
+const { logAudit }                     = require('../utils/auditLogger.util');
+const { generateGatePass }             = require('../services/gatePass.service');
+const { isSuperAdmin, isUnitAdmin }    = require('../middlewares/rbac.middleware');
+const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
+
+// ── Inline schedule conflict check for the approval flow ─────────────────────
+// Checks if the host already has another APPROVED visit overlapping the given time.
+const checkApprovalConflict = async (db, hostUserId, visitDate, startTime, endTime, excludeRequestId) => {
+  if (!startTime || !endTime) return null;
+  const [rows] = await db.query(
+    `SELECT vr.id, vr.visit_start_time, vr.visit_end_time,
+            COALESCE(vr.visitor_name, 'Unknown Visitor') AS visitor_name
+     FROM visit_requests vr
+     WHERE vr.host_user_id = ?
+       AND vr.visit_date   = ?
+       AND vr.status       = 'APPROVED'
+       AND vr.id          != ?
+       AND vr.visit_start_time IS NOT NULL
+       AND vr.visit_end_time   IS NOT NULL
+       AND vr.visit_start_time < ?
+       AND vr.visit_end_time   > ?
+     LIMIT 1`,
+    [hostUserId, visitDate, excludeRequestId, endTime, startTime]
+  );
+  if (!rows.length) return null;
+  return {
+    clashing_request_id: rows[0].id,
+    visitor_name:        rows[0].visitor_name,
+    time_window:         `${rows[0].visit_start_time} – ${rows[0].visit_end_time}`,
+  };
+};
+
+const getISTDateString = (d = new Date()) => {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d);
+};
+
 
 // ── getInbox ──────────────────────────────────────────────────────────────────
 /**
@@ -62,7 +100,7 @@ const approveRequest = async (req, res) => {
   const conn = await req.db.getConnection();
   try {
     const { id } = req.params; // visit_request_id
-    const { remarks } = req.body;
+    const { remarks, force_approve } = req.body;
     const user = req.user;
 
     const [vrRows] = await conn.query(
@@ -77,9 +115,7 @@ const approveRequest = async (req, res) => {
 
     // Permission check
     const isHost    = request.host_user_id === user.id;
-    const canApprove = isHost
-      || isSuperAdmin(user)
-      || isUnitAdmin(user);
+    const canApprove = isHost || isSuperAdmin(user) || isUnitAdmin(user);
 
     if (!canApprove) {
       conn.release();
@@ -88,6 +124,34 @@ const approveRequest = async (req, res) => {
     if (request.status !== 'PENDING') {
       conn.release();
       return sendError(res, 'This request has already been actioned.', 400);
+    }
+
+    // ── Schedule conflict check (only when visit has a time window) ──────────
+    // Skip if force_approve:true (host confirmed they want to override)
+    if (!force_approve && request.visit_start_time && request.visit_end_time) {
+      try {
+        const conflict = await checkApprovalConflict(
+          req.db,
+          request.host_user_id,
+          request.visit_date,
+          request.visit_start_time,
+          request.visit_end_time,
+          request.id
+        );
+        if (conflict) {
+          conn.release();
+          return res.status(409).json({
+            success:        false,
+            conflict:       true,
+            type:           'HOST_BUSY',
+            host_conflict:  conflict,
+            message:        `Schedule conflict: ${conflict.visitor_name} is already approved for the host during ${conflict.time_window}. Approve anyway with force_approve.`,
+          });
+        }
+      } catch (conflictErr) {
+        // Non-fatal — conflict check failure shouldn't block approval
+        console.warn('[ApprovalController] Conflict check failed (non-fatal):', conflictErr.message);
+      }
     }
 
     await conn.beginTransaction();
@@ -103,7 +167,7 @@ const approveRequest = async (req, res) => {
     await conn.commit();
     conn.release();
 
-    // ── Auto-generate gate pass ───────────────────────────────────────────────
+    // ── Auto-generate gate pass (fast — local DB write + QR) ─────────────────
     let passResult = null;
     try {
       passResult = await generateGatePass(request.id, user.id, req.db);
@@ -111,80 +175,109 @@ const approveRequest = async (req, res) => {
       console.error('[ApprovalController] Gate pass auto-generation failed:', passErr.message);
     }
 
-    // ── Notify visitor using inline fields (visitor_id may not be set yet) ────
+    // ── Respond immediately — don't make the client wait for emails/SMS ───────
+    sendSuccess(res, { gate_pass: passResult }, 'Request approved successfully.');
+
+    // ── Socket.IO: push real-time updates ────────────────────────────────────
+    const today        = getISTDateString();
+    const visitDateStr = getISTDateString(new Date(request.visit_date));
+
+    // Resolve host name and department name for the socket payload
+    let hostFullName = null;
+    let deptName = null;
+    try {
+      const [hostRows] = await req.db.query(
+        'SELECT full_name FROM users WHERE id = ? LIMIT 1',
+        [request.host_user_id]
+      );
+      hostFullName = hostRows[0]?.full_name ?? null;
+
+      if (request.department_id) {
+        const [deptRows] = await req.db.query(
+          'SELECT name FROM departments WHERE id = ? LIMIT 1',
+          [request.department_id]
+        );
+        deptName = deptRows[0]?.name ?? null;
+      }
+    } catch (lookupErr) {
+      console.warn('[ApprovalController] Could not resolve host/dept for socket payload:', lookupErr.message);
+    }
+
+    // Notify the APPROVER's own other views (dashboard, approval inbox) so they update
+    emitToUser(user.id, req.user.unit_db, 'visit:actioned', {
+      visit_request_id: parseInt(id),
+      action: 'APPROVED',
+    });
+
+    // Notify security gate room if the approved visit is for today
+    // NOTE: visit_requests table has no unit_id column — use req.user.unit_id
+    // (the approver belongs to the same unit whose security needs the notification)
+    if (visitDateStr === today) {
+      emitToUnitSecurity(req.user.unit_id, 'visit:approved:today', {
+        id:               request.id,
+        visitor_name:     request.visitor_name,
+        visitor_phone:    request.visitor_phone,
+        host_user_id:     request.host_user_id,
+        host_name:        hostFullName,
+        department_name:  deptName,
+        visit_date:       request.visit_date,
+        visit_start_time: request.visit_start_time,
+        visit_end_time:   request.visit_end_time,
+        visit_category:   request.visitor_type_code,
+        status:           'APPROVED',
+        purpose:          request.purpose,
+        pass_number:      passResult?.pass_number || null,
+      });
+    }
+
+    // Notify the requester if different from the approver
+    if (request.requester_user_id && request.requester_user_id !== user.id) {
+      emitToUser(request.requester_user_id, req.user.unit_db, 'visit:approved', {
+        visit_request_id: request.id,
+        visit_date:       request.visit_date,
+        visit_category:   request.visitor_type_code,
+        approved_by:      user.full_name || user.email,
+        pass_number:      passResult?.pass_number || null,
+      });
+    }
+
+    // ── Fire notifications + audit in background (fire-and-forget) ────────────
+    const notify = (opts) => sendNotification({ db: req.db, ...opts });
     const visitorName  = request.visitor_name  || null;
     const visitorEmail = request.visitor_email || null;
     const visitorPhone = request.visitor_phone || null;
+    const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const qrCodeUrl = passResult?.qr_code_path ? `${baseUrl}/${passResult.qr_code_path}` : null;
 
-    if (['EMPLOYEE_VISIT', 'EMP', 'PRIOR', 'SPOT', 'PERSONAL_VISIT', 'INTER_UNIT_VISIT'].includes(request.visitor_type_code)) {
-      const baseUrl = req ? `${req.protocol}://${req.get('host')}` : `http://localhost:${process.env.PORT || 5000}`;
-      const qrCodeUrl = passResult?.qr_code_path ? `${baseUrl}/${passResult.qr_code_path}` : null;
-      const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
-
-      if (visitorEmail) {
-        const tmpl = emailService.visitApprovedTemplate(
-          visitorName || 'Visitor',
-          user.full_name,
-          request.visit_date,
-          '',
-          passResult?.pass_number || null,
-          qrCodeUrl,
-          request.visit_start_time || null
-        );
-        await sendNotification({
-          db: req.db,
-          visitRequestId:     request.id,
-          recipientEmail:     visitorEmail,
-          type:               'EMAIL',
-          subject:            tmpl.subject,
-          message:            tmpl.html,
-        });
-      }
-
-      if (visitorPhone) {
-        const smsText = passResult?.pass_number
+    Promise.allSettled([
+      // Email visitor
+      ...(visitorEmail && ['EMPLOYEE_VISIT','SPOT','PERSONAL_VISIT'].includes(request.visitor_type_code)
+        ? [(() => {
+            const tmpl = emailService.visitApprovedTemplate(
+              visitorName || 'Visitor', user.full_name, request.visit_date, '',
+              passResult?.pass_number || null, qrCodeUrl, request.visit_start_time || null
+            );
+            return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
+          })()]
+        : []),
+      // SMS visitor
+      ...(visitorPhone ? [notify({
+        visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
+        message: passResult?.pass_number
           ? `VMS: Your visit on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}. Gate Pass: ${passResult.pass_number}`
-          : `VMS: Your visit on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}.`;
-        await sendNotification({
-          db: req.db,
-          visitRequestId: request.id,
-          recipientPhone: visitorPhone,
-          type:           'SMS',
-          message:        smsText,
-        });
-      }
+          : `VMS: Your visit on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}.`,
+      })] : []),
+      // Dashboard — requester
+      ...(request.requester_user_id && request.requester_user_id !== user.id
+        ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}.` })]
+        : []),
+      // Dashboard — generic
+      notify({ visitRequestId: request.id, type: 'DASHBOARD', message: `Visit request #${request.id} has been APPROVED by ${user.full_name}.` }),
+      // Audit log
+      logAudit({ db: req.db, userId: user.id, action: 'APPROVE_REQUEST', module: 'APPROVAL', recordType: 'VISIT_REQUEST', recordId: request.id, ipAddress: req.ip, userAgent: req.headers['user-agent'] || null }),
+    ]).catch(err => console.error('[ApprovalController] Background task error:', err.message));
 
-      // Also notify the requester (could be a different user for PRIOR / EMP)
-      if (request.requester_user_id && request.requester_user_id !== user.id) {
-        await sendNotification({
-          db: req.db,
-          visitRequestId:   request.id,
-          recipientUserId:  request.requester_user_id,
-          type:             'DASHBOARD',
-          message:          `Your visit request #${request.id} on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}.`,
-        });
-      }
-    }
-
-    await sendNotification({
-      db: req.db,
-      visitRequestId: request.id,
-      type:           'DASHBOARD',
-      message:        `Visit request #${request.id} has been APPROVED by ${user.full_name}.`,
-    });
-
-    await logAudit({
-      db:        req.db,
-      userId:    user.id,
-      action:    'APPROVE_REQUEST',
-      module:    'APPROVAL',
-      recordType: 'VISIT_REQUEST',
-      recordId:  request.id,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'] || null,
-    });
-
-    return sendSuccess(res, { gate_pass: passResult }, 'Request approved successfully.');
   } catch (err) {
     if (conn) { try { await conn.rollback(); } catch (_) {} conn.release(); }
     console.error('[ApprovalController] approveRequest error:', err.message);
@@ -216,9 +309,7 @@ const rejectRequest = async (req, res) => {
     const request = vrRows[0];
 
     const isHost    = request.host_user_id === user.id;
-    const canReject = isHost
-      || isSuperAdmin(user)
-      || isUnitAdmin(user);
+    const canReject = isHost || isSuperAdmin(user) || isUnitAdmin(user);
 
     if (!canReject) {
       conn.release();
@@ -242,66 +333,86 @@ const rejectRequest = async (req, res) => {
     await conn.commit();
     conn.release();
 
-    // ── Notify visitor using inline fields ────────────────────────────────────
+    // ── Respond immediately — don't make the client wait for emails/SMS ───────
+    sendSuccess(res, null, 'Request rejected successfully.');
+
+    // ── Socket: notify the rejecter's own views ──────────────────────────────
+    emitToUser(user.id, req.user.unit_db, 'visit:actioned', {
+      visit_request_id: parseInt(id),
+      action: 'REJECTED',
+      visit_category:   request.visitor_type_code,
+    });
+
+    // ── Socket: notify requester of rejection ────────────────────────────────
+    if (request.requester_user_id) {
+      emitToUser(request.requester_user_id, req.user.unit_db, 'visit:rejected', {
+        visit_request_id: parseInt(id),
+        visit_category:   request.visitor_type_code,
+        remarks:          remarks.trim(),
+        rejected_by:      user.full_name || user.email,
+      });
+    }
+
+    // ── Fire notifications + audit in background (fire-and-forget) ────────────
+    const notify = (opts) => sendNotification({ db: req.db, ...opts });
     const visitorName  = request.visitor_name  || null;
-    const visitorEmail = request.visitor_email || null;
+    const visitorEmail = request.visitor_email || request.vendor_email || null; // vendor fallback
     const visitorPhone = request.visitor_phone || null;
     const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
 
-    if (visitorEmail) {
-      const tmpl = emailService.visitRejectedTemplate(
-        visitorName || 'Visitor', user.full_name, request.visit_date, remarks.trim(), request.visit_start_time || null
+    // Fetch host + requester details for emails
+    const [hostRejectRows] = await req.db.query(
+      'SELECT full_name, email FROM users WHERE id = ?', [request.host_user_id]
+    );
+    const hostInfo = hostRejectRows[0] || {};
+
+    let requesterInfo = null;
+    if (request.requester_user_id && request.requester_user_id !== request.host_user_id) {
+      const [reqRows] = await req.db.query(
+        'SELECT full_name, email FROM users WHERE id = ?', [request.requester_user_id]
       );
-      await sendNotification({
-        db: req.db,
-        visitRequestId: request.id,
-        recipientEmail: visitorEmail,
-        type:           'EMAIL',
-        subject:        tmpl.subject,
-        message:        tmpl.html,
-      });
+      requesterInfo = reqRows[0] || null;
     }
 
-    if (visitorPhone) {
-      await sendNotification({
-        db: req.db,
-        visitRequestId: request.id,
-        recipientPhone: visitorPhone,
-        type:           'SMS',
-        message:        `VMS: Your visit request on ${request.visit_date}${timeStr} has been DECLINED. Reason: ${remarks.trim()}`,
-      });
-    }
+    const makeRejectedEmail = (recipientName, recipientEmail) => {
+      const tmpl = emailService.visitRejectedTemplate(
+        recipientName || 'Visitor', user.full_name, request.visit_date, remarks.trim(), request.visit_start_time || null
+      );
+      return notify({ visitRequestId: request.id, recipientEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
+    };
 
-    // Also notify the requester if different from host/visitor
-    if (request.requester_user_id && request.requester_user_id !== user.id) {
-      await sendNotification({
-        db: req.db,
-        visitRequestId:  request.id,
-        recipientUserId: request.requester_user_id,
-        type:            'DASHBOARD',
-        message:         `Your visit request #${request.id} on ${request.visit_date}${timeStr} has been REJECTED. Reason: ${remarks.trim()}`,
-      });
-    }
+    Promise.allSettled([
+      // 1. Email visitor (or vendor contact)
+      ...(visitorEmail ? [makeRejectedEmail(visitorName || 'Visitor', visitorEmail)] : []),
 
-    await sendNotification({
-      db: req.db,
-      visitRequestId: request.id,
-      type:           'DASHBOARD',
-      message:        `Visit request #${request.id} has been REJECTED by ${user.full_name}.`,
-    });
+      // 2. Email the internal requester employee (if different from visitor and has email)
+      ...(requesterInfo?.email && requesterInfo.email !== visitorEmail
+        ? [makeRejectedEmail(`${requesterInfo.full_name} (your request)`, requesterInfo.email)]
+        : []),
 
-    await logAudit({
-      db:        req.db,
-      userId:    user.id,
-      action:    'REJECT_REQUEST',
-      module:    'APPROVAL',
-      recordType: 'VISIT_REQUEST',
-      recordId:  request.id,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'] || null,
-    });
+      // 3. Email host if they were NOT the one who rejected (i.e. admin rejected on their behalf)
+      ...(!isHost && hostInfo.email && hostInfo.email !== visitorEmail && hostInfo.email !== requesterInfo?.email
+        ? [makeRejectedEmail(`${hostInfo.full_name} (FYI)`, hostInfo.email)]
+        : []),
 
-    return sendSuccess(res, null, 'Request rejected successfully.');
+      // 4. SMS visitor
+      ...(visitorPhone ? [notify({
+        visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
+        message: `VMS: Your visit request on ${request.visit_date}${timeStr} has been DECLINED. Reason: ${remarks.trim()}`,
+      })] : []),
+
+      // 5. Dashboard — requester
+      ...(request.requester_user_id && request.requester_user_id !== user.id
+        ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${request.visit_date}${timeStr} has been REJECTED. Reason: ${remarks.trim()}` })]
+        : []),
+
+      // 6. Dashboard — generic
+      notify({ visitRequestId: request.id, type: 'DASHBOARD', message: `Visit request #${request.id} has been REJECTED by ${user.full_name}.` }),
+
+      // 7. Audit log
+      logAudit({ db: req.db, userId: user.id, action: 'REJECT_REQUEST', module: 'APPROVAL', recordType: 'VISIT_REQUEST', recordId: request.id, ipAddress: req.ip, userAgent: req.headers['user-agent'] || null }),
+    ]).catch(err => console.error('[ApprovalController] Background task error:', err.message));
+
   } catch (err) {
     if (conn) { try { await conn.rollback(); } catch (_) {} conn.release(); }
     console.error('[ApprovalController] rejectRequest error:', err.message);

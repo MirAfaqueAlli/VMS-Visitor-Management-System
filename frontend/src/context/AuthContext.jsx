@@ -76,6 +76,13 @@ export function AuthProvider({ children }) {
     return response.data;
   }, []);
 
+  // loginDirect — used by Setup wizard to auto-login without a second API call
+  const loginDirect = useCallback((token, user) => {
+    localStorage.setItem("vms_token", token);
+    localStorage.setItem("vms_user", JSON.stringify(user));
+    dispatch({ type: "LOGIN_SUCCESS", payload: { user, token } });
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem("vms_token");
     localStorage.removeItem("vms_user");
@@ -128,6 +135,7 @@ export function AuthProvider({ children }) {
       value={{
         ...state,
         login,
+        loginDirect,
         logout,
         hasRole,
         setActiveUnit,

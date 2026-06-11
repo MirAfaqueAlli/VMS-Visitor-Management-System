@@ -1,6 +1,5 @@
 // frontend/src/pages/admin/DepartmentManagement.jsx
 import { useState, useEffect, useCallback } from 'react';
-import { NavLink } from 'react-router-dom';
 import { Plus, X, Trash2, Tag } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
@@ -101,26 +100,6 @@ export default function DepartmentManagement() {
   return (
     <>
       <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in space-y-5">
-        {/* Sub-tab nav */}
-        <div
-          className="flex gap-1 p-1 w-fit"
-          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
-        >
-          {[['Users', '/admin'], ['Departments', '/admin/departments']].map(([label, path]) => (
-            <NavLink
-              key={path}
-              to={path}
-              end={path === '/admin'}
-              className={() => 'px-4 py-1.5 text-[12px] font-medium transition-colors'}
-              style={({ isActive }) => isActive
-                ? { background: 'var(--color-accent)', borderRadius: 'var(--radius-sm)', color: '#0f172a' }
-                : { borderRadius: 'var(--radius-sm)', color: 'var(--color-text-muted)' }}
-            >
-              {label}
-            </NavLink>
-          ))}
-        </div>
-
         {/* Table card */}
         <div className="vms-card overflow-hidden">
           <div
@@ -217,7 +196,8 @@ export default function DepartmentManagement() {
 
       {/* Slide-over panel — matches UserManagement panel */}
       <aside
-        className={`fixed right-0 top-0 h-full w-full max-w-md bg-white border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
+        className={`fixed right-0 top-0 h-full w-full max-w-md border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
+        style={{ background: 'var(--color-bg-primary)' }}
       >
         {/* Panel header */}
         <div className="flex items-center justify-between p-6 border-b border-subtle shrink-0">

@@ -183,9 +183,36 @@ const visitRejectedTemplate = (visitorName, hostName, visitDate, reason, visitTi
   return { subject, html };
 };
 
+/**
+ * Template: OTP email for public visitor verification.
+ */
+const otpTemplate = (otp, type = 'phone') => {
+  const subject = `[${process.env.APP_NAME || 'VMS'}] Your Verification Code`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #f9f9f9; border-radius: 8px; overflow: hidden;">
+      <div style="background: #1a73e8; padding: 20px 28px;">
+        <h1 style="color: #fff; margin: 0; font-size: 18px;">${process.env.APP_NAME || 'Visitor Management System'}</h1>
+      </div>
+      <div style="padding: 28px; background: #fff; text-align: center;">
+        <p style="color: #555; font-size: 14px; margin: 0 0 20px;">Your ${type === 'email' ? 'email' : 'phone'} verification code is:</p>
+        <div style="font-size: 36px; font-weight: bold; letter-spacing: 10px; color: #1a73e8; background: #f0f4ff; border-radius: 8px; padding: 18px 24px; display: inline-block; margin-bottom: 20px;">
+          ${otp}
+        </div>
+        <p style="color: #999; font-size: 12px; margin: 0;">This code expires in 10 minutes. Do not share it with anyone.</p>
+      </div>
+      <div style="padding: 14px 28px; background: #f1f3f4; text-align: center;">
+        <p style="color: #999; font-size: 11px; margin: 0;">This is an automated message. Please do not reply directly.</p>
+      </div>
+    </div>
+  `;
+  return { subject, html };
+};
+
 module.exports = {
   sendEmail,
   visitRequestTemplate,
   visitApprovedTemplate,
   visitRejectedTemplate,
+  otpTemplate,
 };
+

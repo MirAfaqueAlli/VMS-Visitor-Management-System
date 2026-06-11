@@ -2,6 +2,8 @@
 'use strict';
 
 const bcrypt = require('bcrypt');
+const { validatePassword } = require('../utils/passwordValidator.util');
+const jwt    = require('jsonwebtoken');
 const { centralPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 
@@ -71,8 +73,8 @@ const initialize = async (req, res) => {
     if (!admin_name?.trim())      return sendError(res, 'admin_name is required.',       400);
     if (!admin_email?.trim())     return sendError(res, 'admin_email is required.',      400);
     if (!admin_password?.trim())  return sendError(res, 'admin_password is required.',   400);
-    if (admin_password.length < 8)
-      return sendError(res, 'Password must be at least 8 characters.', 400);
+    const { valid: pwValid, errors: pwErrors } = validatePassword(admin_password);
+    if (!pwValid) return sendError(res, pwErrors[0], 400);
 
     // ── Create organization ───────────────────────────────────────────────────
     const [orgResult] = await centralPool.query(
@@ -104,12 +106,41 @@ const initialize = async (req, res) => {
       ]
     );
 
-    console.log(`[Setup] System initialized — org "${org_name}" (id=${orgId}), super_admin "${admin_email}" (id=${userResult.insertId})`);
+    const adminId = userResult.insertId;
+    console.log(`[Setup] System initialized — org "${org_name}" (id=${orgId}), super_admin "${admin_email}" (id=${adminId})`);
 
-    return sendSuccess(res, {
-      org_id:   orgId,
-      admin_id: userResult.insertId,
-    }, 'System initialized successfully. You can now log in as Super Admin.');
+    // ── Issue session token so the frontend can auto-login immediately ──────────
+    const token = jwt.sign(
+      { userId: adminId, role: 'super_admin', unit_db: 'central' },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
+    );
+
+    const userPayload = {
+      id:             adminId,
+      full_name:      admin_name.trim(),
+      email:          admin_email.toLowerCase().trim(),
+      phone:          admin_phone || null,
+      designation:    null,
+      designation_id: null,
+      employee_code:  admin_employee_code.trim(),
+      role:           'super_admin',
+      role_type:      'super_admin',
+      department_id:  null,
+      department_name: null,
+      unit_id:        null,
+      unit_name:      null,
+      unit_db:        'central',
+      last_login_at:  null,
+      is_super_admin:    true,
+      is_unit_admin:     false,
+      is_dept_admin:     false,
+      is_global_auditor: false,
+      is_unit_auditor:   false,
+    };
+
+    return sendSuccess(res, { token, user: userPayload, org_id: orgId, admin_id: adminId },
+      'System initialized successfully. You are now logged in.');
 
   } catch (err) {
     console.error('[Setup] initialize error:', err.message);

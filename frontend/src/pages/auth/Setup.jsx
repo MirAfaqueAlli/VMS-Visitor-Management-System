@@ -7,8 +7,9 @@ import {
 } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
+import useAuth from "../../hooks/useAuth";
 
-const inputCls = "w-full bg-white/5 border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-400/60 transition-colors";
+const inputCls = "w-full bg-white/5 border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-blue-400/60 transition-colors";
 const labelCls = "block text-[11px] font-semibold text-white/40 uppercase tracking-wider mb-1.5";
 
 const INITIAL = {
@@ -28,6 +29,7 @@ const INITIAL = {
 
 export default function Setup() {
   const navigate = useNavigate();
+  const { loginDirect } = useAuth();
   const [form, setForm]         = useState(INITIAL);
   const [loading, setLoading]   = useState(false);
   const [showPwd, setShowPwd]   = useState(false);
@@ -59,9 +61,18 @@ export default function Setup() {
     setLoading(true);
     try {
       const { admin_confirm_password, ...payload } = form;
-      await apiClient.post("/setup", payload);
-      toast.success("System initialized! Please sign in as Super Admin.");
-      navigate("/login");
+      const response = await apiClient.post("/setup", payload);
+      const { token, user } = response.data?.data ?? {};
+
+      if (token && user) {
+        // Store session and sync context — same as regular login
+        loginDirect(token, user);
+        toast.success(`Welcome, ${user.full_name}! System initialized.`);
+        navigate("/dashboard");
+      } else {
+        toast.success("System initialized! Please sign in.");
+        navigate("/login");
+      }
     } catch (err) {
       toast.error(err?.response?.data?.message || "Setup failed. Please try again.");
     } finally {
@@ -77,7 +88,7 @@ export default function Setup() {
       {/* Background orbs */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full opacity-20"
-             style={{ background: "radial-gradient(circle, #f59e0b 0%, transparent 70%)" }} />
+             style={{ background: "radial-gradient(circle, #3b82f6 0%, transparent 70%)" }} />
         <div className="absolute -bottom-32 -right-32 w-96 h-96 rounded-full opacity-10"
              style={{ background: "radial-gradient(circle, #818cf8 0%, transparent 70%)" }} />
       </div>
@@ -87,8 +98,8 @@ export default function Setup() {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4"
-               style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.3)" }}>
-            <Building2 size={26} className="text-amber-400" />
+               style={{ background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}>
+            <Building2 size={26} className="text-blue-400" />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
             First-Time Setup
@@ -113,8 +124,8 @@ export default function Setup() {
                 <div
                   className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all"
                   style={{
-                    background: step === n ? "#f59e0b" : step > n ? "rgba(245,158,11,0.3)" : "rgba(255,255,255,0.08)",
-                    color:      step === n ? "#000" : step > n ? "#f59e0b" : "rgba(255,255,255,0.4)",
+                    background: step === n ? "#3b82f6" : step > n ? "rgba(59,130,246,0.3)" : "rgba(255,255,255,0.08)",
+                    color:      step === n ? "#fff" : step > n ? "#93c5fd" : "rgba(255,255,255,0.4)",
                   }}
                 >
                   {step > n ? <CheckCircle2 size={14} /> : n}
@@ -151,7 +162,7 @@ export default function Setup() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="col-span-2 space-y-1.5">
                   <label className={labelCls}>
                     <Building2 className="inline w-3 h-3 mr-1" />
@@ -242,7 +253,7 @@ export default function Setup() {
               <button
                 type="submit"
                 className="w-full py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all"
-                style={{ background: "#f59e0b", color: "#000" }}
+                style={{ background: "#3b82f6", color: "#fff" }}
               >
                 Next — Super Admin
                 <ChevronRight size={16} />
@@ -259,7 +270,7 @@ export default function Setup() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="col-span-2 space-y-1.5">
                   <label className={labelCls}>
                     <User className="inline w-3 h-3 mr-1" />
@@ -381,7 +392,7 @@ export default function Setup() {
                   type="submit"
                   disabled={loading}
                   className="flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-60"
-                  style={{ background: "#f59e0b", color: "#000" }}
+                  style={{ background: "#3b82f6", color: "#fff" }}
                 >
                   {loading ? (
                     <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />

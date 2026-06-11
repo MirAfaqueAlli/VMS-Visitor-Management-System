@@ -1,6 +1,7 @@
 // backend/controllers/visitRequest.controller.js
 'use strict';
 
+const jwt = require('jsonwebtoken');
 const { centralPool, getPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { sendNotification }       = require('../services/notification.service');
@@ -8,6 +9,14 @@ const emailService               = require('../services/email.service');
 const { logAudit }               = require('../utils/auditLogger.util');
 const { generateGatePass }       = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { emitToUser, emitToUnitSecurity } = require('../socket/socketManager');
+
+// IST date helper (mirrors the one in approval.controller.js)
+const getISTDateString = (d = new Date()) =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -144,7 +153,7 @@ const lookupVisitorByPhone = async (req, res) => {
  * POST /api/visit-requests
  *
  * Supported visit_category values:
- *   EMP, VENDOR, PRIOR, SPOT, PERSONAL_VISIT, INTER_UNIT_VISIT, INTER_UNIT_INVITE
+ *   EMPLOYEE_VISIT, VENDOR, SPOT, PERSONAL_VISIT
  *
  * visitor_phone, visitor_name, visitor_email stored inline — visitor_id stays NULL until check-in.
  */
@@ -179,14 +188,16 @@ const createRequest = async (req, res) => {
       return sendError(res, 'visit_category, purpose, and visit_date are required.', 400);
     }
 
-    const VALID_TYPES = ['EMPLOYEE_VISIT','VENDOR','PRIOR','SPOT','PERSONAL_VISIT','INTER_UNIT_VISIT','INTER_UNIT_INVITE'];
+    const VALID_TYPES = ['EMPLOYEE_VISIT','VENDOR','SPOT','PERSONAL_VISIT'];
     if (!VALID_TYPES.includes(typeCode)) {
-      return sendError(res, `Invalid visit_category: ${typeCode}`, 400);
+      return sendError(res, `Invalid visit_category: ${typeCode}. Allowed: EMPLOYEE_VISIT, VENDOR, SPOT, PERSONAL_VISIT`, 400);
     }
 
     // ── Resolve the correct unit DB (db) ──
     const src = (req.body.request_source || 'SELF').toUpperCase();
     let db = req.db;
+    let isCrossUnit    = false;  // true when EMPLOYEE_VISIT routes to a different unit's DB
+    let crossUnitDbName = null;  // db_name of the target unit (cross-unit only)
     if (typeCode === 'EMPLOYEE_VISIT' && src === 'SELF' && target_unit_id) {
       const { centralPool, getPool } = require('../services/dbManager');
       const [unitRows] = await centralPool.query(
@@ -194,7 +205,9 @@ const createRequest = async (req, res) => {
         [parseInt(target_unit_id)]
       );
       if (unitRows.length > 0) {
-        db = getPool(unitRows[0].db_name);
+        crossUnitDbName = unitRows[0].db_name;
+        db = getPool(crossUnitDbName);
+        isCrossUnit = true;  // request lives in a DIFFERENT unit's DB
       } else {
         return sendError(res, 'Target unit not found or inactive.', 404);
       }
@@ -208,7 +221,7 @@ const createRequest = async (req, res) => {
       ? department_id
       : (req.user?.department_id || department_id);
 
-    if (!effectiveDeptId && !['INTER_UNIT_VISIT', 'EMPLOYEE_VISIT', 'PERSONAL_VISIT'].includes(typeCode)) {
+    if (!effectiveDeptId && !['EMPLOYEE_VISIT', 'PERSONAL_VISIT'].includes(typeCode)) {
       conn.release();
       return sendError(res, 'department_id is required.', 400);
     }
@@ -227,20 +240,10 @@ const createRequest = async (req, res) => {
           : (host_user_id || null);    // Host = selected employee
         break;
       }
-      case 'EMP':
-        request_source  = 'HOST';
-        status          = 'PENDING';
-        effectiveHostId = host_user_id;
-        break;
       case 'VENDOR':
         request_source  = 'HOST';
         status          = 'APPROVED';
         effectiveHostId = host_user_id || requester_user_id;
-        break;
-      case 'PRIOR':
-        request_source  = 'SELF';
-        status          = 'PENDING';
-        effectiveHostId = host_user_id;
         break;
       case 'SPOT':
         request_source  = 'RECEPTION';
@@ -251,18 +254,6 @@ const createRequest = async (req, res) => {
         request_source  = 'SELF';
         status          = 'APPROVED';
         effectiveHostId = requester_user_id;
-        break;
-      case 'INTER_UNIT_VISIT':
-        request_source  = 'SELF';
-        status          = 'PENDING';
-        effectiveHostId = host_user_id;
-        if (!target_unit_id) { conn.release(); return sendError(res, 'target_unit_id is required for INTER_UNIT_VISIT.', 400); }
-        break;
-      case 'INTER_UNIT_INVITE':
-        request_source  = 'HOST';
-        status          = 'APPROVED';
-        effectiveHostId = requester_user_id;
-        if (!target_unit_id) { conn.release(); return sendError(res, 'target_unit_id is required for INTER_UNIT_INVITE.', 400); }
         break;
       default:
         conn.release();
@@ -295,12 +286,56 @@ const createRequest = async (req, res) => {
     // only populated at check-in time, not when a visit request is created.
     const resolvedVisitorId = visitor_id || null;
 
-    // ── Blacklist check by phone ──────────────────────────────────────────────
+    // ── Unit-level blacklist check by phone ──────────────────────────────────
     if (resolvedVisitorPhone) {
       const blEntry = await isBlacklisted(db, resolvedVisitorId || null, resolvedVisitorPhone);
       if (blEntry) {
         conn.release();
         return sendError(res, `Entry denied. Visitor is blacklisted: ${blEntry.reason}`, 403);
+      }
+    }
+
+    // ── Host-level phone blacklist check ─────────────────────────────────────
+    if (resolvedVisitorPhone && effectiveHostId) {
+      const [hostBlRows] = await db.query(
+        `SELECT id, reason FROM host_phone_blacklist
+         WHERE host_user_id = ? AND visitor_phone = ? AND is_active = TRUE LIMIT 1`,
+        [effectiveHostId, resolvedVisitorPhone]
+      );
+      if (hostBlRows.length > 0) {
+        conn.release();
+        return sendError(
+          res,
+          `The host is currently unavailable for visits from this visitor. Reason: ${hostBlRows[0].reason}`,
+          403
+        );
+      }
+    }
+
+    // ── Duplicate request guard ────────────────────────────────────────────────────────────────────────────
+    // Prevent duplicate PENDING requests to the same host on the same date.
+    // Skip for cross-unit EMPLOYEE_VISIT: the request lives in another unit's DB
+    // which is invisible to the requester's own request list — they cannot see or
+    // cancel it — so enforcing this guard would permanently block them.
+    if (!isCrossUnit && resolvedVisitorPhone && effectiveHostId && visit_date) {
+      const [dupRows] = await db.query(
+        `SELECT id, status FROM visit_requests
+         WHERE visitor_phone = ?
+           AND host_user_id  = ?
+           AND visit_date    = ?
+           AND status = 'PENDING'
+         LIMIT 1`,
+        [resolvedVisitorPhone, effectiveHostId, visit_date]
+      );
+      if (dupRows.length > 0) {
+        conn.release();
+        return res.status(409).json({
+          success:    false,
+          duplicate:  true,
+          existing_request_id: dupRows[0].id,
+          existing_status:     dupRows[0].status,
+          message:    `A visit request for this visitor to this host on ${visit_date} is already pending approval. Please wait for it to be processed or cancel it before creating a new one.`,
+        });
       }
     }
 
@@ -401,8 +436,46 @@ const createRequest = async (req, res) => {
     // ── Notifications ─────────────────────────────────────────────────────────
     const notify = (opts) => sendNotification({ db, ...opts });
     const timeStr = visit_start_time ? ` at ${visit_start_time}` : '';
-    const [hostRows] = await db.query('SELECT full_name, email, phone FROM users WHERE id = ?', [effectiveHostId]);
+    const [hostRows] = await db.query('SELECT full_name, email, phone, unit_id FROM users WHERE id = ?', [effectiveHostId]);
     const host = hostRows[0] || {};
+
+    // ── Socket: notify security gate room for auto-approved visits that are today ─
+    if (status === 'APPROVED' && effectiveUnitId) {
+      try {
+        const todayIST    = getISTDateString();
+        const visitDateIST = getISTDateString(new Date(visit_date));
+        if (visitDateIST === todayIST) {
+          // Fetch department name for the payload
+          let deptNameForSocket = null;
+          if (effectiveDeptId) {
+            try {
+              const [deptRows] = await db.query(
+                'SELECT name FROM departments WHERE id = ? LIMIT 1',
+                [effectiveDeptId]
+              );
+              deptNameForSocket = deptRows[0]?.name ?? null;
+            } catch (_) { /* non-fatal */ }
+          }
+          emitToUnitSecurity(effectiveUnitId, 'visit:approved:today', {
+            id:               visitRequestId,
+            visitor_name:     resolvedVisitorName,
+            visitor_phone:    resolvedVisitorPhone,
+            host_user_id:     effectiveHostId,
+            host_name:        host.full_name ?? null,
+            department_name:  deptNameForSocket,
+            visit_date:       visit_date,
+            visit_start_time: visit_start_time || null,
+            visit_end_time:   visit_end_time   || null,
+            visit_category:   typeCode,
+            status:           'APPROVED',
+            purpose:          purpose,
+            pass_number:      passResult?.pass_number || null,
+          });
+        }
+      } catch (socketErr) {
+        console.error('[VisitRequestController] Failed to emit visit:approved:today:', socketErr.message);
+      }
+    }
 
     if (typeCode === 'EMPLOYEE_VISIT') {
       const isVisiting = request_source === 'SELF';
@@ -416,13 +489,6 @@ const createRequest = async (req, res) => {
       } else {
         await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Employee visit for ${resolvedVisitorName || 'colleague'} on ${visit_date}${timeStr} auto-approved. Gate pass generated.` });
       }
-    } else if (typeCode === 'EMP') {
-      const displayName = resolvedVisitorName || req.user?.full_name || 'A colleague';
-      if (host.email) {
-        const tmpl = emailService.visitRequestTemplate(displayName, host.full_name, visit_date, purpose, '', visit_start_time || null);
-        await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientEmail: host.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
-      }
-      await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `New visit request from ${displayName} on ${visit_date}${timeStr}.` });
     } else if (typeCode === 'VENDOR') {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
       const qrCodeUrl = passResult?.qr_code_path ? `${baseUrl}/${passResult.qr_code_path}` : null;
@@ -431,16 +497,6 @@ const createRequest = async (req, res) => {
         await notify({ visitRequestId, recipientEmail: vendor_email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
       }
       await notify({ visitRequestId, type: 'DASHBOARD', message: `Vendor visit scheduled: ${company_name || 'Unknown'} on ${visit_date}${timeStr}.` });
-    } else if (typeCode === 'PRIOR') {
-      const displayName = resolvedVisitorName || 'External visitor';
-      if (host.email) {
-        const tmpl = emailService.visitRequestTemplate(displayName, host.full_name, visit_date, purpose, '', visit_start_time || null);
-        await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientEmail: host.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
-      }
-      if (host.phone) {
-        await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientPhone: host.phone, type: 'SMS', message: `VMS: ${displayName} requested to visit you on ${visit_date}${timeStr}. Please log in to approve/reject.` });
-      }
-      await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `Prior-approved visit request from ${displayName} on ${visit_date}${timeStr} awaiting approval.` });
     } else if (typeCode === 'SPOT') {
       await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `URGENT: Walk-in visitor waiting at reception for you. Purpose: ${purpose}` });
     } else if (typeCode === 'PERSONAL_VISIT') {
@@ -451,10 +507,33 @@ const createRequest = async (req, res) => {
         await notify({ visitRequestId, recipientEmail: resolvedVisitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
       }
       await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Your personal visit request for ${resolvedVisitorName || 'Guest'} on ${visit_date}${timeStr} is auto-approved. Gate pass generated.` });
-    } else if (typeCode === 'INTER_UNIT_VISIT') {
-      await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `Inter-unit visit request from ${req.user?.full_name || 'a colleague'} on ${visit_date}${timeStr}. Please approve or reject.` });
-    } else if (typeCode === 'INTER_UNIT_INVITE') {
-      await notify({ visitRequestId, type: 'DASHBOARD', message: `Inter-unit invite created for ${resolvedVisitorName || 'colleague'} on ${visit_date}${timeStr}. Auto-approved.` });
+    }
+
+    // ── Socket: notify host if request is PENDING (needs their approval) ────────────────────────────
+    // Use the already-resolved DB name — cross-unit uses crossUnitDbName,
+    // same-unit uses req.user.unit_db (mirrors gate.controller check-in approach).
+    if (status === 'PENDING' && effectiveHostId) {
+      const hostSocketDb = isCrossUnit ? crossUnitDbName : req.user.unit_db;
+      if (hostSocketDb) {
+        try {
+          const { emitToUser: emitFn } = require('../socket/socketManager');
+          emitFn(effectiveHostId, hostSocketDb, 'visit:request:new', {
+            visit_request_id: visitRequestId,
+            visitor_name:     resolvedVisitorName || 'A visitor',
+            visitor_phone:    resolvedVisitorPhone || null,
+            visit_date:       visit_date,
+            visit_start_time: visit_start_time || null,
+            visit_category:   typeCode,
+            purpose:          purpose,
+            created_at:       new Date(),
+          });
+          console.log(`[VisitRequestController] visit:request:new emitted to host #${effectiveHostId} (db: ${hostSocketDb})`);
+        } catch (socketErr) {
+          console.error('[VisitRequestController] Failed to emit socket notification:', socketErr.message);
+        }
+      } else {
+        console.warn(`[VisitRequestController] Skipping visit:request:new — could not resolve host socket DB (unit_db=${req.user.unit_db})`);
+      }
     }
 
     // ── Audit log ─────────────────────────────────────────────────────────────
@@ -529,11 +608,26 @@ const getRequest = async (req, res) => {
       visitorDetails = vRows[0] || null;
     }
 
+    // ── Check if the requesting user has blocked this visitor's phone ────────
+    // Returns block ID if blocked (so frontend can show Unblock instead of Block)
+    let hostBlockId = null;
+    if (request.visitor_phone && req.user && request.host_user_id) {
+      try {
+        const [blCheck] = await req.db.query(
+          `SELECT id FROM host_phone_blacklist
+           WHERE host_user_id = ? AND visitor_phone = ? AND is_active = TRUE LIMIT 1`,
+          [request.host_user_id, request.visitor_phone]
+        );
+        if (blCheck.length > 0) hostBlockId = blCheck[0].id;
+      } catch (_) { /* non-fatal — table may not exist on older dbs */ }
+    }
+
     return sendSuccess(res, {
       ...request,
       companions,
       approval_history: approvalRows,
       visitor: visitorDetails,
+      host_block_id: hostBlockId,  // null = not blocked, number = block entry ID
     }, 'Visit request fetched successfully.');
   } catch (err) {
     console.error('[VisitRequestController] getRequest error:', err.message);
@@ -551,9 +645,10 @@ const listRequests = async (req, res) => {
 
     const conditions = [];
     const params     = [];
+    const isEmployee = req.user.role_type === 'employee';
 
     // Scope by role
-    if (req.user.role_type === 'employee') {
+    if (isEmployee) {
       conditions.push('(vr.host_user_id = ? OR vr.requester_user_id = ?)');
       params.push(req.user.id, req.user.id);
     }
@@ -567,13 +662,16 @@ const listRequests = async (req, res) => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
+    const SELECT_COLS = `
+      vr.id, vr.visit_date, vr.visit_start_time, vr.status, vr.request_source,
+      vr.purpose, vr.accompanying_count, vr.created_at, vr.visit_category,
+      vr.visitor_name, vr.visitor_phone, vr.company_name, vr.force_created,
+      h.full_name AS host_name,
+      d.name      AS department_name,
+      gp.pass_number`;
+
     const [rows] = await req.db.query(
-      `SELECT vr.id, vr.visit_date, vr.visit_start_time, vr.status, vr.request_source,
-              vr.purpose, vr.accompanying_count, vr.created_at, vr.visit_category,
-              vr.visitor_name, vr.visitor_phone, vr.company_name, vr.force_created,
-              h.full_name AS host_name,
-              d.name      AS department_name,
-              gp.pass_number
+      `SELECT ${SELECT_COLS}
        FROM visit_requests vr
        JOIN users h ON h.id = vr.host_user_id
        LEFT JOIN departments d  ON d.id  = vr.department_id
@@ -583,12 +681,54 @@ const listRequests = async (req, res) => {
       [...params, limit, offset]
     );
 
-    const [[{ total }]] = await req.db.query(
+    const [[{ total: ownTotal }]] = await req.db.query(
       `SELECT COUNT(*) AS total FROM visit_requests vr ${whereClause}`, params
     );
 
+    // ── Cross-unit fan-out for employees ────────────────────────────────────────────────
+    // When an employee visits someone in another unit, the request is stored in
+    // that unit's DB (not theirs). Fan out to make those requests visible here.
+    let crossUnitRows = [];
+    if (isEmployee) {
+      try {
+        const { centralPool, getPool } = require('../services/dbManager');
+        const [activeUnits] = await centralPool.query(
+          `SELECT u.db_name FROM units u
+           JOIN units myUnit ON myUnit.id = ?
+           WHERE u.is_active = 1 AND u.db_status = 'ACTIVE' AND u.db_name != myUnit.db_name`,
+          [req.user.unit_id]
+        );
+        await Promise.all(activeUnits.map(async (unit) => {
+          try {
+            const otherDb  = getPool(unit.db_name);
+            const xConds   = [`vr.requester_user_id = ?`, `vr.visit_category = 'EMPLOYEE_VISIT'`];
+            const xParams  = [req.user.id];
+            if (status)     { xConds.push('vr.status = ?');     xParams.push(status); }
+            if (visit_date) { xConds.push('vr.visit_date = ?'); xParams.push(visit_date); }
+            const [xRows] = await otherDb.query(
+              `SELECT ${SELECT_COLS}
+               FROM visit_requests vr
+               JOIN users h ON h.id = vr.host_user_id
+               LEFT JOIN departments d  ON d.id  = vr.department_id
+               LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
+               WHERE ${xConds.join(' AND ')}
+               ORDER BY vr.created_at DESC LIMIT 50`,
+              xParams
+            );
+            crossUnitRows.push(...xRows.map(r => ({ ...r, _cross_unit_db: unit.db_name })));
+          } catch { /* unit DB unreachable — skip silently */ }
+        }));
+      } catch { /* fan-out error — non-fatal */ }
+    }
+
+    const allRows  = [...rows, ...crossUnitRows].sort((a, b) =>
+      new Date(b.created_at) - new Date(a.created_at)
+    );
+    const total    = Number(ownTotal) + crossUnitRows.length;
+    const pageRows = allRows.slice(0, limit);
+
     return sendSuccess(res, {
-      requests:   rows,
+      requests:   pageRows,
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     }, 'Visit requests fetched successfully.');
   } catch (err) {
@@ -603,9 +743,34 @@ const cancelRequest = async (req, res) => {
     const { id } = req.params;
     const user = req.user;
 
-    const [rows] = await req.db.query(
+    // Try own unit DB first; if not found, fan out to other unit DBs
+    // (needed for cross-unit EMPLOYEE_VISIT stored in the target unit's DB)
+    let targetDb = req.db;
+    let [rows]   = await req.db.query(
       'SELECT id, status, requester_user_id, host_user_id FROM visit_requests WHERE id = ?', [id]
     );
+
+    if (rows.length === 0) {
+      try {
+        const { centralPool, getPool } = require('../services/dbManager');
+        const [activeUnits] = await centralPool.query(
+          `SELECT u.db_name FROM units u
+           JOIN units myUnit ON myUnit.id = ?
+           WHERE u.is_active = 1 AND u.db_status = 'ACTIVE' AND u.db_name != myUnit.db_name`,
+          [req.user.unit_id]
+        );
+        for (const unit of activeUnits) {
+          try {
+            const otherDb = getPool(unit.db_name);
+            const [xRows] = await otherDb.query(
+              'SELECT id, status, requester_user_id, host_user_id FROM visit_requests WHERE id = ?', [id]
+            );
+            if (xRows.length > 0) { rows = xRows; targetDb = otherDb; break; }
+          } catch { /* skip unreachable DBs */ }
+        }
+      } catch { /* fan-out failed — fall through to 404 */ }
+    }
+
     if (rows.length === 0) return sendError(res, 'Visit request not found.', 404);
 
     const request = rows[0];
@@ -619,12 +784,12 @@ const cancelRequest = async (req, res) => {
       return sendError(res, 'You do not have permission to cancel this request.', 403);
     }
 
-    await req.db.query(
+    await targetDb.query(
       "UPDATE visit_requests SET status = 'CANCELLED', updated_at = NOW() WHERE id = ?", [id]
     );
 
     await logAudit({
-      db:        req.db,
+      db:        targetDb,
       userId:    user.id,
       action:    'CANCEL_REQUEST',
       module:    'VISIT_REQUEST',
@@ -693,14 +858,38 @@ const getMyRequests = async (req, res) => {
 const createPublicRequest = async (req, res) => {
   let conn = null;
   try {
+    // ── Decode X-Visitor-Token to populate visitor identity details ──────────
+    const token = req.headers['x-visitor-token'];
+    let tokenData = {};
+    if (token) {
+      try {
+        tokenData = jwt.verify(token, process.env.JWT_SECRET);
+      } catch (jwtErr) {
+        console.error('[VisitRequestController] Public request JWT verification failed:', jwtErr.message);
+        return sendError(res, 'Session expired or invalid visitor verification token. Please verify your OTP again.', 401);
+      }
+    }
+
     const {
-      visitor_full_name, visitor_phone, visitor_email,
-      host_user_id, department_id,
-      unit_code, unit_id,
-      purpose, visit_date, visit_start_time, visit_end_time,
-      accompanying_count = 0, companions = [],
+      visitor_full_name: bodyName,
+      visitor_phone: bodyPhone,
+      visitor_email: bodyEmail,
+      host_user_id,
+      department_id,
+      unit_code,
+      unit_id,
+      purpose,
+      visit_date,
+      visit_start_time,
+      visit_end_time,
+      accompanying_count = 0,
+      companions = [],
       company_name,
     } = req.body;
+
+    const visitor_full_name = (bodyName || tokenData.visitor_name || '').trim();
+    const visitor_phone = (bodyPhone || tokenData.visitor_phone || '').trim();
+    const visitor_email = (bodyEmail || tokenData.visitor_email || '').trim();
 
     // ── Map public-facing visit type to internal category ────────────────────
     const PUBLIC_CATEGORY_MAP = { INDIVIDUAL: 'PERSONAL_VISIT', BUSINESS: 'VENDOR' };
@@ -734,9 +923,44 @@ const createPublicRequest = async (req, res) => {
     const unitDb = getPool(unit.db_name);
     conn = await unitDb.getConnection();
 
-    // Blacklist check by phone
+    // ── Blacklist check by phone (unit-level) ────────────────────────────────
     const blEntry = await isBlacklisted(unitDb, null, visitor_phone);
     if (blEntry) { conn.release(); return sendError(res, `Access denied. Visitor is blacklisted: ${blEntry.reason}`, 403); }
+
+    // ── Host-level phone blacklist check ─────────────────────────────────────
+    const [hostBlRows] = await unitDb.query(
+      `SELECT id, reason FROM host_phone_blacklist
+       WHERE host_user_id = ? AND visitor_phone = ? AND is_active = TRUE LIMIT 1`,
+      [host_user_id, visitor_phone]
+    );
+    if (hostBlRows.length > 0) {
+      conn.release();
+      return sendError(
+        res,
+        `The host is currently unavailable for visits from this visitor. Reason: ${hostBlRows[0].reason}`,
+        403
+      );
+    }
+
+    // ── Duplicate request guard ───────────────────────────────────────────────
+    const [dupRows] = await unitDb.query(
+      `SELECT id, status FROM visit_requests
+       WHERE visitor_phone = ?
+         AND host_user_id  = ?
+         AND visit_date    = ?
+         AND status IN ('PENDING', 'APPROVED')
+       LIMIT 1`,
+      [visitor_phone, host_user_id, visit_date]
+    );
+    if (dupRows.length > 0) {
+      conn.release();
+      return res.status(409).json({
+        success:    false,
+        duplicate:  true,
+        existing_request_id: dupRows[0].id,
+        message:    `A request for this date is already ${dupRows[0].status.toLowerCase()}. You cannot submit another one.`,
+      });
+    }
 
     // Verify host exists
     const [hostRows] = await unitDb.query('SELECT * FROM users WHERE id = ? AND is_active = 1', [host_user_id]);
@@ -795,6 +1019,22 @@ const createPublicRequest = async (req, res) => {
     }
     await sendNotification({ db: unitDb, visitRequestId, recipientUserId: host.id, type: 'DASHBOARD', message: `New prior-approved request from ${visitor_full_name} on ${visit_date}${timeStr} awaiting approval.` });
 
+    // Emit socket notification to host
+    try {
+      emitToUser(host.id, unit.db_name, 'visit:request:new', {
+        visit_request_id: visitRequestId,
+        visitor_name:     visitor_full_name,
+        visitor_phone:    visitor_phone || null,
+        visit_date:       visit_date,
+        visit_start_time: visit_start_time || null,
+        visit_category:   visit_category,
+        purpose:          purpose,
+        created_at:       new Date(),
+      });
+    } catch (socketErr) {
+      console.error('[VisitRequestController] Failed to emit socket notification for public request:', socketErr.message);
+    }
+
     return sendSuccess(res, { visitRequestId, status: 'PENDING' }, 'Visit request submitted successfully.', 201);
   } catch (err) {
     if (conn) { try { await conn.rollback(); } catch (_) {} conn.release(); }
@@ -851,7 +1091,110 @@ const getMyVisitors = async (req, res) => {
   }
 };
 
+// ── blacklistVisitorFromRequest ───────────────────────────────────────────────
+/**
+ * POST /api/visit-requests/:id/blacklist-visitor
+ * Allows the host (or admin) of a visit request to add the visitor's phone
+ * to their personal host_phone_blacklist so all future requests from that
+ * visitor to this host are automatically rejected.
+ */
+const blacklistVisitorFromRequest = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    if (!reason || !reason.trim()) {
+      return sendError(res, 'A reason is required to block this visitor.', 400);
+    }
+
+    // Fetch the visit request
+    const [rows] = await req.db.query(
+      'SELECT id, host_user_id, visitor_phone, visitor_name FROM visit_requests WHERE id = ? LIMIT 1',
+      [id]
+    );
+    if (!rows.length) return sendError(res, 'Visit request not found.', 404);
+    const vr = rows[0];
+
+    // Only the host or an admin can blacklist
+    const isAdmin = ['super_admin', 'unit_admin'].includes(req.user.role_type);
+    const isHost  = String(vr.host_user_id) === String(req.user.id);
+    if (!isAdmin && !isHost) {
+      return sendError(res, 'Only the host or an administrator can block this visitor.', 403);
+    }
+
+    if (!vr.visitor_phone) {
+      return sendError(res, 'No phone number on record for this visitor — cannot block.', 400);
+    }
+
+    // Check if already blocked by this host
+    const [existing] = await req.db.query(
+      'SELECT id FROM host_phone_blacklist WHERE host_user_id = ? AND visitor_phone = ? AND is_active = TRUE LIMIT 1',
+      [vr.host_user_id, vr.visitor_phone]
+    );
+    if (existing.length > 0) {
+      return sendError(res, 'This visitor is already blocked by this host.', 409);
+    }
+
+    await req.db.query(
+      `INSERT INTO host_phone_blacklist
+         (host_user_id, visitor_phone, visitor_name, reason, blocked_by, is_active, created_at)
+       VALUES (?, ?, ?, ?, ?, TRUE, NOW())`,
+      [vr.host_user_id, vr.visitor_phone, vr.visitor_name || null, reason.trim(), req.user.id]
+    );
+
+    return sendSuccess(res, null, 'Visitor blocked successfully. Future requests from this visitor will be automatically declined.');
+  } catch (err) {
+    console.error('[VisitRequestController] blacklistVisitorFromRequest error:', err.message);
+    return sendError(res, 'Failed to block visitor.', 500);
+  }
+};
+
+// ── getHostBlacklist ──────────────────────────────────────────────────────────
+/**
+ * GET /api/visit-requests/my-blocked-visitors
+ * Returns the host's personal phone blacklist.
+ */
+const getHostBlacklist = async (req, res) => {
+  try {
+    const [rows] = await req.db.query(
+      `SELECT id, visitor_phone, visitor_name, reason, created_at
+       FROM host_phone_blacklist
+       WHERE host_user_id = ? AND is_active = TRUE
+       ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+    return sendSuccess(res, rows, 'Blocked visitors fetched.');
+  } catch (err) {
+    console.error('[VisitRequestController] getHostBlacklist error:', err.message);
+    return sendError(res, 'Failed to fetch blocked visitors.', 500);
+  }
+};
+
+// ── unblockVisitor ────────────────────────────────────────────────────────────
+/**
+ * DELETE /api/visit-requests/blocked-visitors/:blockId
+ * Removes an entry from the host's personal phone blacklist.
+ */
+const unblockVisitor = async (req, res) => {
+  try {
+    const { blockId } = req.params;
+    const isAdmin = ['super_admin', 'unit_admin'].includes(req.user.role_type);
+    const whereExtra = isAdmin ? '' : 'AND host_user_id = ?';
+    const params = isAdmin ? [blockId] : [blockId, req.user.id];
+
+    const [result] = await req.db.query(
+      `UPDATE host_phone_blacklist SET is_active = FALSE WHERE id = ? ${whereExtra} AND is_active = TRUE`,
+      params
+    );
+    if (result.affectedRows === 0) return sendError(res, 'Block entry not found or already removed.', 404);
+    return sendSuccess(res, null, 'Visitor unblocked successfully.');
+  } catch (err) {
+    console.error('[VisitRequestController] unblockVisitor error:', err.message);
+    return sendError(res, 'Failed to unblock visitor.', 500);
+  }
+};
+
 module.exports = {
   createPublicRequest, createRequest, getRequest, listRequests,
   cancelRequest, getMyRequests, lookupVisitorByPhone, getMyVisitors,
+  blacklistVisitorFromRequest, getHostBlacklist, unblockVisitor,
 };

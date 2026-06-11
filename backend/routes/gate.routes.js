@@ -49,6 +49,14 @@ router.post(
   gateController.checkOut
 );
 
+// POST /api/gate/checkout/qr  — MUST be before /:visitLogId to avoid param clash
+router.post(
+  '/checkout/qr',
+  protect,
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  gateController.checkOutByQR
+);
+
 router.post(
   '/checkout/:visitLogId',
   protect,

@@ -1,13 +1,15 @@
 // frontend/src/pages/admin/UserManagement.jsx
 import { useState, useEffect, useCallback } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, Link } from "react-router-dom";
 import {
   Plus, Search, Edit2, UserX, X, Check, Loader2, Users,
-  ChevronRight, Briefcase, Mail, Hash, AlertTriangle,
+  ChevronRight, Briefcase, Mail, Hash, AlertTriangle, ArrowRight,
 } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
+import PasswordStrength from "../../components/PasswordStrength";
+import { validatePassword } from "../../utils/passwordValidator";
 
 // ── Role styling ──────────────────────────────────────────────────────────────
 const ROLE_CONFIG = {
@@ -35,13 +37,15 @@ function UserSlideOver({
   departments, isUnitAdmin, lockedDepartmentId, designations,
   onDepartmentChange,
 }) {
+  const isEdit   = !!editUser;
+  const noDepts  = !isEdit && departments.length === 0;
   const emptyForm = {
     full_name: "", email: "", phone: "", employee_code: "",
     role_type: "employee", department_id: "", designation_id: "", password: "",
   };
   const [form,       setForm]       = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
-  const isEdit = !!editUser;
+  // isEdit already declared above
 
   useEffect(() => {
     if (editUser) {
@@ -64,6 +68,10 @@ function UserSlideOver({
   // Roles that don't belong to any department
   const NO_DEPT_ROLES = ['security', 'receptionist', 'unit_auditor'];
   const isNoDeptRole = NO_DEPT_ROLES.includes(form.role_type);
+
+  // Only block creation when dept is actually required for the selected role
+  const deptRequiredForRole = !isNoDeptRole && form.role_type !== 'unit_admin';
+  const blockForNoDepts = noDepts && deptRequiredForRole;
 
   const set = (field) => (e) => {
     const value = e.target.value;
@@ -99,6 +107,12 @@ function UserSlideOver({
           setSubmitting(false);
           return;
         }
+        const { valid: pwValid } = validatePassword(form.password);
+        if (!pwValid) {
+          toast.error("Password does not meet the strength requirements.");
+          setSubmitting(false);
+          return;
+        }
         payload.employee_code = form.employee_code.trim();
         payload.password      = form.password;
         await apiClient.post("/users", payload);
@@ -128,7 +142,8 @@ function UserSlideOver({
 
       {/* Panel */}
       <aside
-        className={`fixed right-0 top-0 h-full w-full max-w-md bg-white border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out ${isOpen ? "translate-x-0" : "translate-x-full"}`}
+        className={`fixed right-0 top-0 h-full w-full max-w-md border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out ${isOpen ? "translate-x-0" : "translate-x-full"}`}
+        style={{ background: 'var(--color-bg-primary)' }}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-subtle">
@@ -151,14 +166,48 @@ function UserSlideOver({
         {/* Form */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
 
-          {/* Full name */}
+          {/* ── No-departments warning banner ────────────────────────────── */}
+          {blockForNoDepts && (
+            <div
+              className="flex items-start gap-3 rounded-lg px-4 py-3.5"
+              style={{
+                background: 'var(--color-warning-bg, #fffbeb)',
+                border:     '1px solid var(--color-warning, #f59e0b)',
+                borderRadius: 'var(--radius-md)',
+              }}
+            >
+              <AlertTriangle
+                strokeWidth={2}
+                className="w-4 h-4 shrink-0 mt-0.5"
+                style={{ color: 'var(--color-warning, #f59e0b)' }}
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold" style={{ color: '#92400e' }}>
+                  No departments found
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: '#b45309' }}>
+                  You must create at least one department before adding employees.
+                </p>
+                <Link
+                  to="/admin/departments"
+                  onClick={onClose}
+                  className="inline-flex items-center gap-1 text-xs font-semibold mt-2 underline-offset-2 hover:underline"
+                  style={{ color: '#92400e' }}
+                >
+                  Go to Departments <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+            </div>
+          )}
+
+
           <div>
             <label className={labelCls}>Full Name *</label>
             <input className={inputCls} value={form.full_name} onChange={set("full_name")} placeholder="e.g. Priya Sharma" required autoComplete="off" />
           </div>
 
           {/* Email + Phone */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Email *</label>
               <input className={inputCls} type="email" value={form.email} onChange={set("email")} placeholder="priya@company.in" required autoComplete="off" />
@@ -178,7 +227,7 @@ function UserSlideOver({
           )}
 
           {/* Role + Department */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Role *</label>
               <div className="relative">
@@ -265,7 +314,8 @@ function UserSlideOver({
           {!isEdit && (
             <div>
               <label className={labelCls}>Password *</label>
-              <input className={inputCls} type="password" value={form.password} onChange={set("password")} placeholder="Minimum 8 characters" required={!isEdit} minLength={8} autoComplete="new-password" />
+              <input className={inputCls} type="password" value={form.password} onChange={set("password")} placeholder="Min 8 chars, uppercase, number, symbol" required={!isEdit} minLength={8} autoComplete="new-password" />
+              <PasswordStrength password={form.password} />
             </div>
           )}
         </form>
@@ -276,7 +326,7 @@ function UserSlideOver({
           <button
             type="submit"
             onClick={handleSubmit}
-            disabled={submitting}
+            disabled={submitting || blockForNoDepts}
             className="btn-primary text-xs py-2.5 px-6 flex items-center gap-2 disabled:opacity-60"
           >
             {submitting ? <Loader2 strokeWidth={2} className="w-3.5 h-3.5 animate-spin" /> : <Check strokeWidth={2} className="w-3.5 h-3.5" />}
@@ -377,7 +427,9 @@ export default function UserManagement() {
     }
   };
 
-  const openCreate = () => { setEditUser(null); setDesignations([]); setPanelOpen(true); };
+  const openCreate = () => {
+    setEditUser(null); setDesignations([]); setPanelOpen(true);
+  };
   const openEdit   = (u) => { setEditUser(u); setPanelOpen(true); };
 
   const filtered = users.filter(u => {
@@ -398,25 +450,7 @@ export default function UserManagement() {
     <>
       <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in">
 
-        {/* Sub-tab nav */}
-        <div
-          className="flex gap-1 p-1 w-fit mb-6"
-          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
-        >
-          {[['Users', '/admin'], ...(isUnitAdmin ? [['Departments', '/admin/departments']] : [])].map(([label, path]) => (
-            <NavLink
-              key={path}
-              to={path}
-              end={path === '/admin'}
-              className={() => 'px-4 py-1.5 text-[12px] font-medium transition-colors'}
-              style={({ isActive }) => isActive
-                ? { background: 'var(--color-accent)', borderRadius: 'var(--radius-sm)', color: '#0f172a' }
-                : { borderRadius: 'var(--radius-sm)', color: 'var(--color-text-muted)' }}
-            >
-              {label}
-            </NavLink>
-          ))}
-        </div>
+
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
@@ -428,6 +462,36 @@ export default function UserManagement() {
             <Plus className="w-4 h-4" /> Add New User
           </button>
         </div>
+
+        {/* ── No departments advisory banner ──────────────────────────── */}
+        {!loading && departments.length === 0 && (
+          <div
+            className="flex items-start gap-3 px-4 py-4 mb-6 rounded-lg"
+            style={{
+              background: '#fffbeb',
+              border: '1px solid var(--color-warning)',
+              borderRadius: 'var(--radius-md)',
+            }}
+          >
+            <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: 'var(--color-warning)' }} strokeWidth={2} />
+            <div>
+              <p className="text-sm font-semibold" style={{ color: '#92400e' }}>
+                No departments set up yet
+              </p>
+              <p className="text-xs mt-1" style={{ color: '#b45309' }}>
+                Security, Receptionist, and Auditor users can be created without a department.{' '}
+                <strong>Employees require a department.</strong>{' '}
+                <NavLink
+                  to="/admin/departments"
+                  className="font-bold underline underline-offset-2 hover:opacity-80"
+                  style={{ color: '#92400e' }}
+                >
+                  Create a department →
+                </NavLink>
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="vms-card rounded-md p-6 shadow-card">
           {/* Filters */}

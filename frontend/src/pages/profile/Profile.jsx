@@ -4,6 +4,8 @@ import { User, Lock, Hash, Building2, Mail, Phone, Eye, EyeOff } from 'lucide-re
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
+import PasswordStrength from '../../components/PasswordStrength';
+import { validatePassword } from '../../utils/passwordValidator';
 
 const ROLE_COLORS = {
   admin:        { bg: '#fef2f2', color: '#b91c1c' },
@@ -75,8 +77,9 @@ export default function Profile() {
     if (newPassword !== confirmPassword) {
       return toast.error('New passwords do not match.');
     }
-    if (newPassword.length < 6) {
-      return toast.error('New password must be at least 6 characters.');
+    const { valid: pwValid } = validatePassword(newPassword);
+    if (!pwValid) {
+      return toast.error('New password does not meet the strength requirements.');
     }
     setPwLoading(true);
     try {
@@ -112,7 +115,7 @@ export default function Profile() {
           {/* Avatar */}
           <div
             className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold mb-3"
-            style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--color-accent)' }}
+            style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--color-accent)' }}
           >
             {initials}
           </div>
@@ -208,6 +211,7 @@ export default function Profile() {
                 show={showNew}
                 onToggle={() => setShowNew(p => !p)}
               />
+              <PasswordStrength password={newPassword} />
               <div>
                 <label className="block text-[11px] font-medium uppercase tracking-wider mb-1.5"
                        style={{ color: 'var(--color-text-faint)' }}>

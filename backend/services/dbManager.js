@@ -75,7 +75,7 @@ async function provisionUnitDb(dbName) {
   const unitPool = getPool(dbName);
 
   // Step 3: Run the unit schema template
-  const schemaPath = path.join(__dirname, '../../database/vms_unit_schema.sql');
+  const schemaPath = path.join(__dirname, '../database/vms_unit_schema.sql');
   const schemaSql  = fs.readFileSync(schemaPath, 'utf8');
 
   // Split on semicolons — filter out empty statements

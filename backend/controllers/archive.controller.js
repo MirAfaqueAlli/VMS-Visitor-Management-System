@@ -86,8 +86,8 @@ const getStatus = async (req, res) => {
     const existingMap = {};
     for (const row of existing) existingMap[row.financial_year] = row;
 
-    // For each FY, count live records (only if not yet purged)
-    const result = await Promise.all(fys.map(async (fy) => {
+    // For each FY, count live records then filter out years with no data at all
+    const all = await Promise.all(fys.map(async (fy) => {
       const { start, end } = fyBounds(fy);
       let liveCount = 0;
       try {
@@ -108,10 +108,15 @@ const getStatus = async (req, res) => {
         total_records:   archive?.total_records   || 0,
         archived_at:     archive?.archived_at     || null,
         purged_at:       archive?.purged_at       || null,
-        archive_id:      archive ? (existing.findIndex(e => e.financial_year === fy) >= 0
-          ? existing.find(e => e.financial_year === fy) : null) : null,
+        archive_id:      archive ? (existing.find(e => e.financial_year === fy) ?? null) : null,
       };
     }));
+
+    // Only surface FYs that actually have data — either live records exist OR
+    // an archive record exists (COMPLETED / PURGED = was intentionally processed).
+    const result = all.filter(item =>
+      item.live_records > 0 || item.archive_status !== 'NOT_STARTED'
+    );
 
     return sendSuccess(res, {
       current_fy: currentFY(),

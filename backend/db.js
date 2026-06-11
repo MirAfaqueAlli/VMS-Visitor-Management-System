@@ -1,7 +1,11 @@
 // backend/db.js
-// Re-exports the centralPool from dbManager.
-// Controllers being migrated to multi-DB should use req.db instead.
-// This file keeps backward compatibility during the migration.
+//
+// DEPRECATED — backward-compatibility shim only.
+//
+// New code should use `req.db` (injected by auth.middleware) or import
+// `centralPool` / `getPool()` directly from './services/dbManager'.
+//
+// This file exists so that any legacy import of `require('./db')` still works.
 'use strict';
 
 const { centralPool } = require('./services/dbManager');

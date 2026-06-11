@@ -6,6 +6,7 @@ const { sendSuccess, sendError }                = require('../utils/response.uti
 const { logAudit }                              = require('../utils/auditLogger.util');
 const { isSuperAdmin, isGlobalAuditor }         = require('../middlewares/rbac.middleware');
 const bcrypt = require('bcrypt');
+const { validatePassword } = require('../utils/passwordValidator.util');
 
 // ── List Units ────────────────────────────────────────────────────────────────
 /**
@@ -156,6 +157,10 @@ const createUnit = async (req, res) => {
               password: adminPass, employee_code: adminCode } = unit_admin;
 
       if (adminName && adminEmail && adminPass && adminCode) {
+        // Enforce password policy
+        const { valid, errors } = validatePassword(adminPass);
+        if (!valid) return sendError(res, `Unit admin password: ${errors[0]}`, 400);
+
         const hash = await bcrypt.hash(adminPass, 12);
         const unitPool = getPool(dbName);
         await unitPool.query(
@@ -299,4 +304,32 @@ const getPublicUnits = async (req, res) => {
   }
 };
 
-module.exports = { listUnits, getUnitById, createUnit, updateUnit, deactivateUnit, getPublicUnits };
+// ── Public: Lookup unit by code (no auth) ────────────────────────────────────
+/**
+ * GET /api/units/by-code/:code
+ * Returns { id, name, code, city, state } for a single active unit.
+ * Used by the unit-scoped login URL (/login/:unitCode) to validate the code.
+ */
+const getUnitByCode = async (req, res) => {
+  try {
+    const code = (req.params.code || '').toUpperCase().trim();
+    if (!code) return sendError(res, 'Unit code is required.', 400);
+
+    const [rows] = await centralPool.query(
+      `SELECT id, name, code, city, state
+       FROM units
+       WHERE code = ? AND is_active = 1 AND db_status = 'ACTIVE'
+       LIMIT 1`,
+      [code]
+    );
+
+    if (!rows.length) return sendError(res, `No active unit found with code "${code}".`, 404);
+    return sendSuccess(res, rows[0], 'Unit found.');
+  } catch (err) {
+    console.error('[UnitController] getUnitByCode error:', err.message);
+    return sendError(res, 'Failed to look up unit.', 500);
+  }
+};
+
+module.exports = { listUnits, getUnitById, createUnit, updateUnit, deactivateUnit, getPublicUnits, getUnitByCode };
+

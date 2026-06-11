@@ -2,6 +2,7 @@
 'use strict';
 
 const bcrypt = require('bcrypt');
+const { validatePassword } = require('../utils/passwordValidator.util');
 const jwt    = require('jsonwebtoken');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
@@ -187,7 +188,9 @@ const getMe = async (req, res) => {
     let rows;
 
     if (isCentral) {
-      [rows] = await req.db.query(
+      // IMPORTANT: always use centralPool here — req.db may be overridden to a
+      // unit's pool when the super admin is managing a unit (X-Unit-Id header).
+      [rows] = await centralPool.query(
         `SELECT id, role_type, full_name, email, phone, employee_code,
                 is_active, last_login_at,
                 NULL AS department_id, NULL AS department_name,
@@ -245,6 +248,10 @@ const changePassword = async (req, res) => {
 
     const isMatch = await bcrypt.compare(currentPassword, rows[0].password_hash);
     if (!isMatch) return sendError(res, 'Current password is incorrect.', 400);
+
+    // Enforce password policy
+    const { valid, errors } = validatePassword(newPassword);
+    if (!valid) return sendError(res, errors[0], 400);
 
     const newHash = await bcrypt.hash(newPassword, 12);
     await req.db.query('UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?', [newHash, userId]);

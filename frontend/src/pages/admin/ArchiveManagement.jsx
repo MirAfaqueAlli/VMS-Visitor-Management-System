@@ -11,7 +11,7 @@ import toast from "react-hot-toast";
 // ── Status badge ──────────────────────────────────────────────────────────────
 const STATUS_CONFIG = {
   NOT_STARTED: { label: "Not Started",  color: "#64748b", bg: "rgba(100,116,139,0.12)", icon: Clock },
-  PENDING:     { label: "In Progress",  color: "#f59e0b", bg: "rgba(245,158,11,0.12)",  icon: Loader2 },
+  PENDING:     { label: "In Progress",  color: "#3b82f6", bg: "rgba(59,130,246,0.12)",  icon: Loader2 },
   COMPLETED:   { label: "Archived",     color: "#22c55e", bg: "rgba(34,197,94,0.12)",   icon: CheckCircle2 },
   PURGED:      { label: "Purged",       color: "#6366f1", bg: "rgba(99,102,241,0.12)",  icon: Lock },
 };

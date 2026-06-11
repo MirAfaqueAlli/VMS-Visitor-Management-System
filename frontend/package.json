@@ -21,6 +21,7 @@
     "react-router-dom": "^7.15.0",
     "react-webcam": "^7.2.0",
     "recharts": "^3.8.1",
+    "socket.io-client": "^4.8.3",
     "uipro-cli": "^2.2.3",
     "xlsx": "^0.18.5"
   },

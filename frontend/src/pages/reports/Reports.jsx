@@ -16,15 +16,20 @@ import apiClient from '../../api/axios';
 import toast from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 
+const getISTDateString = (d = new Date()) => {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d);
+};
+
 // ─────────────────────────── constants ───────────────────────────────────────
 // All employee-type variants map to the same label.
 const CATEGORY_LABELS = {
-  EMP:               'Employee Visit',
   EMPLOYEE_VISIT:    'Employee Visit',
-  INTER_UNIT_VISIT:  'Employee Visit',
-  INTER_UNIT_INVITE: 'Employee Visit',
   VENDOR:            'Vendor',
-  PRIOR:             'Prior Approval',
   SPOT:              'Walk-in',
   PERSONAL_VISIT:    'Personal Visit',
 };
@@ -47,7 +52,6 @@ const VISITOR_TYPES = [
   { value: '',               label: 'All Types' },
   { value: 'EMPLOYEE_VISIT', label: 'Employee Visit' },
   { value: 'VENDOR',         label: 'Vendor' },
-  { value: 'PRIOR',          label: 'Prior Approval' },
   { value: 'SPOT',           label: 'Walk-in' },
   { value: 'PERSONAL_VISIT', label: 'Personal Visit' },
 ];
@@ -711,16 +715,14 @@ function RejectedReport({ isCentral }) {
   );
 }
 
-// ─── Active & Expected Report ─────────────────────────────────────────────────
+// ─── Expected Visitors Report ─────────────────────────────────────────────────
 function ActiveExpectedReport({ isCentral }) {
   const cf = useCascadeFilters(isCentral);
-  const [date, setDate]     = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate]     = useState(() => getISTDateString());
   const [visitorType, setVisitorType] = useState('');
   const [search, setSearch] = useState('');
-  const [active,    setActive]    = useState([]);
   const [expected,  setExpected]  = useState([]);
   const [loading,   setLoading]   = useState(false);
-  const [subTab,    setSubTab]    = useState('active');
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -731,27 +733,15 @@ function ActiveExpectedReport({ isCentral }) {
       if (cf.selUnit)  params.unit_db       = cf.selUnit;
       if (cf.selDept)  params.department_id = cf.selDept;
       const r = await apiClient.get('/reports/active-expected', { params });
-      setActive(r.data?.data?.active ?? []);
       setExpected(r.data?.data?.expected ?? []);
     } catch (e) {
-      toast.error(e.response?.data?.message || 'Failed to load active/expected report.');
+      toast.error(e.response?.data?.message || 'Failed to load expected visitors report.');
     } finally {
       setLoading(false);
     }
   }, [date, visitorType, search, cf.selUnit, cf.selDept]);
 
   useEffect(() => { fetch(); }, [fetch]);
-
-  const activeCols = [
-    isCentral && { key: 'unit_name', label: 'Unit',  render: r => <span className="text-muted text-xs">{r.unit_name}</span> },
-    { key: 'visitor_name',    label: 'Visitor',     render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
-    { key: 'department_name', label: 'Department',  render: r => r.department_name || '—' },
-    { key: 'host_name',       label: 'Host',        render: r => r.host_name || '—' },
-    { key: 'visit_category',  label: 'Type',        render: r => <CatBadge cat={r.visit_category} /> },
-    { key: 'check_in_time',   label: 'Checked In',  render: r => fmtTime(r.check_in_time) },
-    { key: 'gate_name',       label: 'Gate',        render: r => r.gate_name || '—' },
-    { key: 'report_status',   label: 'Status',      render: r => <SBadge status={r.report_status} /> },
-  ].filter(Boolean);
 
   const expectedCols = [
     isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted text-xs">{r.unit_name}</span> },
@@ -763,17 +753,6 @@ function ActiveExpectedReport({ isCentral }) {
     { key: 'report_status',   label: 'Status',      render: r => <SBadge status={r.report_status} /> },
   ].filter(Boolean);
 
-  const expColsActive = [
-    isCentral && { header: 'Unit', accessor: r => r.unit_name },
-    { header: 'Visitor',    accessor: r => r.visitor_name },
-    { header: 'Phone',      accessor: r => r.visitor_phone },
-    { header: 'Department', accessor: r => r.department_name },
-    { header: 'Host',       accessor: r => r.host_name },
-    { header: 'Type',       accessor: r => CATEGORY_LABELS[r.visit_category] ?? r.visit_category },
-    { header: 'Checked In', accessor: r => fmtTime(r.check_in_time) },
-    { header: 'Gate',       accessor: r => r.gate_name },
-  ].filter(Boolean);
-
   const expColsExpected = [
     isCentral && { header: 'Unit', accessor: r => r.unit_name },
     { header: 'Visitor',     accessor: r => r.visitor_name },
@@ -783,11 +762,6 @@ function ActiveExpectedReport({ isCentral }) {
     { header: 'Type',        accessor: r => CATEGORY_LABELS[r.visit_category] ?? r.visit_category },
     { header: 'Expected At', accessor: r => fmtTime(r.check_in_time) },
   ].filter(Boolean);
-
-  const curRows  = subTab === 'active' ? active : expected;
-  const curCols  = subTab === 'active' ? activeCols : expectedCols;
-  const curExpCols = subTab === 'active' ? expColsActive : expColsExpected;
-  const curFName = subTab === 'active' ? 'active_visitors' : 'expected_visitors';
 
   return (
     <div>
@@ -819,36 +793,24 @@ function ActiveExpectedReport({ isCentral }) {
           </button>
         </div>
         <div className="flex gap-2 justify-end">
-          <button onClick={() => exportExcel(curRows, curExpCols, curFName)}
+          <button onClick={() => exportExcel(expected, expColsExpected, 'expected_visitors')}
             className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs text-muted hover:bg-bg-primary hover:text-loud transition-colors">
             <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" /> Excel
           </button>
-          <button onClick={() => exportPDF(curRows, curExpCols, subTab === 'active' ? 'Active Visitors' : 'Expected Visitors', curFName)}
+          <button onClick={() => exportPDF(expected, expColsExpected, 'Expected Visitors', 'expected_visitors')}
             className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs text-muted hover:bg-bg-primary hover:text-loud transition-colors">
             <FileText className="w-3.5 h-3.5 text-red-500" /> PDF
           </button>
         </div>
       </div>
 
-      {/* Sub-tabs */}
-      <div className="flex gap-1 mb-4 p-1 bg-bg-primary/50 rounded-xl border border-subtle w-fit">
-        {[
-          { id: 'active',   label: `Currently Inside (${active.length})` },
-          { id: 'expected', label: `Expected Today (${expected.length})` },
-        ].map(t => (
-          <button key={t.id} onClick={() => setSubTab(t.id)}
-            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${subTab === t.id ? 'bg-accent text-white shadow-sm' : 'text-muted hover:text-loud'}`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <ReportTable cols={curCols} rows={curRows} loading={loading}
+      <ReportTable cols={expectedCols} rows={expected} loading={loading}
         page={1} setPage={() => {}} totalPages={1}
-        emptyMsg={`No ${subTab} visitors found.`} />
+        emptyMsg="No expected visitors found." />
     </div>
   );
 }
+
 
 // ─── Visit History Report ─────────────────────────────────────────────────────
 function VisitHistoryReport({ isCentral }) {
@@ -856,7 +818,6 @@ function VisitHistoryReport({ isCentral }) {
   const [from, setFrom]   = useState('');
   const [to,   setTo]     = useState('');
   const [visitorType, setVisitorType] = useState('');
-  const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(false);
@@ -871,7 +832,6 @@ function VisitHistoryReport({ isCentral }) {
       if (from) params.from = from;
       if (to)   params.to   = to;
       if (visitorType) params.visitor_type  = visitorType;
-      if (status)      params.status        = status;
       if (search)      params.search        = search;
       if (cf.selUnit)  params.unit_db       = cf.selUnit;
       if (cf.selDept)  params.department_id = cf.selDept;
@@ -883,7 +843,7 @@ function VisitHistoryReport({ isCentral }) {
     } finally {
       setLoading(false);
     }
-  }, [page, from, to, visitorType, status, search, cf.selUnit, cf.selDept]);
+  }, [page, from, to, visitorType, search, cf.selUnit, cf.selDept]);
 
   useEffect(() => { fetch(); }, [fetch]);
 
@@ -919,7 +879,6 @@ function VisitHistoryReport({ isCentral }) {
         from={from} setFrom={setFrom} to={to} setTo={setTo}
         visitorType={visitorType} setVisitorType={setVisitorType}
         search={search} setSearch={setSearch}
-        showStatus status={status} setStatus={setStatus}
         onApply={() => { setPage(1); fetch(); }} loading={loading}
         cascadeFilters={cf} isCentral={isCentral} showDept
         onExcelExport={() => exportExcel(rows, expCols, 'visit_history')}
@@ -945,21 +904,17 @@ function OverviewCharts({ from, to, onFromChange, onToChange }) {
       const params = {};
       if (from) params.from = from;
       if (to)   params.to   = to;
-      const [summary, byStatus, byDept, byType, daily, hosts] = await Promise.all([
+      const [summary, byStatus, byDept, daily] = await Promise.all([
         apiClient.get('/reports/visitor-summary', { params }),
         apiClient.get('/reports/by-status',       { params }),
         apiClient.get('/reports/by-department',   { params }),
-        apiClient.get('/reports/visitor-type',    { params }),
         apiClient.get('/reports/daily-traffic',   { params }),
-        apiClient.get('/reports/top-hosts',       { params }),
       ]);
       setData({
-        summary:   summary.data?.data,          // { monthly, total, approved, pending, rejected }
+        summary:   summary.data?.data,
         byStatus:  byStatus.data?.data ?? [],
         byDept:    byDept.data?.data ?? [],
-        byType:    byType.data?.data ?? [],
         daily:     daily.data?.data ?? [],
-        hosts:     hosts.data?.data ?? [],
       });
     } catch (e) {
       toast.error('Failed to load overview charts.');
@@ -1052,39 +1007,6 @@ function OverviewCharts({ from, to, onFromChange, onToChange }) {
                   </div>
                 )}
 
-                {/* By visitor type (bar) */}
-                {data.byType.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">By Visit Type</p>
-                    <ResponsiveContainer width="100%" height={200}>
-                      <BarChart data={data.byType}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                        <XAxis dataKey="visit_category" tickFormatter={c => CATEGORY_LABELS[c] ?? c} tick={{ fontSize: 10, fill: 'var(--color-muted)' }} />
-                        <YAxis tick={{ fontSize: 10, fill: 'var(--color-muted)' }} />
-                        <Tooltip formatter={(v, n, p) => [v, CATEGORY_LABELS[p.payload.visit_category] ?? p.payload.visit_category]} contentStyle={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }} />
-                        <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                          {data.byType.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-
-                {/* Top hosts */}
-                {data.hosts.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Top Hosts</p>
-                    <ResponsiveContainer width="100%" height={200}>
-                      <BarChart data={data.hosts.slice(0, 8)} layout="vertical">
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                        <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--color-muted)' }} />
-                        <YAxis dataKey="host_name" type="category" width={100} tick={{ fontSize: 10, fill: 'var(--color-muted)' }} />
-                        <Tooltip contentStyle={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }} />
-                        <Bar dataKey="visit_count" fill="#6366f1" radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
               </div>
             </>
           )}
@@ -1100,7 +1022,7 @@ const TABS = [
   { id: 'dept',     label: 'Dept-wise',     icon: Building2 },
   { id: 'unit',     label: 'Unit/Office',   icon: Building },
   { id: 'rejected', label: 'Rejected',      icon: ShieldOff },
-  { id: 'active',   label: 'Active & Expected', icon: Activity },
+  { id: 'active',   label: 'Expected Visitors', icon: Activity },
   { id: 'history',  label: 'Visit History', icon: Clock },
 ];
 

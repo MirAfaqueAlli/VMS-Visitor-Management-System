@@ -13,21 +13,28 @@ import {
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import StatusBadge from "../../components/shared/StatusBadge";
+import useAuth from "../../hooks/useAuth";
 
 const CATEGORY_LABELS = {
-  EMP:               'Employee Visit',
   EMPLOYEE_VISIT:    'Employee Visit',
-  INTER_UNIT_VISIT:  'Employee Visit',
-  INTER_UNIT_INVITE: 'Employee Visit',
   VENDOR:            'Vendor',
-  PRIOR:             'Prior Approval',
   SPOT:              'Walk-in',
   PERSONAL_VISIT:    'Personal Visit',
 };
 
+// Show 'Public Request' when the record came from the public self-registration form
+function getCategoryLabel(request) {
+  if (request.request_source === 'PUBLIC') return 'Public Request';
+  return CATEGORY_LABELS[request.visit_category] ?? request.visit_category;
+}
+
 export default function RequestList() {
  const [requests, setRequests] = useState([]);
  const [loading, setLoading] = useState(true);
+ const { user } = useAuth();
+
+ // Only security/admin/receptionist can view the gate pass
+ const canViewPass = ['security', 'unit_admin', 'super_admin', 'receptionist'].includes(user?.role_type);
 
  // Filters
  const [statusFilter, setStatusFilter] = useState("");
@@ -199,7 +206,7 @@ export default function RequestList() {
     className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
     style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
   >
-    {CATEGORY_LABELS[request.visit_category] ?? request.visit_category}
+    {getCategoryLabel(request)}
   </span>
   </div>
   </td>
@@ -236,18 +243,18 @@ export default function RequestList() {
  </td>
  <td className="py-4 px-4 text-right">
  <div className="flex justify-end gap-2">
- {request.status === "APPROVED" &&
- request.pass_number && (
- <button
- onClick={() =>
- navigate(`/gate/pass/${request.pass_number}`)
- }
- className="inline-flex items-center justify-center px-3 h-8 rounded-full bg-mixed-bg text-accent hover:bg-accent hover:text-white transition-colors duration-300 text-xs font-semibold uppercase tracking-wider"
- title="View Gate Pass"
- >
- Pass
- </button>
- )}
+ {canViewPass && request.status === "APPROVED" &&
+  request.pass_number && (
+  <button
+  onClick={() =>
+  navigate(`/gate/pass/${request.pass_number}`)
+  }
+  className="inline-flex items-center justify-center px-3 h-8 rounded-full bg-mixed-bg text-accent hover:bg-accent hover:text-white transition-colors duration-300 text-xs font-semibold uppercase tracking-wider"
+  title="View Gate Pass"
+  >
+  Pass
+  </button>
+  )}
  <button
  onClick={() => navigate(`/requests/${request.id}`)}
  className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300"

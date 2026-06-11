@@ -16,8 +16,10 @@ apiClient.interceptors.request.use(
  }
 
  // Support dynamic unit overriding for central admins
+ // Skip auth endpoints — those are always about the logged-in user, not the managed unit.
+ const isAuthEndpoint = config.url?.includes('/auth/');
  const activeUnitStr = localStorage.getItem("vms_active_unit");
- if (activeUnitStr) {
+ if (!isAuthEndpoint && activeUnitStr) {
    try {
      const activeUnit = JSON.parse(activeUnitStr);
      if (activeUnit.id && activeUnit.db_name) {

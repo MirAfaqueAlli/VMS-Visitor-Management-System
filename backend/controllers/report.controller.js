@@ -4,6 +4,16 @@
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { isSuperAdmin, isUnitAdmin, isDeptAdmin, isGlobalAuditor, isAnyAuditor } = require('../middlewares/rbac.middleware');
 
+const getISTDateString = (d = new Date()) => {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d);
+};
+
+
 // ── Scope helper ────────────────────────────────────────────────────────────────────────────────
 /**
  * Returns a WHERE fragment + params that scopes the query to the caller's dept
@@ -232,7 +242,7 @@ const getByDepartment = async (req, res) => {
 
 // â”€â”€ GET /api/reports/visitor-type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
- * Visits grouped by visit_category (EMP, VENDOR, PRIOR, SPOT, etc.)
+ * Visits grouped by visit_category (EMPLOYEE_VISIT, VENDOR, SPOT, PERSONAL_VISIT)
  */
 const getByVisitorType = async (req, res) => {
   try {
@@ -302,7 +312,7 @@ const getDailyTraffic = async (req, res) => {
     if (!from) {
       const d = new Date();
       d.setDate(d.getDate() - 30);
-      from = d.toISOString().slice(0, 10);
+      from = getISTDateString(d);
     }
 
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
@@ -650,8 +660,8 @@ const getGlobalSummary = async (req, res) => {
     const activeUnits   = allUnits.filter(u => u.db_status === 'ACTIVE');
     const totalUnits    = allUnits.length;
     const provUnits     = allUnits.filter(u => u.db_status !== 'ACTIVE').length;
-    const thisMonth     = new Date().toISOString().slice(0, 7); // YYYY-MM
-    const today         = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const today         = getISTDateString();
+    const thisMonth     = today.slice(0, 7); // YYYY-MM
 
     let totalVisits      = 0;
     let thisMonthVisits  = 0;
@@ -1117,32 +1127,16 @@ const getRejectedReport = async (req, res) => {
 const getActiveExpectedReport = async (req, res) => {
   try {
     const { date, visitor_type, unit_db, department_id, search } = req.query;
-    const targetDate = date || new Date().toISOString().slice(0, 10);
+    const targetDate = date || getISTDateString();
     const isCentral  = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
-    const mkActive = () => {
-      const c = ["vl.status = 'ACTIVE'"]; const p = [];
-      if (visitor_type)  { c.push('vr.visit_category = ?'); p.push(visitor_type); }
-      if (department_id) { c.push('vr.department_id = ?');  p.push(department_id); }
-      if (search) { c.push('(vr.visitor_name LIKE ? OR vr.visitor_phone LIKE ?)'); p.push(`%${search}%`, `%${search}%`); }
-      return { c, p };
-    };
     const mkExpected = () => {
-      const c = [`vr.visit_date = ? AND vr.status = 'APPROVED'`]; const p = [targetDate];
+      const c = [`vr.visit_date = ? AND vr.status = 'APPROVED' AND vr.id NOT IN (SELECT visit_request_id FROM visit_logs)`]; const p = [targetDate];
       if (visitor_type)  { c.push('vr.visit_category = ?'); p.push(visitor_type); }
       if (department_id) { c.push('vr.department_id = ?');  p.push(department_id); }
       if (search) { c.push('(vr.visitor_name LIKE ? OR vr.visitor_phone LIKE ?)'); p.push(`%${search}%`, `%${search}%`); }
       return { c, p };
     };
-
-    const ASEL = `
-      SELECT vr.id, vr.visitor_name, vr.visitor_phone, vr.visit_date, vr.visit_category, vr.purpose,
-             vl.check_in_at AS check_in_time, NULL AS gate_name,
-             d.name AS department_name, h.full_name AS host_name, 'ACTIVE' AS report_status
-      FROM visit_logs vl
-      JOIN visit_requests vr ON vr.id = vl.visit_request_id
-      LEFT JOIN departments d ON d.id = vr.department_id
-      LEFT JOIN users h ON h.id = vr.host_user_id`;
 
     const ESEL = `
       SELECT vr.id, vr.visitor_name, vr.visitor_phone, vr.visit_date,
@@ -1154,37 +1148,25 @@ const getActiveExpectedReport = async (req, res) => {
 
     if (isCentral) {
       const { queryAllUnits } = require('../services/dbManager');
-      const { c: aC, p: aP } = mkActive();
       const { c: eC, p: eP } = mkExpected();
 
       if (unit_db) {
         const { pool, unitName } = await getScopedUnit(unit_db);
-        const [[active], [expected]] = await Promise.all([
-          pool.query(`${ASEL} WHERE ${aC.join(' AND ')} ORDER BY vl.check_in_at DESC`, aP),
-          pool.query(`${ESEL} WHERE ${eC.join(' AND ')} ORDER BY vr.visit_start_time ASC`, eP),
-        ]);
+        const [expected] = await pool.query(`${ESEL} WHERE ${eC.join(' AND ')} ORDER BY vr.visit_start_time ASC`, eP);
         return sendSuccess(res, {
-          active:   active.map(r   => ({ ...r, unit_name: unitName })),
+          active:   [],
           expected: expected.map(r => ({ ...r, unit_name: unitName })),
           date: targetDate,
         });
       }
-      const [fanA, fanE] = await Promise.all([
-        queryAllUnits(`${ASEL} WHERE ${aC.join(' AND ')} ORDER BY vl.check_in_at DESC`, aP),
-        queryAllUnits(`${ESEL} WHERE ${eC.join(' AND ')} ORDER BY vr.visit_start_time ASC`, eP),
-      ]);
-      let active = []; for (const r of fanA) active = active.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name })));
+      const fanE = await queryAllUnits(`${ESEL} WHERE ${eC.join(' AND ')} ORDER BY vr.visit_start_time ASC`, eP);
       let expected = []; for (const r of fanE) expected = expected.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name })));
-      return sendSuccess(res, { active, expected, date: targetDate });
+      return sendSuccess(res, { active: [], expected, date: targetDate });
     }
 
-    const { c: aC, p: aP } = mkActive();
     const { c: eC, p: eP } = mkExpected();
-    const [[active], [expected]] = await Promise.all([
-      req.db.query(`${ASEL} WHERE ${aC.join(' AND ')} ORDER BY vl.check_in_at DESC`, aP),
-      req.db.query(`${ESEL} WHERE ${eC.join(' AND ')} ORDER BY vr.visit_start_time ASC`, eP),
-    ]);
-    return sendSuccess(res, { active, expected, date: targetDate });
+    const [expected] = await req.db.query(`${ESEL} WHERE ${eC.join(' AND ')} ORDER BY vr.visit_start_time ASC`, eP);
+    return sendSuccess(res, { active: [], expected, date: targetDate });
   } catch (err) {
     console.error('[ReportController] getActiveExpectedReport error:', err.message);
     return sendError(res, 'Failed to fetch active/expected report.', 500);
@@ -1200,10 +1182,9 @@ const getDetailedVisitHistory = async (req, res) => {
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConditions = () => {
-      const conditions = []; const params = [];
+      const conditions = ["vr.status = 'COMPLETED'"]; const params = [];
       buildDateWhere(conditions, params, from, to);
       if (visitor_type)  { conditions.push('vr.visit_category = ?'); params.push(visitor_type); }
-      if (status)        { conditions.push('vr.status = ?');          params.push(status); }
       if (department_id) { conditions.push('vr.department_id = ?');   params.push(department_id); }
       if (search) {
         conditions.push('(vr.visitor_name LIKE ? OR vr.visitor_phone LIKE ? OR h.full_name LIKE ? OR vr.purpose LIKE ?)');

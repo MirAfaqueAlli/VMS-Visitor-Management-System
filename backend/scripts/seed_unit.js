@@ -50,7 +50,7 @@ async function seedUnit() {
     await conn.query(`USE \`${dbName}\``);
 
     // 3. Apply schema
-    const schemaPath = path.join(__dirname, '../../database/vms_unit_schema.sql');
+    const schemaPath = path.join(__dirname, '../database/vms_unit_schema.sql');
     if (!fs.existsSync(schemaPath)) {
       console.error('❌ vms_unit_schema.sql not found at:', schemaPath);
       process.exit(1);

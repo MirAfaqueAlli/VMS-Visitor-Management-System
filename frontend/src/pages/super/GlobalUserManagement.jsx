@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Plus, X, UserCheck, Shield, Eye, EyeOff, UserX, Search } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
+import PasswordStrength from '../../components/PasswordStrength';
+import { validatePassword } from '../../utils/passwordValidator';
 
 const EMPTY_FORM = {
   full_name: '', email: '', phone: '', employee_code: '', password: '', role_type: 'global_auditor',
@@ -71,6 +73,12 @@ export default function GlobalUserManagement() {
     }
     if (!editUser && !form.password.trim()) {
       return toast.error('Password is required when creating a new user.');
+    }
+    if (!editUser) {
+      const { valid: pwValid } = validatePassword(form.password);
+      if (!pwValid) {
+        return toast.error('Password does not meet the strength requirements.');
+      }
     }
     setSaving(true);
     try {
@@ -141,7 +149,7 @@ export default function GlobalUserManagement() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
             { label: 'Total Central Users', value: users.length,                                        color: 'var(--color-info)' },
             { label: 'Super Admins',         value: users.filter(u => u.role_type === 'super_admin').length,    color: '#7c3aed' },
@@ -256,7 +264,7 @@ export default function GlobalUserManagement() {
                           >
                             Edit
                           </button>
-                          {u.is_active && (
+                          {u.is_active && u.role_type !== 'super_admin' && (
                             <button
                               onClick={() => handleDeactivate(u)}
                               className="text-[11px] px-2 py-0.5 rounded font-medium transition-colors"
@@ -293,7 +301,7 @@ export default function GlobalUserManagement() {
       <div
         className="fixed right-0 top-0 h-full z-50 flex flex-col"
         style={{
-          width:      520,
+          width: 'min(520px, 100vw)',
           background: 'var(--color-bg-secondary)',
           borderLeft: '1px solid var(--color-border)',
           transform:  isOpen ? 'translateX(0)' : 'translateX(100%)',
@@ -336,7 +344,7 @@ export default function GlobalUserManagement() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Full Name *</label>
               <input className={inputCls} value={form.full_name} onChange={set('full_name')} placeholder="Full Name" />
@@ -379,6 +387,7 @@ export default function GlobalUserManagement() {
                   {showPwd ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
               </div>
+              <PasswordStrength password={form.password} />
             </div>
           )}
 

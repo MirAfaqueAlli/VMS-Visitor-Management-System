@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS visit_requests (
     target_unit_id    INT          NULL,
     visit_category    ENUM('EMPLOYEE_VISIT','VENDOR','PRIOR','SPOT','PERSONAL_VISIT',
                            'INTER_UNIT_VISIT','INTER_UNIT_INVITE') NOT NULL,
-    request_source    ENUM('SELF','RECEPTION','HOST','SYSTEM') NOT NULL,
+    request_source    ENUM('SELF','RECEPTION','HOST','SYSTEM','PUBLIC') NOT NULL,
     company_name      VARCHAR(100) NULL,
     vendor_email      VARCHAR(100) NULL,
     purpose           TEXT         NOT NULL,
@@ -155,8 +155,11 @@ CREATE TABLE IF NOT EXISTS gate_passes (
     qr_code_path     VARCHAR(255),
     is_printed       BOOLEAN     DEFAULT FALSE,
     status           ENUM('ISSUED','USED','EXPIRED','CANCELLED') DEFAULT 'ISSUED',
+    checkout_method  ENUM('DIRECT','QR_SCAN') NULL,
+    qr_expires_at    DATETIME    NULL,
     issued_by        INT         NOT NULL,
     issued_at        TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP   DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     created_at       TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (visit_request_id) REFERENCES visit_requests(id),
     FOREIGN KEY (issued_by)        REFERENCES users(id)
@@ -265,6 +268,19 @@ CREATE TABLE IF NOT EXISTS system_settings (
     updated_by    INT          NULL,
     created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS host_phone_blacklist (
+    id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    host_user_id   INT UNSIGNED NOT NULL,
+    visitor_phone  VARCHAR(20)  NOT NULL,
+    visitor_name   VARCHAR(120) NULL,
+    reason         TEXT         NOT NULL,
+    blocked_by     INT UNSIGNED NOT NULL,
+    is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_host_phone (host_user_id, visitor_phone),
+    INDEX idx_phone      (visitor_phone)
 );
 
 SET FOREIGN_KEY_CHECKS = 1;

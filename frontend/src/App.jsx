@@ -2,13 +2,16 @@ import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom"
 import { Toaster } from "react-hot-toast";
 
 import { AuthProvider }         from "./context/AuthContext";
+import { SocketProvider }       from "./context/SocketContext";
+import { ThemeProvider }        from "./context/ThemeContext";
+import useTheme                 from "./context/ThemeContext";
 import ProtectedRoute           from "./components/Layout/ProtectedRoute";
+
 import AppLayout                from "./components/Layout/AppLayout";
 import Login                    from "./pages/auth/Login";
 import Setup                    from "./pages/auth/Setup";
 import RegisterOrganization     from "./pages/auth/RegisterOrganization";
 import Dashboard                from "./pages/dashboard/Dashboard";
-import VisitorForm              from "./pages/visitors/VisitorForm";
 import VisitorList              from "./pages/visitors/VisitorList";
 import VisitorDetail            from "./pages/visitors/VisitorDetail";
 import NewRequest               from "./pages/requests/NewRequest";
@@ -36,10 +39,11 @@ const REPORT_ROLES   = ["unit_admin", "unit_auditor", "global_auditor", "super_a
 
 const router = createBrowserRouter([
   // ── Public pages ──────────────────────────────────────────────────────────
-  { path: "/setup",        element: <Setup /> },
-  { path: "/login",         element: <Login /> },
-  { path: "/register",      element: <RegisterOrganization /> },
-  { path: "/public-request",element: <PublicRequest /> },
+  { path: "/setup",            element: <Setup /> },
+  { path: "/login",            element: <Login /> },
+  { path: "/login/:unitCode",  element: <Login /> },   // unit-scoped login URL
+  { path: "/register",         element: <RegisterOrganization /> },
+  { path: "/public-request",   element: <PublicRequest /> },
 
   {
     path: "/",
@@ -54,7 +58,6 @@ const router = createBrowserRouter([
 
           // Visitors
           { path: "visitors",     element: <VisitorList /> },
-          { path: "visitors/new", element: <VisitorForm /> },
           { path: "visitors/:id", element: <VisitorDetail /> },
 
           // Visit Requests
@@ -132,27 +135,42 @@ const router = createBrowserRouter([
   },
 ]);
 
+// Theme-aware toaster so it adapts colours in dark mode
+function ThemedToaster() {
+  const { theme } = useTheme();
+  const dark = theme === 'dark';
+  return (
+    <Toaster
+      position="top-right"
+      toastOptions={{
+        style: {
+          borderRadius: "6px",
+          background:   dark ? "#1e293b" : "#ffffff",
+          color:        dark ? "#f1f5f9" : "#0f172a",
+          fontFamily:   "Inter, system-ui, sans-serif",
+          fontSize:     "13px",
+          border:       dark ? "1px solid #334155" : "1px solid #e2e8f0",
+          boxShadow:    dark
+            ? "0 4px 16px rgba(0,0,0,0.5)"
+            : "0 1px 3px rgba(15,23,42,0.08)",
+          padding:      "10px 14px",
+        },
+        success: { iconTheme: { primary: dark ? "#4ade80" : "#16a34a", secondary: dark ? "#1e293b" : "#ffffff" } },
+        error:   { iconTheme: { primary: dark ? "#f87171" : "#dc2626", secondary: dark ? "#1e293b" : "#ffffff" } },
+      }}
+    />
+  );
+}
+
 export default function App() {
   return (
-    <AuthProvider>
-      <RouterProvider router={router} />
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          style: {
-            borderRadius: "6px",
-            background:   "#ffffff",
-            color:        "#0f172a",
-            fontFamily:   "Inter, system-ui, sans-serif",
-            fontSize:     "13px",
-            border:       "1px solid #e2e8f0",
-            boxShadow:    "0 1px 3px rgba(15,23,42,0.08)",
-            padding:      "10px 14px",
-          },
-          success: { iconTheme: { primary: "#16a34a", secondary: "#ffffff" } },
-          error:   { iconTheme: { primary: "#dc2626", secondary: "#ffffff" } },
-        }}
-      />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <SocketProvider>
+          <RouterProvider router={router} />
+          <ThemedToaster />
+        </SocketProvider>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
