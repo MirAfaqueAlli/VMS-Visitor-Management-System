@@ -1,4 +1,4 @@
-# 🚪 Visitor Management System (VMS)
+﻿# 🚪 Visitor Management System (VMS)
 
 A secure, multi-tenant **Visitor Management System** built for government offices, PSUs, and secured premises. It digitises the complete visitor lifecycle — registration → approval → gate pass → check-in/check-out — with role-based access control, QR-code gate passes, real-time web-push notifications, SMS/email alerts, and financial-year archiving.
 
@@ -282,109 +282,8 @@ All key events emit Socket.IO messages to scoped user/unit rooms, triggering bro
 
 ---
 
-## 🔄 Resetting to a Clean Slate
 
-```bash
-cd backend
-npm run reset-db
-```
 
-Then go to `http://localhost:5173/setup` and re-initialise.
-
----
-
-## 🚢 Deploying to Production
-
-### 1 — Set production environment variables
-
-On your server, create `backend/.env` with production values:
-
-```env
-NODE_ENV=production
-PORT=5000
-CLIENT_URL=https://your-domain.com
-
-DB_HOST=your-db-host
-DB_USER=your-db-user
-DB_PASSWORD=your-strong-password
-DB_CENTRAL_NAME=vms_central
-
-JWT_SECRET=a_very_long_random_string_at_least_64_characters
-JWT_EXPIRES_IN=24h
-
-SMTP_HOST=smtp.yourprovider.com
-SMTP_PORT=587
-SMTP_USER=your@email.com
-SMTP_PASS=your_smtp_password
-EMAIL_FROM="VMS" <your@email.com>
-```
-
-### 2 — Build the frontend
-
-```bash
-cd frontend
-npm ci
-npm run build
-# Static output lands in frontend/dist/
-```
-
-### 3 — Run the backend with PM2
-
-```bash
-npm install -g pm2
-
-cd backend
-npm ci --omit=dev
-npm run reset-db        # First deploy only — creates the DB schema
-
-pm2 start server.js --name vms-backend
-pm2 save
-pm2 startup             # Registers PM2 to auto-start on server reboot
-```
-
-### 4 — Nginx configuration
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    # Serve the built React SPA
-    root /path/to/frontend/dist;
-    index index.html;
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Proxy API requests to Node backend
-    location /api/ {
-        proxy_pass         http://localhost:5000;
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade $http_upgrade;
-        proxy_set_header   Connection 'upgrade';
-        proxy_set_header   Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-
-    # Proxy Socket.IO for real-time notifications
-    location /socket.io/ {
-        proxy_pass         http://localhost:5000;
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade $http_upgrade;
-        proxy_set_header   Connection 'upgrade';
-    }
-
-    # Serve uploaded visitor photos and QR codes
-    location /uploads/ {
-        alias /path/to/backend/uploads/;
-    }
-}
-```
-
-> Enable HTTPS with Certbot: `sudo certbot --nginx -d your-domain.com`
-
----
 
 ## 🔒 Security
 
@@ -398,6 +297,3 @@ server {
 
 ---
 
-## 📄 License
-
-Distributed under the **ISC License**. See `backend/package.json` for details.
