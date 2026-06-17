@@ -2,29 +2,29 @@
 'use strict';
 
 const bcrypt = require('bcrypt');
-const db = require('../db');
+const { validatePassword } = require('../utils/passwordValidator.util');
+const { centralPool, getPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
-const { logAudit } = require('../utils/auditLogger.util');
-const { isOrgAdmin, isDeptAdmin } = require('../middlewares/rbac.middleware');
+const { logAudit }               = require('../utils/auditLogger.util');
+const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 
-// ── Role helpers ──────────────────────────────────────────────────────────────
-const MANAGEABLE_ROLES = ['employee', 'security', 'receptionist'];
-const ALL_ROLES        = ['org_admin', 'dept_admin', 'employee', 'security', 'receptionist'];
+// ── Role sets ─────────────────────────────────────────────────────────────────
+const UNIT_MANAGEABLE_ROLES = ['unit_admin', 'employee', 'security', 'receptionist', 'unit_auditor'];
 
 // ── List Users ────────────────────────────────────────────────────────────────
+/**
+ * GET /api/users
+ * super_admin / unit_admin → all users in their unit DB
+ * dept_admin              → only their own department
+ */
 const listUsers = async (req, res) => {
   try {
     const { role } = req.query;
     const conditions = ['u.deleted_at IS NULL'];
     const params     = [];
 
-    // Dept scoping
-    if (!isOrgAdmin(req.user)) {
-      if (!isDeptAdmin(req.user)) {
-        return sendError(res, 'Access forbidden.', 403);
-      }
-      conditions.push('u.department_id = ?');
-      params.push(req.user.department_id);
+    if (!isSuperAdmin(req.user) && !isUnitAdmin(req.user)) {
+      return sendError(res, 'Access forbidden.', 403);
     }
 
     if (role) {
@@ -32,18 +32,20 @@ const listUsers = async (req, res) => {
       params.push(role);
     }
 
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-    const [rows] = await db.query(
-      `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.employee_code,
-              u.role_type, u.department_id, u.organization_id, u.is_active, u.created_at,
-              d.name AS department_name, o.name AS organization_name
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const [rows] = await req.db.query(
+      `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
+              u.employee_code, u.role_type, u.department_id, u.unit_id,
+              u.is_active, u.created_at, u.last_login_at,
+              d.name AS department_name
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id
-       LEFT JOIN organizations o ON o.id = u.organization_id
        ${where}
        ORDER BY u.full_name ASC`,
       params
     );
+
     return sendSuccess(res, rows, 'Users fetched successfully.');
   } catch (err) {
     console.error('[UserController] listUsers error:', err.message);
@@ -51,28 +53,103 @@ const listUsers = async (req, res) => {
   }
 };
 
-// ── List Hosts (public-ish — used by visitor form) ────────────────────────────
+// ── List Hosts (public-ish — used by visitor form and employee visit picker) ─────────
 /**
- * GET /api/users/hosts?department_id=X
+ * GET /api/users/hosts?department_id=X&unit_id=5
  * Returns employees (hosts) of the given department.
- * Minimal data — no sensitive fields.
+ * Supports unit_id (numeric) or legacy unit_code for cross-unit lookups.
  */
 const listHosts = async (req, res) => {
   try {
-    const { department_id } = req.query;
-    if (!department_id) return sendError(res, 'department_id query param is required.', 400);
+    const { department_id, unit_code, unit_id, include_all } = req.query;
 
-    const [rows] = await db.query(
-      `SELECT u.id, u.full_name, u.designation, u.role_type, d.name AS department_name
-       FROM users u
-       LEFT JOIN departments d ON d.id = u.department_id
-       WHERE u.department_id = ?
-         AND u.role_type IN ('employee', 'dept_admin')
-         AND u.is_active = 1
-         AND (u.deleted_at IS NULL OR u.deleted_at > NOW())
-       ORDER BY u.full_name ASC`,
-      [parseInt(department_id, 10)]
-    );
+    let dbPool = null;
+    const isCrossUnit = !!(unit_id || unit_code); // visiting a specific unit by ID or code
+
+    // Resolve DB from unit_id (preferred) or unit_code (legacy), else use req.db
+    if (unit_id) {
+      const [unitRows] = await centralPool.query(
+        `SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = 'ACTIVE'`,
+        [parseInt(unit_id, 10)]
+      );
+      if (unitRows.length === 0) return sendError(res, 'Unit not found.', 404);
+      dbPool = getPool(unitRows[0].db_name);
+    } else if (unit_code) {
+      const [unitRows] = await centralPool.query(
+        `SELECT db_name FROM units WHERE code = ? AND is_active = 1 AND db_status = 'ACTIVE'`,
+        [unit_code.toUpperCase().trim()]
+      );
+      if (unitRows.length === 0) return sendError(res, 'Unit not found.', 404);
+      dbPool = getPool(unitRows[0].db_name);
+    } else if (req.db) {
+      dbPool = req.db;
+    } else {
+      return sendError(res, 'unit_id or unit_code is required for host lookup.', 400);
+    }
+
+    // Build role filter:
+    // - If caller explicitly passes `roles` param (e.g. "employee" or "employee,unit_admin"),
+    //   honour that exactly — used by Employee Visit picker to show only employees.
+    // - Otherwise fall back to legacy logic:
+    //   cross-unit → all staff roles; same-unit dept-filter → employee only.
+    let roleFilter;
+    if (req.query.roles) {
+      const SAFE_ROLES = ['employee', 'unit_admin', 'receptionist', 'security', 'unit_auditor'];
+      const allowedRoles = req.query.roles
+        .split(',')
+        .map(r => r.trim())
+        .filter(r => SAFE_ROLES.includes(r))
+        .map(r => `'${r}'`)
+        .join(', ');
+      roleFilter = allowedRoles.length > 0
+        ? `u.role_type IN (${allowedRoles})`
+        : `u.role_type = 'employee'`; // fallback safety
+    } else {
+      roleFilter = isCrossUnit
+        ? `u.role_type IN ('employee', 'unit_admin', 'receptionist', 'security')`
+        : `u.role_type = 'employee'`;
+    }
+
+    let rows;
+    if (include_all === 'true' || !department_id) {
+      // No department filter — return all eligible users in the unit
+      [rows] = await dbPool.query(
+        `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
+                u.role_type, u.department_id, u.unit_id,
+                des.name AS designation_name,
+                d.name AS department_name
+         FROM users u
+         LEFT JOIN departments d    ON d.id   = u.department_id
+         LEFT JOIN designations des ON des.id = u.designation_id
+         WHERE ${roleFilter}
+           AND u.is_active = 1
+           AND u.deleted_at IS NULL
+         ORDER BY u.full_name ASC`
+      );
+    } else {
+      // Department-scoped lookup
+      [rows] = await dbPool.query(
+        `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
+                u.role_type, u.department_id, u.unit_id,
+                des.name AS designation_name,
+                d.name AS department_name
+         FROM users u
+         LEFT JOIN departments d    ON d.id   = u.department_id
+         LEFT JOIN designations des ON des.id = u.designation_id
+         WHERE u.department_id = ?
+           AND ${roleFilter}
+           AND u.is_active = 1
+           AND u.deleted_at IS NULL
+         ORDER BY u.full_name ASC`,
+        [parseInt(department_id, 10)]
+      );
+    }
+
+    // Debug log for cross-unit employee lookup troubleshooting
+    if (isCrossUnit) {
+      console.log(`[UserController] listHosts: unit_id=${unit_id || unit_code} → ${rows.length} hosts found (roleFilter: ${roleFilter}, include_all: ${include_all}, department_id: ${department_id || 'none'})`);
+    }
+
     return sendSuccess(res, rows, 'Hosts fetched successfully.');
   } catch (err) {
     console.error('[UserController] listHosts error:', err.message);
@@ -80,26 +157,26 @@ const listHosts = async (req, res) => {
   }
 };
 
-// ── Get User By ID ─────────────────────────────────────────────────────────────
+
+// ── Get User By ID ────────────────────────────────────────────────────────────
 const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
-    const [rows] = await db.query(
-      `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.employee_code,
-              u.role_type, u.department_id, u.organization_id, u.is_active, u.created_at,
-              d.name AS department_name, o.name AS organization_name
+
+    const [rows] = await req.db.query(
+      `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
+              u.employee_code, u.role_type, u.department_id, u.unit_id,
+              u.is_active, u.created_at, u.last_login_at,
+              d.name AS department_name
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id
-       LEFT JOIN organizations o ON o.id = u.organization_id
        WHERE u.id = ? AND u.deleted_at IS NULL`,
       [id]
     );
+
     if (rows.length === 0) return sendError(res, 'User not found.', 404);
 
-    // dept_admin can only view users in their own department
-    if (isDeptAdmin(req.user) && rows[0].department_id !== req.user.department_id) {
-      return sendError(res, 'Access forbidden.', 403);
-    }
+
 
     return sendSuccess(res, rows[0], 'User fetched successfully.');
   } catch (err) {
@@ -113,71 +190,92 @@ const createUser = async (req, res) => {
   try {
     const {
       full_name, email, phone, password,
-      role_type, department_id, organization_id,
-      employee_code, designation,
+      role_type, department_id,
+      employee_code, designation, designation_id,
+      unit_id,
     } = req.body;
 
-    if (!full_name || !email || !phone || !password || !role_type || !employee_code) {
-      return sendError(res, 'full_name, email, phone, password, role_type, and employee_code are required.', 400);
+    if (!full_name || !email || !password || !role_type || !employee_code) {
+      return sendError(res, 'full_name, email, password, role_type, and employee_code are required.', 400);
     }
 
     // Role-based permission check
-    if (isOrgAdmin(req.user)) {
-      // org_admin can create any role
-      if (!ALL_ROLES.includes(role_type)) {
-        return sendError(res, `role_type must be one of: ${ALL_ROLES.join(', ')}.`, 400);
-      }
-    } else if (isDeptAdmin(req.user)) {
-      // dept_admin can only create employee/security/receptionist in their own dept
-      if (!MANAGEABLE_ROLES.includes(role_type)) {
-        return sendError(res, 'Dept admins can only create employee, security, or receptionist users.', 403);
+    if (isSuperAdmin(req.user) || isUnitAdmin(req.user)) {
+      if (!UNIT_MANAGEABLE_ROLES.includes(role_type)) {
+        return sendError(res, `role_type must be one of: ${UNIT_MANAGEABLE_ROLES.join(', ')}.`, 400);
       }
     } else {
       return sendError(res, 'Access forbidden.', 403);
     }
 
-    // Determine effective org + dept
-    const effectiveOrgId  = isOrgAdmin(req.user) ? (organization_id || req.user.organization_id) : req.user.organization_id;
-    // org_admin is allowed null dept; others must have one
-    let effectiveDeptId;
-    if (role_type === 'org_admin') {
-      effectiveDeptId = null;
-    } else if (isDeptAdmin(req.user)) {
-      effectiveDeptId = req.user.department_id; // force their own dept
-    } else {
-      effectiveDeptId = department_id || null;
-      if (!effectiveDeptId) return sendError(res, 'department_id is required for this role.', 400);
+    // Determine effective unit_id and dept_id
+    // For unit_admin: use their own unit_id.
+    // For super_admin managing a unit: prefer body unit_id, then the X-Unit-Id header
+    // that the frontend sends automatically when activeUnit is set.
+    const headerUnitId = req.headers['x-unit-id'] ? parseInt(req.headers['x-unit-id'], 10) : null;
+    const effectiveUnitId = isUnitAdmin(req.user)
+      ? req.user.unit_id
+      : (unit_id || headerUnitId || null);
+
+    const effectiveDeptId = department_id || null;
+    // dept is required for non-admin roles
+    if (!effectiveDeptId && !['unit_admin', 'unit_auditor', 'security', 'receptionist'].includes(role_type)) {
+      return sendError(res, 'department_id is required for this role.', 400);
     }
 
-    const [existing] = await db.query(
-      `SELECT id FROM users WHERE email = ? OR phone = ? OR (employee_code = ? AND organization_id = ?) LIMIT 1`,
-      [email, phone, employee_code, effectiveOrgId]
+    // Check for duplicates within this unit DB
+    const [existing] = await req.db.query(
+      `SELECT id FROM users WHERE (email = ? OR phone = ? OR employee_code = ?) AND deleted_at IS NULL LIMIT 1`,
+      [email, phone || '', employee_code]
     );
     if (existing.length > 0) {
-      return sendError(res, 'A user with this email, phone, or employee code already exists in this organization.', 409);
+      return sendError(res, 'A user with this email, phone, or employee code already exists in this unit.', 409);
     }
+
+    // Enforce password policy
+    const { valid, errors } = validatePassword(password);
+    if (!valid) return sendError(res, errors[0], 400);
 
     const password_hash = await bcrypt.hash(password, 12);
 
-    const [result] = await db.query(
-      `INSERT INTO users (full_name, email, phone, password_hash, role_type, department_id, organization_id, employee_code, designation, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, NOW(), NOW())`,
-      [full_name, email, phone, password_hash, role_type, effectiveDeptId, effectiveOrgId, employee_code, designation || null]
+    const [result] = await req.db.query(
+      `INSERT INTO users
+         (unit_id, department_id, designation_id, role_type, full_name, email, phone,
+          password_hash, employee_code, designation, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, NOW(), NOW())`,
+      [effectiveUnitId, effectiveDeptId || null, designation_id || null,
+       role_type, full_name, email, phone || null,
+       password_hash, employee_code, designation || null]
     );
 
-    const [newUser] = await db.query(
-      `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.employee_code,
-              u.role_type, u.department_id, u.organization_id, u.is_active, u.created_at,
-              d.name AS department_name
-       FROM users u LEFT JOIN departments d ON d.id = u.department_id
+    const [newUser] = await req.db.query(
+      `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
+              u.employee_code, u.role_type, u.department_id, u.unit_id,
+              u.is_active, u.created_at, d.name AS department_name
+       FROM users u
+       LEFT JOIN departments d ON d.id = u.department_id
        WHERE u.id = ?`,
       [result.insertId]
     );
 
-    await logAudit({ userId: req.user.id, action: 'CREATE_USER', module: 'ADMIN', recordType: 'USER', recordId: result.insertId });
+    await logAudit({
+      db:        req.db,
+      userId:    req.user.id,
+      action:    'CREATE_USER',
+      module:    'ADMIN',
+      recordType: 'USER',
+      recordId:  result.insertId,
+      newValues: { role_type, email },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] || null,
+    });
+
     return sendSuccess(res, newUser[0], 'User created successfully.', 201);
   } catch (err) {
     console.error('[UserController] createUser error:', err.message);
+    if (err.code === 'ER_DUP_ENTRY') {
+      return sendError(res, 'A user with this email, phone, or employee code already exists.', 409);
+    }
     return sendError(res, `Failed to create user: ${err.message}`, 500);
   }
 };
@@ -186,57 +284,57 @@ const createUser = async (req, res) => {
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { full_name, email, phone, designation, role_type, department_id } = req.body;
+    const { full_name, email, phone, designation, designation_id, role_type, department_id } = req.body;
 
-    const [existing] = await db.query(`SELECT * FROM users WHERE id = ? AND deleted_at IS NULL`, [id]);
+    const [existing] = await req.db.query(
+      `SELECT * FROM users WHERE id = ? AND deleted_at IS NULL`, [id]
+    );
     if (existing.length === 0) return sendError(res, 'User not found.', 404);
 
     const targetUser = existing[0];
 
-    // Dept admin can only edit users in their own dept
-    if (isDeptAdmin(req.user) && targetUser.department_id !== req.user.department_id) {
-      return sendError(res, 'Access forbidden.', 403);
+    if (role_type && !UNIT_MANAGEABLE_ROLES.includes(role_type)) {
+      return sendError(res, `role_type must be one of: ${UNIT_MANAGEABLE_ROLES.join(', ')}.`, 400);
     }
 
-    // Dept admin cannot set role to org_admin or dept_admin
-    if (isDeptAdmin(req.user) && role_type && !MANAGEABLE_ROLES.includes(role_type)) {
-      return sendError(res, 'Dept admins cannot assign org_admin or dept_admin roles.', 403);
-    }
+    const effectiveDeptId = department_id !== undefined ? department_id : targetUser.department_id;
 
-    if (role_type) {
-      if (!ALL_ROLES.includes(role_type)) {
-        return sendError(res, `role_type must be one of: ${ALL_ROLES.join(', ')}.`, 400);
-      }
-    }
-
-    // dept_admin cannot change department_id — lock to their dept
-    const effectiveDeptId = isDeptAdmin(req.user)
-      ? req.user.department_id
-      : (department_id || null);
-
-    await db.query(
-      `UPDATE users
-       SET full_name     = COALESCE(?, full_name),
-           email         = COALESCE(?, email),
-           phone         = COALESCE(?, phone),
-           designation   = COALESCE(?, designation),
-           role_type     = COALESCE(?, role_type),
-           department_id = COALESCE(?, department_id),
-           updated_at    = NOW()
+    await req.db.query(
+      `UPDATE users SET
+         full_name      = COALESCE(?, full_name),
+         email          = COALESCE(?, email),
+         phone          = COALESCE(?, phone),
+         designation    = COALESCE(?, designation),
+         designation_id = COALESCE(?, designation_id),
+         role_type      = COALESCE(?, role_type),
+         department_id  = ?,
+         updated_at     = NOW()
        WHERE id = ?`,
-      [full_name || null, email || null, phone || null, designation || null,
+      [full_name || null, email || null, phone || null,
+       designation || null, designation_id || null,
        role_type || null, effectiveDeptId, id]
     );
 
-    const [updated] = await db.query(
-      `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.employee_code,
-              u.role_type, u.department_id, u.organization_id, u.is_active, u.created_at,
-              d.name AS department_name
-       FROM users u LEFT JOIN departments d ON d.id = u.department_id WHERE u.id = ?`,
+    const [updated] = await req.db.query(
+      `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
+              u.employee_code, u.role_type, u.department_id, u.unit_id,
+              u.is_active, u.created_at, d.name AS department_name
+       FROM users u
+       LEFT JOIN departments d ON d.id = u.department_id WHERE u.id = ?`,
       [id]
     );
 
-    await logAudit({ userId: req.user.id, action: 'UPDATE_USER', module: 'ADMIN', recordType: 'USER', recordId: parseInt(id) });
+    await logAudit({
+      db:        req.db,
+      userId:    req.user.id,
+      action:    'UPDATE_USER',
+      module:    'ADMIN',
+      recordType: 'USER',
+      recordId:  parseInt(id),
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] || null,
+    });
+
     return sendSuccess(res, updated[0], 'User updated successfully.');
   } catch (err) {
     console.error('[UserController] updateUser error:', err.message);
@@ -256,22 +354,31 @@ const deactivateUser = async (req, res) => {
       return sendError(res, 'You cannot deactivate your own account.', 400);
     }
 
-    const [existing] = await db.query(`SELECT id, is_active, department_id FROM users WHERE id = ? AND deleted_at IS NULL`, [id]);
+    const [existing] = await req.db.query(
+      `SELECT id, is_active, department_id FROM users WHERE id = ? AND deleted_at IS NULL`, [id]
+    );
     if (existing.length === 0) return sendError(res, 'User not found.', 404);
 
-    // Dept admin can only deactivate users in their own dept
-    if (isDeptAdmin(req.user) && existing[0].department_id !== req.user.department_id) {
-      return sendError(res, 'Access forbidden.', 403);
-    }
+
 
     if (!existing[0].is_active) return sendError(res, 'User is already deactivated.', 400);
 
-    await db.query(
+    await req.db.query(
       `UPDATE users SET is_active = FALSE, deleted_at = NOW(), deleted_by = ?, updated_at = NOW() WHERE id = ?`,
       [req.user.id, id]
     );
 
-    await logAudit({ userId: req.user.id, action: 'DEACTIVATE_USER', module: 'ADMIN', recordType: 'USER', recordId: parseInt(id) });
+    await logAudit({
+      db:        req.db,
+      userId:    req.user.id,
+      action:    'DEACTIVATE_USER',
+      module:    'ADMIN',
+      recordType: 'USER',
+      recordId:  parseInt(id),
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] || null,
+    });
+
     return sendSuccess(res, { id: parseInt(id), is_active: false }, 'User deactivated successfully.');
   } catch (err) {
     console.error('[UserController] deactivateUser error:', err.message);

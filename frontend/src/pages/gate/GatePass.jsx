@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Printer, ArrowLeft, ShieldCheck, Sprout } from "lucide-react";
+import { Printer, ArrowLeft, ShieldCheck } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 
@@ -60,19 +60,37 @@ export default function GatePass() {
  <div className="absolute top-0 right-0 w-32 h-32 bg-mixed-bg rounded-bl-full -mr-4 -mt-4 print:bg-gray-100"></div>
  <div className="absolute bottom-0 left-0 w-24 h-24 bg-accent/5 rounded-tr-full -ml-4 -mb-4 print:hidden"></div>
 
- {/* Header */}
- <div className="flex flex-col items-center mb-8 relative z-10 border-b border-subtle pb-6">
- <div className="w-12 h-12 rounded-full bg-bg-primary flex items-center justify-center mb-3 text-accent shadow-soft-sm">
- <Sprout className="w-6 h-6" strokeWidth={1.5} />
- </div>
- <h2 className="text-2xl font-bold text-loud uppercase tracking-widest text-center">
- Visitor Pass
- </h2>
- <div className="mt-2 inline-flex items-center gap-1.5 btn-secondary text-xs font-mono text-loud font-medium shadow-soft-sm">
- <ShieldCheck className="w-3.5 h-3.5 text-accent" />
- {passData.pass_number}
- </div>
- </div>
+  {/* Header — institutional letterhead */}
+  <div className="flex flex-col items-center mb-8 relative z-10 border-b border-subtle pb-6">
+
+    {/* Pass title — hero */}
+    <h2 className="text-4xl font-black uppercase tracking-widest text-loud text-center mb-1">
+      Gate Pass
+    </h2>
+
+    {/* Divider rule */}
+    <div className="w-full flex items-center gap-2 my-3">
+      <div className="flex-1 h-px" style={{ background: 'var(--color-accent)' }} />
+      <span className="text-[9px] font-black uppercase tracking-[0.3em] px-2" style={{ color: 'var(--color-accent)' }}>
+        Visitor Management System
+      </span>
+      <div className="flex-1 h-px" style={{ background: 'var(--color-accent)' }} />
+    </div>
+
+    {/* Org name — small label below divider */}
+    <p className="text-[10px] uppercase tracking-[0.2em] text-faint font-semibold mb-0.5">
+      Govt. of Odisha
+    </p>
+    <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted text-center">
+      Odisha Hydro Power Corporation Ltd.
+    </p>
+
+    {/* Pass number */}
+    <div className="inline-flex items-center gap-1.5 btn-secondary text-xs font-mono text-loud font-medium shadow-soft-sm mt-3">
+      <ShieldCheck className="w-3.5 h-3.5 text-accent" />
+      {passData.pass_number}
+    </div>
+  </div>
 
  {/* Main Content */}
  <div className="relative z-10 grid grid-cols-1 gap-8">
@@ -85,6 +103,11 @@ export default function GatePass() {
  <p className="text-3xl font-bold text-loud leading-tight mb-4">
  {passData.visitor_name}
  </p>
+ {passData.visitor_phone && (
+ <p className="text-sm text-muted mb-4 flex items-center gap-1">
+ 📞 {passData.visitor_phone}
+ </p>
+ )}
 
  <div className="space-y-3">
  <div>
@@ -105,7 +128,7 @@ export default function GatePass() {
  <div className="shrink-0 p-2 bg-white rounded-md shadow-soft-sm border border-subtle">
  {passData.qr_code_path ? (
  <img
- src={`http://localhost:5000/${passData.qr_code_path}`}
+ src={`${import.meta.env.VITE_API_URL?.replace('/api', '') ?? 'http://localhost:5000'}/${passData.qr_code_path}`}
  alt="QR Code"
  className="w-24 h-24 object-contain"
  crossOrigin="anonymous"
@@ -119,28 +142,28 @@ export default function GatePass() {
  </div>
 
  {/* Bottom Row: Validity */}
- <div className="bg-bg-primary rounded-md p-4 border border-subtle mt-2">
- <div className="grid grid-cols-2 gap-4">
- <div>
- <p className="text-[10px] uppercase tracking-widest text-faint mb-1">
- Valid Date
- </p>
- <p className="font-medium text-loud">
- {new Date(passData.visit_date).toLocaleDateString()}
- </p>
- </div>
- <div>
- <p className="text-[10px] uppercase tracking-widest text-faint mb-1">
- Valid Time
- </p>
- <p className="font-medium text-loud">
- {passData.visit_start_time
- ? passData.visit_start_time.substring(0, 5)
- : "All Day"}
- </p>
- </div>
- </div>
- </div>
+  <div className="bg-bg-primary rounded-md p-4 border border-subtle mt-2">
+  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+  <div>
+  <p className="text-[10px] uppercase tracking-widest text-faint mb-1">Visit Date</p>
+  <p className="font-medium text-loud text-sm">
+  {new Date(passData.visit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+  </p>
+  </div>
+  <div>
+  <p className="text-[10px] uppercase tracking-widest text-faint mb-1">Start Time</p>
+  <p className="font-medium text-loud text-sm">
+  {passData.visit_start_time ? passData.visit_start_time.substring(0, 5) : '—'}
+  </p>
+  </div>
+  <div>
+  <p className="text-[10px] uppercase tracking-widest text-faint mb-1">End Time</p>
+  <p className="font-medium text-loud text-sm">
+  {passData.visit_end_time ? passData.visit_end_time.substring(0, 5) : '—'}
+  </p>
+  </div>
+  </div>
+  </div>
  </div>
 
  {/* Footer */}

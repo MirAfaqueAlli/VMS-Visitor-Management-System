@@ -13,10 +13,28 @@ import {
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import StatusBadge from "../../components/shared/StatusBadge";
+import useAuth from "../../hooks/useAuth";
+
+const CATEGORY_LABELS = {
+  EMPLOYEE_VISIT:    'Employee Visit',
+  VENDOR:            'Vendor',
+  SPOT:              'Walk-in',
+  PERSONAL_VISIT:    'Personal Visit',
+};
+
+// Show 'Public Request' when the record came from the public self-registration form
+function getCategoryLabel(request) {
+  if (request.request_source === 'PUBLIC') return 'Public Request';
+  return CATEGORY_LABELS[request.visit_category] ?? request.visit_category;
+}
 
 export default function RequestList() {
  const [requests, setRequests] = useState([]);
  const [loading, setLoading] = useState(true);
+ const { user } = useAuth();
+
+ // Only security/admin/receptionist can view the gate pass
+ const canViewPass = ['security', 'unit_admin', 'super_admin', 'receptionist'].includes(user?.role_type);
 
  // Filters
  const [statusFilter, setStatusFilter] = useState("");
@@ -115,10 +133,12 @@ export default function RequestList() {
  }}
  className="block w-full sm:w-48 pl-4 pr-10 py-3 bg-bg-primary border border-subtle rounded-full text-loud focus:outline-none focus:ring-2 focus:ring-accent appearance-none cursor-pointer"
  >
- <option value="">All Statuses</option>
- <option value="PENDING">Pending</option>
- <option value="APPROVED">Approved</option>
- <option value="REJECTED">Rejected</option>
+  <option value="">All Statuses</option>
+  <option value="PENDING">Pending</option>
+  <option value="APPROVED">Approved</option>
+  <option value="REJECTED">Rejected</option>
+  <option value="COMPLETED">Completed</option>
+  <option value="CANCELLED">Cancelled</option>
  </select>
  <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
  <Filter className="h-4 w-4 text-faint" />
@@ -174,16 +194,22 @@ export default function RequestList() {
  key={request.id}
  className="border-b border-subtle hover:bg-bg-primary/50 transition-colors duration-300"
  >
- <td className="py-4 px-4">
- <div className="font-medium text-loud">
- {request.Visitor?.full_name ||
- request.visitor_name ||
- "N/A"}
- </div>
- <div className="mt-1">
- <StatusBadge status={request.visit_category} />
- </div>
- </td>
+  <td className="py-4 px-4">
+  <div className="font-medium text-loud">
+  {request.visitor_name || request.company_name || "N/A"}
+  </div>
+  {request.visitor_phone && (
+  <div className="text-xs text-faint mt-0.5">{request.visitor_phone}</div>
+  )}
+  <div className="mt-1">
+  <span
+    className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
+    style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
+  >
+    {getCategoryLabel(request)}
+  </span>
+  </div>
+  </td>
  <td className="py-4 px-4">
  <div className="text-loud flex items-center gap-1.5">
  <UserCheck
@@ -217,18 +243,18 @@ export default function RequestList() {
  </td>
  <td className="py-4 px-4 text-right">
  <div className="flex justify-end gap-2">
- {request.status === "APPROVED" &&
- request.pass_number && (
- <button
- onClick={() =>
- navigate(`/gate/pass/${request.pass_number}`)
- }
- className="inline-flex items-center justify-center px-3 h-8 rounded-full bg-mixed-bg text-accent hover:bg-accent hover:text-white transition-colors duration-300 text-xs font-semibold uppercase tracking-wider"
- title="View Gate Pass"
- >
- Pass
- </button>
- )}
+ {canViewPass && request.status === "APPROVED" &&
+  request.pass_number && (
+  <button
+  onClick={() =>
+  navigate(`/gate/pass/${request.pass_number}`)
+  }
+  className="inline-flex items-center justify-center px-3 h-8 rounded-full bg-mixed-bg text-accent hover:bg-accent hover:text-white transition-colors duration-300 text-xs font-semibold uppercase tracking-wider"
+  title="View Gate Pass"
+  >
+  Pass
+  </button>
+  )}
  <button
  onClick={() => navigate(`/requests/${request.id}`)}
  className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300"

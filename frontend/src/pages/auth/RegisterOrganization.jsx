@@ -4,6 +4,8 @@ import { Building2, User, ChevronRight, ChevronLeft, Shield, CheckCircle2 } from
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
+import PasswordStrength from "../../components/PasswordStrength";
+import { validatePassword } from "../../utils/passwordValidator";
 
 const STEPS = [
   { id: 1, label: "Organization", icon: Building2 },
@@ -71,8 +73,9 @@ export default function RegisterOrganization() {
       toast.error("Passwords do not match.");
       return;
     }
-    if (adminData.password.length < 8) {
-      toast.error("Password must be at least 8 characters.");
+    const { valid: pwValid } = validatePassword(adminData.password);
+    if (!pwValid) {
+      toast.error("Password does not meet the strength requirements.");
       return;
     }
 
@@ -105,7 +108,7 @@ export default function RegisterOrganization() {
         className="fixed inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse 80% 60% at 50% -10%, rgba(245,158,11,0.08) 0%, transparent 70%)",
+            "radial-gradient(ellipse 80% 60% at 50% -10%, rgba(59,130,246,0.08) 0%, transparent 70%)",
         }}
       />
 
@@ -180,7 +183,7 @@ export default function RegisterOrganization() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-loud uppercase tracking-wider">
                     Short Code *
@@ -216,7 +219,7 @@ export default function RegisterOrganization() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-loud uppercase tracking-wider">City</label>
                   <input type="text" name="city" value={orgData.city} onChange={handleOrgChange} className="vms-input w-full" placeholder="e.g. New Delhi" />
@@ -227,7 +230,7 @@ export default function RegisterOrganization() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Phone</label>
                   <input type="tel" name="phone" value={orgData.phone} onChange={handleOrgChange} className="vms-input w-full" placeholder="Org contact no." />
@@ -275,7 +278,7 @@ export default function RegisterOrganization() {
                 <input type="text" name="full_name" required value={adminData.full_name} onChange={handleAdminChange} className="vms-input w-full" placeholder="Your full name" />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Email *</label>
                   <input type="email" name="email" required value={adminData.email} onChange={handleAdminChange} className="vms-input w-full" placeholder="admin@org.com" />
@@ -286,7 +289,7 @@ export default function RegisterOrganization() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Employee Code *</label>
                   <input type="text" name="employee_code" required value={adminData.employee_code} onChange={handleAdminChange} className="vms-input w-full" placeholder="e.g. EMP001" />
@@ -297,10 +300,11 @@ export default function RegisterOrganization() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Password *</label>
-                  <input type="password" name="password" required minLength={8} value={adminData.password} onChange={handleAdminChange} className="vms-input w-full" placeholder="Min 8 characters" />
+                  <input type="password" name="password" required minLength={8} value={adminData.password} onChange={handleAdminChange} className="vms-input w-full" placeholder="Min 8 chars, uppercase, number, symbol" />
+                  <PasswordStrength password={adminData.password} />
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Confirm Password *</label>
@@ -311,7 +315,7 @@ export default function RegisterOrganization() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !validatePassword(adminData.password).valid}
               className="btn-primary w-full flex items-center justify-center gap-2 py-3 text-sm font-semibold disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {loading ? (

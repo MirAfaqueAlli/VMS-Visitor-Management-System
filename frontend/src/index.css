@@ -17,9 +17,9 @@
     --color-text-loud:  #0f172a;
 
     /* Brand */
-    --color-accent:      #f59e0b;   /* amber-500 */
-    --color-accent-dark: #d97706;   /* amber-600 */
-    --color-primary:     #2563eb;   /* blue-600 */
+    --color-accent:      #3b82f6;   /* blue-500  */
+    --color-accent-dark: #2563eb;   /* blue-600  */
+    --color-primary:     #3b82f6;   /* blue-600  */
 
     /* Status */
     --color-success: #16a34a;
@@ -41,12 +41,12 @@
     --color-lightColor:    #f1f5f9;   /* slate-100 */
     --color-surface-hover: #f1f5f9;
 
-    /* Sidebar (dark) */
-    --sidebar-bg:          #0f172a;
-    --sidebar-text:        #94a3b8;
-    --sidebar-active-bg:   #f59e0b;
-    --sidebar-active-text: #0f172a;
-    --sidebar-hover:       rgba(255,255,255,0.06);
+    /* Sidebar (dark navy) */
+    --sidebar-bg:          #0f1f3d;
+    --sidebar-text:        #8ba0c4;
+    --sidebar-active-bg:   #3b82f6;
+    --sidebar-active-text: #ffffff;
+    --sidebar-hover:       rgba(255,255,255,0.07);
     --sidebar-border:      rgba(255,255,255,0.07);
     --sidebar-width:       220px;
 
@@ -62,6 +62,61 @@
 
     /* Overlay */
     --color-overlay: rgba(0,0,0,0.4);
+  }
+
+  /* ── Dark mode tokens ─────────────────────────────────────────────────── */
+  [data-theme="dark"] {
+    /* Backgrounds */
+    --color-bg-primary:   #0f172a;   /* deep navy */
+    --color-bg-secondary: #1e293b;   /* card / panel */
+
+    /* Text */
+    --color-text:       #f1f5f9;   /* slate-100 */
+    --color-text-muted: #94a3b8;   /* slate-400 */
+    --color-text-faint: #475569;   /* slate-600 */
+    --color-text-loud:  #f8fafc;   /* slate-50  */
+
+    /* Brand — blue accent, lighter shade on dark */
+    --color-accent:      #60a5fa;
+    --color-accent-dark: #93c5fd;
+    --color-primary:     #60a5fa;  /* blue-400 — brighter on dark */
+
+    /* Status */
+    --color-success: #4ade80;   /* green-400 */
+    --color-warning: #fbbf24;   /* amber-400 */
+    --color-error:   #f87171;   /* red-400   */
+    --color-info:    #38bdf8;   /* sky-400   */
+
+    /* Status backgrounds — semi-transparent on dark */
+    --color-success-bg: rgba(74,222,128,0.08);
+    --color-warning-bg: rgba(251,191,36,0.08);
+    --color-danger-bg:  rgba(248,113,113,0.08);
+    --color-info-bg:    rgba(56,189,248,0.08);
+    --color-mixed-bg:   rgba(167,139,250,0.10);
+    --color-mixed:      #a78bfa;   /* violet-400 */
+
+    /* Borders & surfaces */
+    --color-border:        #334155;   /* slate-700 */
+    --color-border-subtle: #1e293b;
+    --color-gray:          #334155;
+    --color-lightColor:    #1e293b;
+    --color-surface-hover: #334155;
+
+    /* Sidebar — slightly deeper than page bg */
+    --sidebar-bg:          #0a1830;
+    --sidebar-text:        #6b84a8;
+    --sidebar-active-bg:   #3b82f6;
+    --sidebar-active-text: #ffffff;
+    --sidebar-hover:       rgba(255,255,255,0.06);
+    --sidebar-border:      rgba(255,255,255,0.06);
+
+    /* Shadows — more visible on dark */
+    --shadow-sm:   0 1px 2px rgba(0,0,0,0.3);
+    --shadow-card: 0 1px 4px rgba(0,0,0,0.4);
+    --shadow-hover:0 4px 16px rgba(0,0,0,0.5);
+
+    /* Overlay */
+    --color-overlay: rgba(0,0,0,0.6);
   }
 
   html {
@@ -94,6 +149,10 @@
     background-color: var(--color-bg-secondary);
     border: 1px solid var(--color-border);
   }
+  input::placeholder, textarea::placeholder {
+    color: var(--color-text-faint);
+    opacity: 0.5;
+  }
 
   /* Scrollbar */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -101,7 +160,94 @@
     background: var(--color-border);
     border-radius: 9999px;
   }
+
+  /* ── Responsive Layout ─────────────────────────────────────────────── */
+
+  /* Prevent body scroll when mobile sidebar is open */
+  body.sidebar-overlay-open { overflow: hidden; }
+
+  /* Main content: full-width on mobile, offset on desktop */
+  .main-content-area {
+    transition: margin-left 250ms ease;
+  }
+
+  /* On mobile (< 1024px): sidebar overlays, so main content takes full width */
+  @media (max-width: 1023px) {
+    .main-content-area {
+      margin-left: 0 !important;
+    }
+  }
+
+  /* Navbar header: offset by sidebar on desktop, full-width on mobile */
+  .navbar-header {
+    left: var(--sidebar-width, 220px);
+    transition: left 250ms ease;
+  }
+  @media (max-width: 1023px) {
+    .navbar-header {
+      left: 0 !important;
+    }
+  }
+
+
+  /* Sidebar: hidden off-screen on mobile, always visible on desktop */
+  .sidebar-panel {
+    transform: translateX(-100%);
+    transition: transform 250ms ease;
+  }
+  .sidebar-panel.is-open {
+    transform: translateX(0);
+  }
+  @media (min-width: 1024px) {
+    .sidebar-panel {
+      transform: translateX(0) !important;
+    }
+  }
+
+  /* Responsive table utility */
+  .table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Responsive page header utility */
+  .page-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  @media (min-width: 640px) {
+    .page-header {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+    }
+  }
+
+  /* Responsive stat card grid utility */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  @media (min-width: 640px) {
+    .stat-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .stat-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+
+  /* Mobile-friendly form row utility */
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  @media (min-width: 640px) {
+    .form-row-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .form-row-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
 }
+
 
 @layer components {
 
@@ -159,10 +305,11 @@
     transition: border-color 150ms ease, box-shadow 150ms ease;
     outline: none;
   }
-  .vms-input::placeholder { color: var(--color-text-faint); }
+  .vms-input::placeholder { color: var(--color-text-faint); opacity: 0.5; }
+
   .vms-input:focus {
     border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px rgba(245,158,11,0.12);
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
     background-color: var(--color-bg-secondary);
   }
   /* Backward compat */
@@ -178,10 +325,11 @@
     transition: border-color 150ms ease;
     outline: none;
   }
-  .botanical-input::placeholder { color: var(--color-text-faint); }
+  .botanical-input::placeholder { color: var(--color-text-faint); opacity: 0.5; }
+
   .botanical-input:focus {
     border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px rgba(245,158,11,0.12);
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
   }
 
   /* ── Buttons ─────────────────────────────────────────────────────────── */
@@ -192,7 +340,7 @@
     padding: 0.4375rem 1rem;
     border-radius: var(--radius-sm);
     background-color: var(--color-accent);
-    color: #0f172a;
+    color: #ffffff;
     font-size: 0.8125rem;
     font-weight: 600;
     font-family: var(--font-sans);
@@ -202,7 +350,7 @@
   }
   .btn-primary:hover {
     opacity: 0.9;
-    box-shadow: 0 4px 10px rgba(245,158,11,0.28);
+    box-shadow: 0 4px 10px rgba(59,130,246,0.35);
   }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -432,4 +580,141 @@
   .bg-pastel-green  { background-color: #f0fdf4; }
   .bg-pastel-blue   { background-color: #eff6ff; }
   .bg-pastel-orange { background-color: #fffbeb; }
+}
+
+/* ── Global keyframe animations ─────────────────────────────────────────── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes notif-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Applied to the notification panel wrapper so it animates on open */
+[data-notif-panel] {
+  animation: notif-slide-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform-origin: top right;
+}
+
+/* ── Responsive: mobile & tablet ─────────────────────────────────────────── */
+
+/*
+ * < 1024px (lg breakpoint):
+ *   - Sidebar slides off-screen by default (translateX(-100%)).
+ *   - AppLayout controls isOpen; inline transform:translateX(0) overrides this.
+ *   - Navbar + main content fill full viewport width (no sidebar offset).
+ *   - Notification panel is repositioned to fixed so it anchors to the
+ *     viewport right edge and never overflows off the left of the screen.
+ */
+@media (max-width: 1023px) {
+  /* Sidebar hidden off-canvas by default — BUT allow is-open to show it */
+  .sidebar-panel {
+    transform: translateX(-100%) !important;
+    transition: transform 250ms ease;
+  }
+  .sidebar-panel.is-open {
+    transform: translateX(0) !important;
+  }
+
+  /* Navbar spans full width */
+  .navbar-header {
+    left: 0 !important;
+  }
+
+  /* Main content fills full width */
+  .main-content-area {
+    margin-left: 0 !important;
+  }
+
+  /*
+   * Notification panel: use fixed positioning so it anchors to
+   * the viewport's right edge and never clips off the left of the screen.
+   */
+  [data-notif-panel] {
+    position: fixed !important;
+    top: 48px !important;        /* just below the 40px navbar + 8px gap */
+    right: 8px !important;
+    left: auto !important;
+    z-index: 9999 !important;
+    margin-top: 0 !important;
+  }
+}
+
+/* Small phones (< 768px) */
+@media (max-width: 767px) {
+  body.sidebar-overlay-open { overflow: hidden; }
+}
+
+/* ── Dark mode overrides for hardcoded-colour elements ──────────────────── */
+[data-theme="dark"] {
+  /* Scrollbar */
+  color-scheme: dark;
+
+  /* Badge colours adapted for dark backgrounds */
+  .badge-scheduled { background-color: rgba(29,78,216,0.15); color: #93c5fd; border-color: rgba(29,78,216,0.25); }
+  .badge-active    { background-color: rgba(21,128,61,0.15);  color: #86efac; border-color: rgba(21,128,61,0.25); }
+  .badge-approved  { background-color: rgba(21,128,61,0.15);  color: #86efac; border-color: rgba(21,128,61,0.25); }
+  .badge-pending   { background-color: rgba(161,98,7,0.15);   color: #fcd34d; border-color: rgba(161,98,7,0.25); }
+  .badge-completed { background-color: rgba(71,85,105,0.2);   color: #94a3b8; border-color: rgba(71,85,105,0.3); }
+  .badge-rejected  { background-color: rgba(185,28,28,0.15);  color: #fca5a5; border-color: rgba(185,28,28,0.25); }
+  .badge-cancelled { background-color: rgba(71,85,105,0.2);   color: #94a3b8; border-color: rgba(71,85,105,0.3); }
+  .badge-emp       { background-color: rgba(29,78,216,0.15);  color: #93c5fd; border-color: rgba(29,78,216,0.25); }
+  .badge-vendor    { background-color: rgba(91,33,182,0.15);  color: #c4b5fd; border-color: rgba(91,33,182,0.25); }
+  .badge-spot      { background-color: rgba(185,28,28,0.15);  color: #fca5a5; border-color: rgba(185,28,28,0.25); }
+  .badge-prior     { background-color: rgba(21,128,61,0.15);  color: #86efac; border-color: rgba(21,128,61,0.25); }
+  .badge-issued    { background-color: rgba(29,78,216,0.15);  color: #93c5fd; border-color: rgba(29,78,216,0.25); }
+  .badge-used      { background-color: rgba(21,128,61,0.15);  color: #86efac; border-color: rgba(21,128,61,0.25); }
+  .badge-expired   { background-color: rgba(71,85,105,0.2);   color: #94a3b8; border-color: rgba(71,85,105,0.3); }
+
+  /* Pastel stat card backgrounds */
+  .bg-pastel-pink   { background-color: rgba(219,39,119,0.08); }
+  .bg-pastel-purple { background-color: rgba(124,58,237,0.08); }
+  .bg-pastel-green  { background-color: rgba(22,163,74,0.08);  }
+  .bg-pastel-blue   { background-color: rgba(37,99,235,0.08);  }
+  .bg-pastel-orange { background-color: rgba(245,158,11,0.08); }
+
+  /* Table rows */
+  .vms-table thead tr { background-color: var(--color-bg-secondary); }
+  .vms-table tbody td { color: var(--color-text-muted); }
+
+  /* Input & textarea global dark fill */
+  input, textarea, select {
+    background-color: var(--color-bg-secondary);
+    border-color: var(--color-border);
+    color: var(--color-text);
+  }
+  input::placeholder, textarea::placeholder {
+    color: var(--color-text-faint);
+    opacity: 0.6;
+  }
+
+  /* vms-input dark */
+  .vms-input {
+    background-color: var(--color-bg-secondary);
+    border-color: var(--color-border);
+    color: var(--color-text);
+  }
+  .vms-input:focus {
+    background-color: var(--color-bg-primary);
+  }
+
+  /* btn-secondary dark */
+  .btn-secondary {
+    background-color: var(--color-bg-secondary);
+    border-color: var(--color-border);
+    color: var(--color-text-muted);
+  }
+  .btn-secondary:hover {
+    background-color: var(--color-surface-hover);
+    color: var(--color-text-loud);
+  }
 }

@@ -2,13 +2,16 @@
 'use strict';
 
 const express = require('express');
-const router = express.Router();
-const approvalController = require('../controllers/approval.controller');
-const { protect } = require('../middlewares/auth.middleware');
+const router  = express.Router();
+const ctrl    = require('../controllers/approval.controller');
+const { protect }   = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
 
-router.get('/inbox',       protect, authorize('org_admin', 'dept_admin', 'employee'), approvalController.getInbox);
-router.put('/:id/approve', protect, authorize('org_admin', 'dept_admin', 'employee'), approvalController.approveRequest);
-router.put('/:id/reject',  protect, authorize('org_admin', 'dept_admin', 'employee'), approvalController.rejectRequest);
+// Inbox: any authenticated user who can be a host + auditors
+router.get('/inbox', protect, authorize('super_admin', 'unit_admin', 'employee', 'unit_auditor', 'global_auditor'), ctrl.getInbox);
+
+// Approve / Reject: host, unit_admin, super_admin
+router.put('/:id/approve', protect, authorize('super_admin', 'unit_admin', 'employee'), ctrl.approveRequest);
+router.put('/:id/reject',  protect, authorize('super_admin', 'unit_admin', 'employee'), ctrl.rejectRequest);
 
 module.exports = router;

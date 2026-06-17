@@ -55,14 +55,26 @@ export default function VisitorForm() {
  data.append("photo", photo);
  }
 
+ // Debug: log what's being sent
+ console.log('[VisitorForm] Submitting fields:', Object.fromEntries(data.entries()));
+
  await apiClient.post("/visitors", data);
 
  toast.success("Visitor registered successfully");
  navigate("/visitors");
  } catch (error) {
- toast.error(
- error.response?.data?.message || "Failed to register visitor",
- );
+ console.error('[VisitorForm] Error:', error.response?.data);
+ const zodErrors = error.response?.data?.errors;
+ if (Array.isArray(zodErrors) && zodErrors.length > 0) {
+   const details = zodErrors
+     .map((e) => `${e.path?.join('.') || 'field'}: ${e.message}`)
+     .join(' | ');
+   toast.error(`Validation failed — ${details}`, { duration: 8000 });
+ } else {
+   toast.error(
+     error.response?.data?.message || "Failed to register visitor"
+   );
+ }
  } finally {
  setLoading(false);
  }
@@ -81,9 +93,9 @@ export default function VisitorForm() {
 
  <form
  onSubmit={handleSubmit}
- className="vms-card rounded-md p-8 sm:p-12 shadow-card"
+ className="vms-card rounded-md p-5 sm:p-8 shadow-card"
  >
- <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+ <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
  {/* Photo Upload Column */}
  <div className="lg:col-span-4 flex flex-col items-center">
  <div className="w-full aspect-[3/4] max-w-[240px] rounded-[40px] overflow-hidden bg-bg-primary border border-subtle flex flex-col items-center justify-center relative shadow-soft-sm transition-transform duration-500 hover:shadow-hover group">
@@ -166,16 +178,18 @@ export default function VisitorForm() {
 
  <div className="space-y-2">
  <label className="block text-sm font-medium text-loud">
- Phone Number *
+ Phone Number * <span className="text-xs text-faint font-normal normal-case tracking-normal">(WhatsApp preferred)</span>
  </label>
  <input
  type="tel"
  name="phone"
  required
+ minLength={10}
+ maxLength={15}
  value={formData.phone}
  onChange={handleInputChange}
  className="w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300"
- placeholder="+1 (555) 000-0000"
+ placeholder="+91 98765 43210"
  />
  </div>
 
@@ -260,18 +274,18 @@ export default function VisitorForm() {
  ></textarea>
  </div>
 
- <div className="pt-8 border-t border-subtle flex justify-end gap-4">
+ <div className="pt-6 sm:pt-8 border-t border-subtle flex flex-col sm:flex-row sm:justify-end gap-3">
  <button
  type="button"
  onClick={() => navigate("/visitors")}
- className="btn-secondary text-accent uppercase tracking-widest text-sm font-medium hover:bg-mixed-bg transition-colors duration-300"
+ className="btn-secondary text-accent uppercase tracking-widest text-sm font-medium hover:bg-mixed-bg transition-colors duration-300 w-full sm:w-auto justify-center"
  >
  Cancel
  </button>
  <button
  type="submit"
  disabled={loading}
- className="btn-primary text-white uppercase tracking-widest text-sm font-medium hover:bg-accent transition-colors duration-300 shadow-card hover:shadow-hover disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2"
+ className="btn-primary text-white uppercase tracking-widest text-sm font-medium hover:bg-accent transition-colors duration-300 shadow-card hover:shadow-hover disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2 w-full sm:w-auto justify-center"
  >
  {loading ? (
  "Saving..."

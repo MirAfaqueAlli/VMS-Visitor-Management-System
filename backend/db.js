@@ -1,14 +1,13 @@
-const mysql = require('mysql2/promise');
-require('dotenv').config();
+// backend/db.js
+//
+// DEPRECATED — backward-compatibility shim only.
+//
+// New code should use `req.db` (injected by auth.middleware) or import
+// `centralPool` / `getPool()` directly from './services/dbManager'.
+//
+// This file exists so that any legacy import of `require('./db')` still works.
+'use strict';
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+const { centralPool } = require('./services/dbManager');
 
-module.exports = pool;
+module.exports = centralPool;

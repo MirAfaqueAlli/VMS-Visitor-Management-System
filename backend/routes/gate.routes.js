@@ -15,7 +15,7 @@ const gateController = require('../controllers/gate.controller');
 router.get(
   '/dashboard',
   protect,
-  authorize('org_admin', 'dept_admin', 'security', 'receptionist', 'employee'),
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist', 'employee', 'unit_auditor', 'global_auditor'),
   gateController.getDashboard
 );
 
@@ -23,16 +23,15 @@ router.get(
 router.get(
   '/active',
   protect,
-  authorize('org_admin', 'dept_admin', 'security', 'receptionist'),
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist', 'unit_auditor', 'global_auditor'),
   gateController.getActiveVisitors
 );
 
 // POST /api/gate/checkin/:requestId
-// Multer errors are caught inline before the controller runs.
 router.post(
   '/checkin/:requestId',
   protect,
-  authorize('org_admin', 'security', 'receptionist'),
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
   (req, res, next) => {
     uploadVisitorPhoto(req, res, (err) => {
       if (err) return sendError(res, err.message, 400);
@@ -46,7 +45,22 @@ router.post(
 router.post(
   '/checkout',
   protect,
-  authorize('org_admin', 'security', 'receptionist'),
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  gateController.checkOut
+);
+
+// POST /api/gate/checkout/qr  — MUST be before /:visitLogId to avoid param clash
+router.post(
+  '/checkout/qr',
+  protect,
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  gateController.checkOutByQR
+);
+
+router.post(
+  '/checkout/:visitLogId',
+  protect,
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
   gateController.checkOut
 );
 
@@ -54,7 +68,7 @@ router.post(
 router.post(
   '/reject',
   protect,
-  authorize('org_admin', 'security'),
+  authorize('super_admin', 'unit_admin', 'security'),
   gateController.rejectAtGate
 );
 

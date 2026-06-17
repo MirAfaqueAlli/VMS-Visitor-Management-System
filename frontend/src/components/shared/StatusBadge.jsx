@@ -7,11 +7,8 @@ const STATUS_CLASSES = {
   CANCELLED: 'badge badge-cancelled',
   COMPLETED: 'badge badge-completed',
   ACTIVE:    'badge badge-active',
-  // Visitor types:
-  EMP:       'badge badge-emp',
   VENDOR:    'badge badge-vendor',
   SPOT:      'badge badge-spot',
-  PRIOR:     'badge badge-prior',
   // Gate pass:
   ISSUED:    'badge badge-issued',
   USED:      'badge badge-used',

@@ -6,31 +6,38 @@ const router  = express.Router();
 
 const { protect }   = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
+const ctrl          = require('../controllers/gatePass.controller');
 
-const gatePassController = require('../controllers/gatePass.controller');
-
-// POST /api/passes/generate/:requestId
+// POST /api/passes/generate/:requestId — manually generate/re-fetch a gate pass
 router.post(
   '/generate/:requestId',
   protect,
-  authorize('org_admin', 'dept_admin', 'security', 'receptionist'),
-  gatePassController.generatePass
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  ctrl.generatePass
 );
 
-// GET /api/passes/pass/:passNumber
+// GET /api/passes/pass/:passNumber — retrieve and mark as printed
 router.get(
   '/pass/:passNumber',
   protect,
-  authorize('org_admin', 'dept_admin', 'security', 'receptionist'),
-  gatePassController.getPass
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist', 'unit_auditor', 'global_auditor'),
+  ctrl.getPass
 );
 
-// GET /api/passes/
+// GET /api/passes — list all passes (with optional ?status=&date= filters)
 router.get(
   '/',
   protect,
-  authorize('org_admin', 'dept_admin', 'security'),
-  gatePassController.listPasses
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist', 'unit_auditor', 'global_auditor'),
+  ctrl.listPasses
+);
+
+// PUT /api/passes/:id/cancel
+router.put(
+  '/:id/cancel',
+  protect,
+  authorize('super_admin', 'unit_admin'),
+  ctrl.cancelPass
 );
 
 module.exports = router;
