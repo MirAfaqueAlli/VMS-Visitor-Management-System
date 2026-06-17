@@ -307,6 +307,7 @@ export default function GlobalUserManagement() {
           transform:  isOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 250ms ease',
           boxShadow:  '-8px 0 32px rgba(0,0,0,0.15)',
+          pointerEvents: isOpen ? 'auto' : 'none',
         }}
       >
         {/* Header */}
@@ -361,7 +362,7 @@ export default function GlobalUserManagement() {
           </div>
 
           <div>
-            <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Phone</label>
+            <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Phone <span style={{ fontSize: '10px', fontWeight: 400, letterSpacing: 0, textTransform: 'none', opacity: 0.6, marginLeft: '4px' }}>(WhatsApp preferred)</span></label>
             <input className={inputCls} value={form.phone} onChange={set('phone')} placeholder="+91 9000000000" />
           </div>
 
@@ -413,7 +414,7 @@ export default function GlobalUserManagement() {
           style={{ borderTop: '1px solid var(--color-border)' }}
         >
           <button className="btn-secondary flex-1" onClick={close} disabled={saving}>Cancel</button>
-          <button className="btn-primary flex-1" onClick={handleSubmit} disabled={saving}>
+          <button className="btn-primary flex-1" onClick={handleSubmit} disabled={saving || (!editUser && !validatePassword(form.password).valid)}>
             {saving ? (
               <span className="flex items-center gap-1.5 justify-center">
                 <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'rgba(15,23,42,0.2)', borderTopColor: '#0f172a' }} />

@@ -38,7 +38,7 @@ export default function AppLayout() {
 
       {/* Mobile backdrop — tapping it closes the sidebar */}
       <div
-        className={`fixed inset-0 z-20 lg:hidden transition-opacity duration-250 ${
+        className={`fixed inset-0 z-40 lg:hidden transition-opacity duration-250 ${
           sidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}
         style={{ background: 'rgba(0,0,0,0.5)' }}
@@ -48,6 +48,8 @@ export default function AppLayout() {
 
       <Sidebar isOpen={sidebarOpen} onClose={closeSidebar} />
 
+      <Navbar onMenuToggle={toggleSidebar} onBannerChange={setBannerVisible} />
+
       {/*
         On desktop (lg+): offset by sidebar width via inline style.
         On mobile: CSS rule makes margin-left: 0 override the inline style.
@@ -56,7 +58,6 @@ export default function AppLayout() {
         className="main-content-area"
         style={{ marginLeft: 'var(--sidebar-width, 220px)' }}
       >
-        <Navbar onMenuToggle={toggleSidebar} onBannerChange={setBannerVisible} />
         {/* pt-14 = navbar (40px). Extra space when banner is visible to avoid overlap. */}
         <main className={`${bannerVisible ? 'pt-20' : 'pt-14'} px-4 sm:px-5 pb-8 min-h-screen transition-[padding] duration-200`}>
           <Outlet />

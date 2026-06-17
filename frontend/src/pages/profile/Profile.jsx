@@ -242,9 +242,9 @@ export default function Profile() {
 
               <button
                 id="update-password-btn"
-                className="btn-primary w-full justify-center"
+                className="btn-primary w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handlePasswordChange}
-                disabled={pwLoading}
+                disabled={pwLoading || !validatePassword(newPassword).valid}
               >
                 {pwLoading ? 'Updating...' : 'Update Password'}
               </button>

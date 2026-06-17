@@ -55,17 +55,26 @@ const getISTDateString = (d = new Date()) => {
 const getInbox = async (req, res) => {
   try {
     const user = req.user;
-    if (user.role_type === 'super_admin' || user.role_type === 'global_auditor') {
+
+    // Super admins / global auditors on the central DB have no personal inbox.
+    // But when managing a unit (X-Unit-Db or X-Unit-Id header sent by the frontend),
+    // req.db is already switched to the unit pool — treat them like a unit_admin.
+    const isManagingUnit =
+      (user.role_type === 'super_admin' || user.role_type === 'global_auditor') &&
+      !!(req.headers['x-unit-db'] || req.headers['x-unit-id']);
+
+    if ((user.role_type === 'super_admin' || user.role_type === 'global_auditor') && !isManagingUnit) {
       return sendSuccess(res, [], 'Inbox fetched successfully.');
     }
 
     const conditions = ["vr.status = 'PENDING'"];
     const params     = [];
 
-    if (isUnitAdmin(user)) {
+    if (isUnitAdmin(user) || isManagingUnit) {
       // See all pending requests in their unit DB
 
     } else {
+
       // Regular employees see only requests where they are the host
       conditions.push('vr.host_user_id = ?');
       params.push(user.id);

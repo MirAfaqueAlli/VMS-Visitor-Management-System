@@ -760,17 +760,20 @@ function EmployeeDashboard() {
  );
 }
 
-/* ─── Sub-Component C: Admin Dashboard ───────────────────────────────────── */
-function AdminDashboard() {
+/* ─── Sub-Component C: Admin Dashboard ─────────────────────────────────── */
+function AdminDashboard({ unitName: unitNameProp } = {}) {
  const navigate = useNavigate();
+ const { activeUnit } = useAuth();
+ // Auto-detect unit context: explicit prop OR super admin's active managed unit
+ const unitName = unitNameProp ?? activeUnit?.name ?? null;
  const [dashData, setDashData] = useState(null);
  const [inbox, setInbox] = useState([]);
  const [pendingCount, setPendingCount] = useState(0);
  const [loading, setLoading] = useState(true);
 
  const fetchData = useCallback(async () => {
- setLoading(true);
- try {
+  setLoading(true);
+  try {
  const [dashRes, inboxRes, pendingRes] = await Promise.all([
  apiClient.get("/gate/dashboard"),
  apiClient.get("/approvals/inbox"),
@@ -861,13 +864,13 @@ function AdminDashboard() {
   />
  <div className="mb-10">
  <p className="text-[11px] tracking-widest uppercase text-accent mb-1 font-sans">
- Admin Overview
+  {unitName ? `Unit Operations` : 'Admin Overview'}
  </p>
  <h1 className="text-2xl font-bold text-loud">
- Operations <em className="italic">Command</em>
+  Operations <em className="italic">Command</em>
  </h1>
  <p className="text-faint mt-2">
- System-wide activity at a glance.
+  {unitName ? `Live activity for ${unitName}.` : 'System-wide activity at a glance.'}
  </p>
  </div>
 
@@ -1175,13 +1178,16 @@ function SuperAdminDashboard() {
 }
 
 
-/* ─── Root Dashboard Router ──────────────────────────────────────────────── */
+/* --- Root Dashboard Router ------------------------------------------------- */
 export default function Dashboard() {
-  const { hasRole, isSuperAdmin, isGlobalAuditor, activeUnit } = useAuth();
-  if ((isSuperAdmin || isGlobalAuditor) && !activeUnit) return <SuperAdminDashboard />;
-  if (hasRole("security", "receptionist"))              return <SecurityDashboard />;
-  if (hasRole("employee"))                              return <EmployeeDashboard />;
+  const { hasRole, isSuperAdmin, isGlobalAuditor } = useAuth();
+  // Super admins ALWAYS see their own system overview at /dashboard.
+  // The managed unit's dashboard is at /unit-dashboard in the sidebar.
+  if (isSuperAdmin || isGlobalAuditor)      return <SuperAdminDashboard />;
+  if (hasRole('security', 'receptionist'))  return <SecurityDashboard />;
+  if (hasRole('employee'))                  return <EmployeeDashboard />;
   return <AdminDashboard />;
 }
 
-
+// Named export: App.jsx uses AdminDashboard for the /unit-dashboard route
+export { AdminDashboard };

@@ -22,7 +22,8 @@ const changePasswordSchema = z.object({
 });
 
 router.post('/login',          validate(loginSchema),          authController.login);
-router.get('/me',              protect,                        authController.getMe);
-router.put('/change-password', protect, validate(changePasswordSchema), authController.changePassword);
+router.get ('/me',             protect,                        authController.getMe);
+router.post('/refresh',        protect,                        authController.refresh);
+router.put ('/change-password',protect, validate(changePasswordSchema), authController.changePassword);
 
 module.exports = router;

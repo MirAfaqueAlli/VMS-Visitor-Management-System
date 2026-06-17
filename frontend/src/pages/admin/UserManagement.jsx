@@ -11,7 +11,7 @@ import useAuth from "../../hooks/useAuth";
 import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
 
-// ── Role styling ──────────────────────────────────────────────────────────────
+// ── Role styling ────────────────────────────────────────────────────────────
 const ROLE_CONFIG = {
   super_admin:    { label: "Super Admin",    badgeClass: "bg-[#fef3c7] text-[#92400e]" },
   unit_admin:     { label: "Unit Admin",     badgeClass: "bg-[#fef3c7] text-[#92400e]" },
@@ -31,7 +31,7 @@ function RoleBadge({ role }) {
   );
 }
 
-// ── Slide-over form panel ─────────────────────────────────────────────────────
+// ── Slide-over form panel ───────────────────────────────────────────────────
 function UserSlideOver({
   isOpen, onClose, onSuccess, editUser,
   departments, isUnitAdmin, lockedDepartmentId, designations,
@@ -135,15 +135,22 @@ function UserSlideOver({
   return (
     <>
       {/* Backdrop */}
-      <div
-        className={`fixed inset-0 bg-overlay backdrop-blur-sm z-40 transition-opacity duration-300 ${isOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-        onClick={onClose}
-      />
+      {isOpen && (
+        <div
+          className="fixed inset-0 backdrop-blur-sm z-40 transition-opacity duration-300 opacity-100"
+          style={{ background: 'rgba(0,0,0,0.4)' }}
+          onClick={onClose}
+        />
+      )}
 
       {/* Panel */}
       <aside
-        className={`fixed right-0 top-0 h-full w-full max-w-md border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out ${isOpen ? "translate-x-0" : "translate-x-full"}`}
-        style={{ background: 'var(--color-bg-primary)' }}
+        className="fixed right-0 top-0 h-full w-full max-w-md border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out"
+        style={{
+          background: 'var(--color-bg-primary)',
+          transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
+          pointerEvents: isOpen ? 'auto' : 'none',
+        }}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-subtle">
@@ -213,7 +220,7 @@ function UserSlideOver({
               <input className={inputCls} type="email" value={form.email} onChange={set("email")} placeholder="priya@company.in" required autoComplete="off" />
             </div>
             <div>
-              <label className={labelCls}>Phone *</label>
+              <label className={labelCls}>Phone * <span className="text-[10px] text-faint normal-case font-normal tracking-normal">(WhatsApp preferred)</span></label>
               <input className={inputCls} type="tel" value={form.phone} onChange={set("phone")} placeholder="+91 9876543210" required autoComplete="off" />
             </div>
           </div>
@@ -270,7 +277,7 @@ function UserSlideOver({
                     onChange={set("department_id")}
                     required={!isNoDeptRole && form.role_type !== 'unit_admin'}
                   >
-                    <option value="">Select dept…</option>
+                    <option value="">Select dept...</option>
                     {departments.map(d => (
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}
@@ -300,7 +307,7 @@ function UserSlideOver({
                     ? "Select a department first"
                     : designations.length === 0
                     ? "No designations — add via Departments"
-                    : "Select designation…"}
+                    : "Select designation..."}
                 </option>
                 {designations.map(d => (
                   <option key={d.id} value={d.id}>{d.name}</option>
@@ -326,11 +333,11 @@ function UserSlideOver({
           <button
             type="submit"
             onClick={handleSubmit}
-            disabled={submitting || blockForNoDepts}
-            className="btn-primary text-xs py-2.5 px-6 flex items-center gap-2 disabled:opacity-60"
+            disabled={submitting || blockForNoDepts || (!isEdit && !validatePassword(form.password).valid)}
+            className="btn-primary text-xs py-2.5 px-6 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {submitting ? <Loader2 strokeWidth={2} className="w-3.5 h-3.5 animate-spin" /> : <Check strokeWidth={2} className="w-3.5 h-3.5" />}
-            {submitting ? "Saving…" : isEdit ? "Save Changes" : "Create User"}
+            {submitting ? "Saving..." : isEdit ? "Save Changes" : "Create User"}
           </button>
         </div>
       </aside>
@@ -338,7 +345,7 @@ function UserSlideOver({
   );
 }
 
-// ── Deactivate Confirm ────────────────────────────────────────────────────────
+// ── Deactivate Confirm ──────────────────────────────────────────────────────â”€â”€
 function DeactivateConfirm({ userId, userName, onConfirm, onCancel }) {
   const [busy, setBusy] = useState(false);
   const handleConfirm = async () => { setBusy(true); await onConfirm(userId); setBusy(false); };
@@ -357,7 +364,7 @@ function DeactivateConfirm({ userId, userName, onConfirm, onCancel }) {
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Main Page ───────────────────────────────────────────────────────────────
 export default function UserManagement() {
   const { user: currentUser, isUnitAdmin } = useAuth();
 
@@ -463,7 +470,7 @@ export default function UserManagement() {
           </button>
         </div>
 
-        {/* ── No departments advisory banner ──────────────────────────── */}
+        {/* ── No departments advisory banner ────────────────────────── */}
         {!loading && departments.length === 0 && (
           <div
             className="flex items-start gap-3 px-4 py-4 mb-6 rounded-lg"
@@ -503,7 +510,7 @@ export default function UserManagement() {
               <input
                 type="text"
                 className="block w-full pl-11 pr-4 py-3 bg-bg-primary border border-subtle rounded-full text-loud placeholder-faint focus:outline-none focus:ring-2 focus:ring-accent transition-all duration-300"
-                placeholder="Search by name, email, or employee code…"
+                placeholder="Search by name, email, or employee code..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />

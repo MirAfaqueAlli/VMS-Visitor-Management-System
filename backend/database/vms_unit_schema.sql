@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS visit_requests (
     visitor_email     VARCHAR(100) NULL,
     requester_user_id INT          NULL,
     host_user_id      INT          NOT NULL,
-    department_id     INT          NOT NULL,
+    department_id     INT          NULL,
     unit_id           INT          NOT NULL,
     target_unit_id    INT          NULL,
     visit_category    ENUM('EMPLOYEE_VISIT','VENDOR','PRIOR','SPOT','PERSONAL_VISIT',
@@ -118,7 +118,8 @@ CREATE TABLE IF NOT EXISTS visit_requests (
     created_at        TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (visitor_id)        REFERENCES visitors(id),
-    FOREIGN KEY (requester_user_id) REFERENCES users(id),
+    -- requester_user_id has NO FK: it may hold a cross-unit user ID that
+    -- does not exist in this unit's users table (EMPLOYEE_VISIT cross-unit).
     FOREIGN KEY (host_user_id)      REFERENCES users(id),
     FOREIGN KEY (department_id)     REFERENCES departments(id),
     FOREIGN KEY (approved_by)       REFERENCES users(id)
@@ -133,8 +134,9 @@ CREATE TABLE IF NOT EXISTS approval_history (
     action           ENUM('PENDING','APPROVED','REJECTED','CANCELLED') DEFAULT 'PENDING',
     remarks          TEXT,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (visit_request_id) REFERENCES visit_requests(id) ON DELETE CASCADE,
-    FOREIGN KEY (acted_by_user_id) REFERENCES users(id)
+    FOREIGN KEY (visit_request_id) REFERENCES visit_requests(id) ON DELETE CASCADE
+    -- acted_by_user_id has NO FK: for cross-unit requests the actor may be a
+    -- user from another unit's DB, which cannot be FK-constrained cross-database.
 );
 
 CREATE TABLE IF NOT EXISTS request_companions (
@@ -204,7 +206,7 @@ CREATE TABLE IF NOT EXISTS employee_visitor_log (
     visitor_id       INT       NOT NULL,
     visit_request_id INT       NOT NULL,
     visit_log_id     INT       NOT NULL,
-    department_id    INT       NOT NULL,
+    department_id    INT       NULL,         -- nullable: hosts without a dept can still check in
     checked_in_at    TIMESTAMP NOT NULL,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (host_user_id)     REFERENCES users(id),
@@ -271,12 +273,12 @@ CREATE TABLE IF NOT EXISTS system_settings (
 );
 
 CREATE TABLE IF NOT EXISTS host_phone_blacklist (
-    id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    host_user_id   INT UNSIGNED NOT NULL,
+    id             INT AUTO_INCREMENT PRIMARY KEY,  -- INT not UNSIGNED: matches users.id type
+    host_user_id   INT NOT NULL,
     visitor_phone  VARCHAR(20)  NOT NULL,
     visitor_name   VARCHAR(120) NULL,
     reason         TEXT         NOT NULL,
-    blocked_by     INT UNSIGNED NOT NULL,
+    blocked_by     INT NOT NULL,
     is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_host_phone (host_user_id, visitor_phone),

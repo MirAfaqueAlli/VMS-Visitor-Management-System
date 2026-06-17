@@ -3,8 +3,10 @@
 // Full clean reset for VMS.
 //
 // What this does:
-//   1. Reads all registered unit DB names from vms_central.units
-//   2. Drops every unit database (vms_unit_*)
+//   1. Discovers unit DBs from TWO sources:
+//      (a) Registered names in vms_central.units (if central is intact)
+//      (b) ALL databases matching 'vms_unit_%' in information_schema (catches orphans)
+//   2. Drops every discovered unit database (deduplicated)
 //   3. Drops and fully recreates vms_central (schema + lookup seed only)
 //   4. Leaves the system in "uninitialized" state
 //
@@ -43,14 +45,28 @@ const warn = (msg) => console.log(`  ⚠   ${msg}`);
 const err  = (msg) => console.error(`  ❌  ${msg}`);
 
 // ── Fetch all unit DB names registered in vms_central ────────────────────────
-async function getUnitDbs(conn) {
+async function getRegisteredUnitDbs(conn) {
   try {
     const [rows] = await conn.query(
       `SELECT db_name FROM \`${CENTRAL_DB}\`.units WHERE db_name IS NOT NULL`
     );
-    return rows.map(r => r.db_name);
+    return rows.map(r => r.db_name).filter(Boolean);
   } catch {
-    return []; // central DB may not exist yet
+    return []; // central DB may not exist yet — that's fine
+  }
+}
+
+// ── Discover ALL vms_unit_* databases via information_schema (catches orphans) ─
+async function getAllUnitDbs(conn) {
+  try {
+    const [rows] = await conn.query(
+      `SELECT SCHEMA_NAME AS db_name
+       FROM information_schema.SCHEMATA
+       WHERE SCHEMA_NAME LIKE 'vms_unit_%'`
+    );
+    return rows.map(r => r.db_name).filter(Boolean);
+  } catch {
+    return [];
   }
 }
 
@@ -89,19 +105,29 @@ async function main() {
     ok(`Connected to MySQL at ${DB_CONFIG.host}:${DB_CONFIG.port}`);
     console.log('');
 
-    // ── Step 1: Discover and drop all unit databases ─────────────────────────
+    // ── Step 1: Discover and drop ALL unit databases ─────────────────────────
+    // Two sources are combined to ensure no orphaned databases are left behind:
+    //   (a) Registered names in vms_central.units  — works when central DB is intact
+    //   (b) information_schema LIKE 'vms_unit_%'   — catches orphans when central is gone
     console.log('[ 1 / 3 ]  Dropping unit databases…');
-    const unitDbs = await getUnitDbs(conn);
-    if (unitDbs.length === 0) {
+    const registeredDbs = await getRegisteredUnitDbs(conn);
+    const allSchemaDbs  = await getAllUnitDbs(conn);
+
+    // Merge and deduplicate
+    const unitDbSet = new Set([...registeredDbs, ...allSchemaDbs]);
+
+    if (unitDbSet.size === 0) {
       info('No unit databases found — nothing to drop.');
     } else {
-      for (const dbName of unitDbs) {
+      info(`Found ${registeredDbs.length} registered + ${allSchemaDbs.length} discovered via schema = ${unitDbSet.size} unique unit DB(s) to drop.`);
+      for (const dbName of unitDbSet) {
         await conn.query(`DROP DATABASE IF EXISTS \`${dbName}\``);
         drop(`Dropped unit DB: ${dbName}`);
       }
-      ok(`${unitDbs.length} unit database(s) removed.`);
+      ok(`${unitDbSet.size} unit database(s) removed.`);
     }
     console.log('');
+
 
     // ── Step 2: Drop and recreate vms_central ────────────────────────────────
     console.log(`[ 2 / 3 ]  Recreating central database: ${CENTRAL_DB}…`);

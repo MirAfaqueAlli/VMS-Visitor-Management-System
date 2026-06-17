@@ -461,7 +461,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
   return (
     <>
       <header
-        className="fixed top-0 right-0 h-10 flex items-center justify-between px-4 z-20 navbar-header"
+        className="fixed top-0 right-0 h-10 flex items-center justify-between px-4 z-30 navbar-header"
         style={{
           background: 'var(--color-bg-primary)',
           borderBottom: '1px solid var(--color-border)',
@@ -620,14 +620,14 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
     {/* ── Notification permission banner ──────────────────────────────── */}
     {showBanner && (
       <div
-        className="fixed z-10 flex items-center gap-3 px-4 py-2 animate-fade-in"
+        className="fixed z-20 flex items-center gap-3 px-4 py-2 animate-fade-in navbar-header"
         style={{
           top: '40px',
-          left: 0,
           right: 0,
           background: 'var(--color-warning-bg)',
           borderBottom: '1px solid var(--color-accent)',
           fontSize: '12px',
+          pointerEvents: 'none',       /* ← clicks pass through to page content beneath */
         }}
       >
         <BellOff size={13} style={{ color: 'var(--color-accent)', flexShrink: 0 }} />
@@ -637,14 +637,14 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
         <button
           onClick={handleEnableNotifications}
           className="btn-primary"
-          style={{ fontSize: '11px', padding: '3px 10px' }}
+          style={{ fontSize: '11px', padding: '3px 10px', pointerEvents: 'auto' }}
         >
           Enable
         </button>
         <button
           onClick={handleDismissBanner}
           className="btn-secondary"
-          style={{ fontSize: '11px', padding: '3px 8px' }}
+          style={{ fontSize: '11px', padding: '3px 8px', pointerEvents: 'auto' }}
           title="Dismiss"
         >
           <X size={11} />

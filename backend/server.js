@@ -38,6 +38,9 @@ app.use(helmet());
 app.use(cors({
   origin: [
     process.env.CLIENT_URL,
+    process.env.NODE_ENV !== 'production' && 'http://localhost:5173',
+    process.env.NODE_ENV !== 'production' && 'http://localhost:5174',
+    process.env.NODE_ENV !== 'production' && 'http://localhost:3000',
   ].filter(Boolean),
   credentials: true,
 }));
@@ -97,10 +100,11 @@ app.get('/api/health', async (req, res) => {
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error('[Server] Unhandled error:', err.stack);
-  res.status(500).json({
-    status: 'ERROR',
-    message: 'Internal Server Error',
-    error: err.message,
+  res.status(err.status || 500).json({
+    status:  'ERROR',
+    message: process.env.NODE_ENV === 'production'
+      ? 'Internal Server Error'
+      : (err.message || 'Internal Server Error'),
   });
 });
 

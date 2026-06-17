@@ -32,10 +32,11 @@ const superAdminCentralItems = [
 
 // Unit-level links shown to super admin when they are managing a unit
 const superAdminUnitItems = [
-  { label: 'Visitors',        icon: Users,         path: '/visitors' },
-  { label: 'Visit Requests',  icon: ClipboardList, path: '/requests' },
-  { label: 'Gate Security',   icon: Shield,        path: '/gate' },
-  { label: 'User Management', icon: Settings,      path: '/admin', end: true },
+  { label: 'Dashboard',       icon: LayoutDashboard, path: '/unit-dashboard' },
+  { label: 'Visitors',        icon: Users,           path: '/visitors' },
+  { label: 'Visit Requests',  icon: ClipboardList,   path: '/requests' },
+  { label: 'Gate Security',   icon: Shield,          path: '/gate' },
+  { label: 'User Management', icon: Settings,        path: '/admin', end: true },
 ];
 
 const auditorNavItems = [
@@ -43,6 +44,7 @@ const auditorNavItems = [
   { label: 'Reports',      icon: BarChart3,       path: '/reports' },
   { label: 'Audit Logs',   icon: ShieldAlert,     path: '/audit-logs' },
 ];
+
 
 // ── Reusable NavItem ──────────────────────────────────────────────────────────
 function NavItem({ label, icon: Icon, path, end, onClick }) {
@@ -88,7 +90,7 @@ export default function Sidebar({ isOpen, onClose }) {
 
   return (
     <aside
-      className={`sidebar-panel fixed left-0 top-0 h-screen flex flex-col z-30${isOpen ? ' is-open' : ''}`}
+      className={`sidebar-panel fixed left-0 top-0 h-screen flex flex-col z-50${isOpen ? ' is-open' : ''}`}
       style={{
         width:       'var(--sidebar-width, 220px)',
         background:  'var(--sidebar-bg)',
@@ -186,7 +188,7 @@ export default function Sidebar({ isOpen, onClose }) {
               <span>Departments</span>
             </NavLink>
             <NavLink
-              to="/admin/archive"
+              to="/unit-archive"
               className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
               onClick={onClose}
             >

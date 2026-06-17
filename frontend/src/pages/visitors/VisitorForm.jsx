@@ -178,7 +178,7 @@ export default function VisitorForm() {
 
  <div className="space-y-2">
  <label className="block text-sm font-medium text-loud">
- Phone Number *
+ Phone Number * <span className="text-xs text-faint font-normal normal-case tracking-normal">(WhatsApp preferred)</span>
  </label>
  <input
  type="tel"

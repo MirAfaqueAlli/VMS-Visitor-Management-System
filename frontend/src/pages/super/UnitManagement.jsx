@@ -215,11 +215,13 @@ export default function UnitManagement() {
       </div>
 
       {/* Backdrop — outside page div so it covers the full viewport */}
-      <div
-        className={`fixed inset-0 z-40 transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-        style={{ background: 'rgba(0,0,0,0.5)' }}
-        onClick={close}
-      />
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-40 transition-opacity duration-300 opacity-100"
+          style={{ background: 'rgba(0,0,0,0.5)' }}
+          onClick={close}
+        />
+      )}
 
       {/* Create Unit slide-over — fixed full-height panel */}
       <aside
@@ -231,6 +233,7 @@ export default function UnitManagement() {
           boxShadow: '-8px 0 32px rgba(0,0,0,0.15)',
           transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 300ms ease-in-out',
+          pointerEvents: isOpen ? 'auto' : 'none',
         }}
       >
         {/* Header */}
@@ -288,7 +291,7 @@ export default function UnitManagement() {
                   <input className={inputCls} value={unitForm.state} onChange={setUnit('state')} placeholder="Maharashtra" />
                 </div>
                 <div>
-                  <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Phone</label>
+                  <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Phone <span style={{ fontSize: '10px', fontWeight: 400, letterSpacing: 0, textTransform: 'none', opacity: 0.6, marginLeft: '4px' }}>(WhatsApp preferred)</span></label>
                   <input className={inputCls} value={unitForm.phone} onChange={setUnit('phone')} placeholder="+91 22 1234 5678" />
                 </div>
               </div>
@@ -367,7 +370,7 @@ export default function UnitManagement() {
           style={{ borderTop: '1px solid var(--color-border)' }}
         >
           <button className="btn-secondary flex-1" onClick={close} disabled={saving}>Cancel</button>
-          <button className="btn-primary flex-1" onClick={handleSubmit} disabled={saving}>
+          <button className="btn-primary flex-1" onClick={handleSubmit} disabled={saving || (includeAdmin && adminForm.password.length > 0 && !validatePassword(adminForm.password).valid)}>
             {saving ? (
               <span className="flex items-center gap-1.5 justify-center">
                 <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} />

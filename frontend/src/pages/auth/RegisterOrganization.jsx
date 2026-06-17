@@ -315,7 +315,7 @@ export default function RegisterOrganization() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !validatePassword(adminData.password).valid}
               className="btn-primary w-full flex items-center justify-center gap-2 py-3 text-sm font-semibold disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {loading ? (

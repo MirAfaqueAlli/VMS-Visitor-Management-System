@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
+import useAuth from "../../hooks/useAuth";
+import { useLocation } from "react-router-dom";
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 const STATUS_CONFIG = {
@@ -193,6 +195,11 @@ function FYCard({ item, onArchive, onDownload, onPurge }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function ArchiveManagement() {
+  const { activeUnit } = useAuth();
+  const { pathname }   = useLocation();
+  // When reached via /unit-archive the super admin is in unit context
+  const isUnitContext  = pathname === '/unit-archive';
+
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -272,9 +279,20 @@ export default function ArchiveManagement() {
             <h1 className="text-2xl font-bold text-loud">
               Financial Year <em className="italic">Archive</em>
             </h1>
+            {/* Unit context badge — shown when super admin views a unit's archive */}
+            {isUnitContext && activeUnit && (
+              <span
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+                style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}
+              >
+                {activeUnit.name}
+              </span>
+            )}
           </div>
           <p className="text-muted text-sm ml-12">
-            Backup and purge historical visitor data by financial year (April – March).
+            {isUnitContext && activeUnit
+              ? `Backup and purge historical visitor data for ${activeUnit.name} by financial year (April – March).`
+              : 'Backup and purge historical visitor data by financial year (April – March).'}
           </p>
         </div>
         <button

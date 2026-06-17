@@ -74,24 +74,48 @@ async function provisionUnitDb(dbName) {
   // Step 2: Get (or create) a pool for the new DB
   const unitPool = getPool(dbName);
 
-  // Step 3: Run the unit schema template
+  // Step 3: Run the unit schema template using a robust line-by-line parser.
+  // The old approach (split on /;\s*\n/) broke on Windows CRLF line endings
+  // and on semicolons inside string literals. This parser matches mysql CLI behaviour.
   const schemaPath = path.join(__dirname, '../database/vms_unit_schema.sql');
-  const schemaSql  = fs.readFileSync(schemaPath, 'utf8');
+  const rawSql     = fs.readFileSync(schemaPath, 'utf8');
 
-  // Split on semicolons — filter out empty statements
-  const statements = schemaSql
-    .split(/;\s*\n/)
-    .map(s => s.trim())
-    .filter(s => s.length > 0 && !s.startsWith('--'));
+  // Normalise line endings — CRLF → LF so the parser works on Windows too
+  const lines = rawSql.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+
+  const statements = [];
+  let buffer = '';
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    // Skip blank lines and full-line comments
+    if (!line || line.startsWith('--')) continue;
+
+    buffer += (buffer ? '\n' : '') + line;
+
+    // A statement ends when the line (after trimming) ends with a semicolon.
+    // Edge-case: DELIMITER changes are not used in our schema — safe to ignore.
+    if (line.endsWith(';')) {
+      const stmt = buffer.trim();
+      if (stmt && stmt !== ';') {
+        statements.push(stmt);
+      }
+      buffer = '';
+    }
+  }
+
+  // Flush any trailing statement without a trailing semicolon
+  if (buffer.trim()) {
+    statements.push(buffer.trim());
+  }
 
   const conn = await unitPool.getConnection();
   try {
     for (const stmt of statements) {
-      if (stmt) {
-        await conn.query(stmt);
-      }
+      await conn.query(stmt);
     }
-    console.log(`[DBManager] Schema applied to '${dbName}' successfully.`);
+    console.log(`[DBManager] Schema applied to '${dbName}' — ${statements.length} statements executed.`);
   } finally {
     conn.release();
   }

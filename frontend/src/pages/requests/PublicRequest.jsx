@@ -17,7 +17,7 @@ const getISTDateString = (d = new Date()) => {
   }).format(d);
 };
 
-/* ── Style constants ────────────────────────────────────────────────────────── */
+/* ── Style constants ──────────────────────────────────────────────────────── */
 const selectCls = "w-full bg-bg-primary text-loud text-sm px-3 py-2.5 rounded-lg border border-subtle focus:outline-none focus:border-accent transition-colors appearance-none cursor-pointer";
 const inputCls  = "w-full bg-bg-primary text-loud text-sm px-3 py-2.5 rounded-lg border border-subtle focus:outline-none focus:border-accent transition-colors placeholder:text-faint";
 const lockedCls = "w-full bg-bg-secondary text-loud text-sm px-3 py-2.5 rounded-lg border border-subtle opacity-80 cursor-not-allowed flex items-center gap-2";
@@ -30,7 +30,7 @@ const VISIT_TYPES = [
 
 const OTP_COOLDOWN = 60; // seconds
 
-/* ── Masking helpers ────────────────────────────────────────────────────────── */
+/* ── Masking helpers ────────────────────────────────────────── */
 function maskPhone(phone) {
   if (!phone || phone.length < 6) return phone;
   return phone.slice(0, 2) + '•'.repeat(Math.max(phone.length - 5, 3)) + phone.slice(-3);
@@ -42,7 +42,7 @@ function maskEmail(email) {
   return `${visible}${'•'.repeat(Math.min(local.length - 1, 4))}@${domain}`;
 }
 
-/* ── OTP Input component ────────────────────────────────────────────────────── */
+/* ── OTP Input component ────────────────────────────────────── */
 function OtpInput({ value, onChange, disabled }) {
   return (
     <input
@@ -58,7 +58,7 @@ function OtpInput({ value, onChange, disabled }) {
   );
 }
 
-/* ── Countdown hook ─────────────────────────────────────────────────────────── */
+/* ── Countdown hook ────────────────────────────────────────────────────────── */
 function useCountdown(initial = 0) {
   const [count, setCount] = useState(initial);
   const ref = useRef(null);
@@ -78,7 +78,7 @@ function useCountdown(initial = 0) {
   return { count, start };
 }
 
-/* ── Step indicator ─────────────────────────────────────────────────────────── */
+/* ── Step indicator ────────────────────────────────────────────────────────── */
 function StepBar({ step }) {
   const steps = ["Identity", "Verify OTP", "Visit Request"];
   return (
@@ -150,20 +150,20 @@ function LockedField({ label, value }) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    MAIN COMPONENT
-══════════════════════════════════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 export default function PublicRequest() {
   // ── Step state ──────────────────────────────────────────────────────────────
   const [step, setStep] = useState(1); // 1 = identity, 2 = OTP, 3 = request form, 4 = success
 
-  // ── Step 1 — Identity ───────────────────────────────────────────────────────
+  // ── Step 1 ─ Identity ─────────────────────────────────────────────────────
   const [identity, setIdentity] = useState({
     visitor_name: "", visitor_email: "", visitor_phone: "", aadhaar_number: "",
   });
   const [step1Busy, setStep1Busy] = useState(false);
 
-  // ── Step 2 — OTP ────────────────────────────────────────────────────────────
+  // ── Step 2 ─ OTP ──────────────────────────────────────────────────────────
   const [phoneOtp,      setPhoneOtp]      = useState("");
   const [emailOtp,      setEmailOtp]      = useState("");
   const [phoneVerified, setPhoneVerified] = useState(false);
@@ -180,10 +180,10 @@ export default function PublicRequest() {
   const phoneTimer = useCountdown();
   const emailTimer = useCountdown();
 
-  // ── Step 2 → 3 transition token ─────────────────────────────────────────────
+  // ── Step 2 → 3 transition token ───────────────────────────────────────────
   const [visitorToken, setVisitorToken] = useState(null);
 
-  // ── Step 3 — Request form ────────────────────────────────────────────────────
+  // ── Step 3 ─ Request form ──────────────────────────────────────────────────
   const [formData, setFormData] = useState({
     visit_type: "INDIVIDUAL", unit_id: "", department_id: "",
     host_user_id: "", purpose: "", visit_date: "",
@@ -196,14 +196,14 @@ export default function PublicRequest() {
   const [loadingHosts, setLoadingHosts] = useState(false);
   const [submitting, setSubmitting]   = useState(false);
 
-  // ── Load units on mount ──────────────────────────────────────────────────────
+  // ── Load units on mount ────────────────────────────────────────────────────
   useEffect(() => {
     apiClient.get("/units/public")
       .then(res => setUnits(res.data?.data ?? []))
       .catch(() => toast.error("Could not load units."));
   }, []);
 
-  // ── Departments cascade ──────────────────────────────────────────────────────
+  // ── Departments cascade ────────────────────────────────────────────────────
   useEffect(() => {
     if (!formData.unit_id) { setDepartments([]); setHosts([]); setFormData(p => ({ ...p, department_id: "", host_user_id: "" })); return; }
     setLoadingDepts(true);
@@ -215,7 +215,7 @@ export default function PublicRequest() {
       .finally(() => setLoadingDepts(false));
   }, [formData.unit_id]);
 
-  // ── Hosts cascade ────────────────────────────────────────────────────────────
+  // ── Hosts cascade ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!formData.department_id) { setHosts([]); setFormData(p => ({ ...p, host_user_id: "" })); return; }
     setLoadingHosts(true);
@@ -226,9 +226,9 @@ export default function PublicRequest() {
       .finally(() => setLoadingHosts(false));
   }, [formData.department_id]);
 
-  /* ════════════════════════════════════════════════════════════════════════════
-     STEP 1 — Send OTPs
-  ═══════════════════════════════════════════════════════════════════════════ */
+  /* ==============================================================================
+   STEP 1 ─ Send OTPs
+============================================================================== */
   const handleSendOtps = async (e) => {
     e.preventDefault();
     const { visitor_name, visitor_email, visitor_phone, aadhaar_number } = identity;
@@ -261,9 +261,9 @@ export default function PublicRequest() {
     }
   };
 
-  /* ════════════════════════════════════════════════════════════════════════════
-     STEP 2 — Verify OTPs
-  ═══════════════════════════════════════════════════════════════════════════ */
+  /* ==============================================================================
+   STEP 2 ─ Verify OTPs
+============================================================================== */
   const verifyPhone = async () => {
     if (phoneOtp.length !== 6) { toast.error("Enter the 6-digit phone OTP."); return; }
     setPhoneVerifying(true);
@@ -330,9 +330,9 @@ export default function PublicRequest() {
     setStep(3);
   };
 
-  /* ════════════════════════════════════════════════════════════════════════════
-     STEP 3 — Submit Request
-  ═══════════════════════════════════════════════════════════════════════════ */
+  /* ==============================================================================
+   STEP 3 ─ Submit Request
+============================================================================== */
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.unit_id)       { toast.error("Please select a unit."); return; }
@@ -369,13 +369,11 @@ export default function PublicRequest() {
     }
   };
 
-  /* ════════════════════════════════════════════════════════════════════════════
+  /* ==============================================================================
      RENDER
-  ═══════════════════════════════════════════════════════════════════════════ */
+  ============================================================================== */
 
-  // ── Shared page shell ── removed (defined above as top-level component)
-
-  /* ── Step 4: Success ─────────────────────────────────────────────────────── */
+  /* Step 4: Success */
   if (step === 4) {
     return (
       <Shell step={step}>
@@ -398,7 +396,7 @@ export default function PublicRequest() {
     );
   }
 
-  /* ── Step 1: Identity Form ───────────────────────────────────────────────── */
+  /* ── Step 1: Identity Form ────────────────────────────────────────────────── */
   if (step === 1) {
     return (
       <Shell step={step}>
@@ -421,10 +419,10 @@ export default function PublicRequest() {
               </div>
 
               <div className="space-y-1.5">
-                <label className={labelCls}>Mobile Number *</label>
+                <label className={labelCls}>Mobile Number * <span className="text-xs text-faint normal-case font-normal tracking-normal">(WhatsApp preferred)</span></label>
                 <input type="tel" required value={identity.visitor_phone}
                   onChange={e => setIdentity(p => ({ ...p, visitor_phone: e.target.value.replace(/\D/g, "").slice(0, 15) }))}
-                  placeholder="10-digit mobile number"
+                  placeholder="WhatsApp / mobile number"
                   className={inputCls} />
               </div>
 
@@ -449,7 +447,7 @@ export default function PublicRequest() {
 
           <button type="submit" disabled={step1Busy} className="btn-primary w-full py-3 flex items-center justify-center gap-2">
             {step1Busy
-              ? <><Loader2 size={16} className="animate-spin" /> Sending OTPs…</>
+              ? <><Loader2 size={16} className="animate-spin" /> Sending OTPs...</>
               : <><ArrowRight size={16} /> Verify & Continue</>
             }
           </button>
@@ -462,7 +460,7 @@ export default function PublicRequest() {
     );
   }
 
-  /* ── Step 2: OTP Verification ───────────────────────────────────────────── */
+  /* ── Step 2: OTP Verification ────────────────────────────────────────────── */
   if (step === 2) {
     const bothVerified = phoneVerified && emailVerified;
     return (
@@ -491,7 +489,7 @@ export default function PublicRequest() {
             {/* Dev OTP hint */}
             {devPhoneOtp && !phoneVerified && (
               <div className="text-[11px] text-accent bg-mixed-bg rounded px-2 py-1">
-                🔧 Dev mode — OTP: <strong>{devPhoneOtp}</strong>
+                {"\uD83D\uDD27 Dev mode \u2014 OTP: "}<strong>{devPhoneOtp}</strong>
               </div>
             )}
 
@@ -502,7 +500,7 @@ export default function PublicRequest() {
                   <button type="button" onClick={verifyPhone} disabled={phoneVerifying || phoneOtp.length < 6}
                     className="btn-primary flex-1 py-2 text-sm flex items-center justify-center gap-1.5">
                     {phoneVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                    {phoneVerifying ? "Verifying…" : "Verify Phone"}
+                    {phoneVerifying ? "Verifying..." : "Verify Phone"}
                   </button>
                   <button type="button" onClick={resendPhone} disabled={phoneTimer.count > 0 || phoneResending}
                     className="text-xs text-accent disabled:text-faint disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap">
@@ -529,7 +527,7 @@ export default function PublicRequest() {
 
             {devEmailOtp && !emailVerified && (
               <div className="text-[11px] text-accent bg-mixed-bg rounded px-2 py-1">
-                🔧 Dev mode — OTP: <strong>{devEmailOtp}</strong>
+                {"\uD83D\uDD27 Dev mode \u2014 OTP: "}<strong>{devEmailOtp}</strong>
               </div>
             )}
 
@@ -540,7 +538,7 @@ export default function PublicRequest() {
                   <button type="button" onClick={verifyEmail} disabled={emailVerifying || emailOtp.length < 6}
                     className="btn-primary flex-1 py-2 text-sm flex items-center justify-center gap-1.5">
                     {emailVerifying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                    {emailVerifying ? "Verifying…" : "Verify Email"}
+                    {emailVerifying ? "Verifying..." : "Verify Email"}
                   </button>
                   <button type="button" onClick={resendEmail} disabled={emailTimer.count > 0 || emailResending}
                     className="text-xs text-accent disabled:text-faint disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap">
@@ -559,14 +557,14 @@ export default function PublicRequest() {
           </button>
 
           <button type="button" onClick={() => setStep(1)} className="w-full text-xs text-faint hover:text-muted text-center transition-colors">
-            ← Edit my details
+            {"\u2190 Edit my details"}
           </button>
         </div>
       </Shell>
     );
   }
 
-  /* ── Step 3: Request Form ────────────────────────────────────────────────── */
+  /* ── Step 3: Request Form ─────────────────────────────────────────────────── */
   return (
     <Shell>
       <form onSubmit={handleSubmit} className="vms-card rounded-2xl p-8 shadow-card space-y-8 animate-fade-in">
@@ -581,7 +579,7 @@ export default function PublicRequest() {
             <div className="sm:col-span-2">
               <LockedField label="Full Name" value={identity.visitor_name} icon={User} />
             </div>
-            <LockedField label="Mobile Number" value={identity.visitor_phone} icon={Phone} />
+            <LockedField label="Mobile Number (WhatsApp preferred)" value={identity.visitor_phone} icon={Phone} />
             <LockedField label="Email Address" value={identity.visitor_email} icon={Mail} />
             <div className="sm:col-span-2">
               <LockedField label="Aadhaar Number" value={`XXXX-XXXX-${identity.aadhaar_number.slice(-4)}`} icon={CreditCard} />
@@ -624,8 +622,8 @@ export default function PublicRequest() {
                 <select name="unit_id" required value={formData.unit_id}
                   onChange={e => setFormData(p => ({ ...p, unit_id: e.target.value }))}
                   className={selectCls}>
-                  <option value="">— Select the unit you're visiting —</option>
-                  {units.map(u => <option key={u.id} value={u.id}>{u.name}{u.city ? ` — ${u.city}` : ""}</option>)}
+                  <option value="">{"\u2014 Select the unit you're visiting \u2014"}</option>
+                  {units.map(u => <option key={u.id} value={u.id}>{u.name}{u.city ? ` \u2014 ${u.city}` : ""}</option>)}
                 </select>
                 <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
               </div>
@@ -638,7 +636,7 @@ export default function PublicRequest() {
                   onChange={e => setFormData(p => ({ ...p, department_id: e.target.value }))}
                   disabled={!formData.unit_id || loadingDepts}
                   className={`${selectCls} disabled:opacity-50 disabled:cursor-not-allowed`}>
-                  <option value="">{!formData.unit_id ? "— Select Unit First —" : loadingDepts ? "Loading…" : "— Select Department —"}</option>
+                  <option value="">{!formData.unit_id ? "\u2014 Select Unit First \u2014" : loadingDepts ? "Loading..." : "\u2014 Select Department \u2014"}</option>
                   {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
                 <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
@@ -652,8 +650,8 @@ export default function PublicRequest() {
                   onChange={e => setFormData(p => ({ ...p, host_user_id: e.target.value }))}
                   disabled={!formData.department_id || loadingHosts}
                   className={`${selectCls} disabled:opacity-50 disabled:cursor-not-allowed`}>
-                  <option value="">{!formData.department_id ? "— Select Department First —" : loadingHosts ? "Loading…" : "— Select Host —"}</option>
-                  {hosts.map(h => <option key={h.id} value={h.id}>{h.full_name}{h.designation_name ? ` — ${h.designation_name}` : ""}</option>)}
+                  <option value="">{!formData.department_id ? "\u2014 Select Department First \u2014" : loadingHosts ? "Loading..." : "\u2014 Select Host \u2014"}</option>
+                  {hosts.map(h => <option key={h.id} value={h.id}>{h.full_name}{h.designation_name ? ` \u2014 ${h.designation_name}` : ""}</option>)}
                 </select>
                 <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
               </div>
@@ -678,8 +676,15 @@ export default function PublicRequest() {
                       if (val) {
                         const [h, m] = val.split(':').map(Number);
                         const total = h * 60 + m + 30;
-                        const auto = `${String(Math.floor(total / 60) % 24).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`;
-                        if (!p.visit_end_time || p.visit_end_time <= val) next.visit_end_time = auto;
+                        const auto30 = `${String(Math.floor(total / 60) % 24).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`;
+                        
+                        const noEnd          = !p.visit_end_time;
+                        const endBeforeStart = p.visit_end_time && p.visit_end_time <= val;
+                        const endWithinAuto  = p.visit_end_time && p.visit_end_time <= auto30;
+                        
+                        if (noEnd || endBeforeStart || endWithinAuto) {
+                          next.visit_end_time = auto30;
+                        }
                       }
                       return next;
                     });
@@ -715,7 +720,7 @@ export default function PublicRequest() {
         <button type="submit" disabled={submitting}
           className="btn-primary w-full py-3.5 text-sm font-semibold flex items-center justify-center gap-2">
           {submitting
-            ? <><Loader2 size={16} className="animate-spin" /> Submitting…</>
+            ? <><Loader2 size={16} className="animate-spin" /> Submitting...</>
             : <><FileText size={16} /> Submit Visit Request</>
           }
         </button>

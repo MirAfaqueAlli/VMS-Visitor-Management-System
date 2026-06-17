@@ -189,15 +189,22 @@ export default function DepartmentManagement() {
       </div>
 
       {/* Backdrop */}
-      <div
-        className={`fixed inset-0 bg-overlay backdrop-blur-sm z-40 transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-        onClick={close}
-      />
+      {isOpen && (
+        <div
+          className="fixed inset-0 backdrop-blur-sm z-40 transition-opacity duration-300 opacity-100"
+          style={{ background: 'rgba(0,0,0,0.4)' }}
+          onClick={close}
+        />
+      )}
 
       {/* Slide-over panel — matches UserManagement panel */}
       <aside
-        className={`fixed right-0 top-0 h-full w-full max-w-md border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
-        style={{ background: 'var(--color-bg-primary)' }}
+        className="fixed right-0 top-0 h-full w-full max-w-md border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out"
+        style={{
+          background: 'var(--color-bg-primary)',
+          transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
+          pointerEvents: isOpen ? 'auto' : 'none',
+        }}
       >
         {/* Panel header */}
         <div className="flex items-center justify-between p-6 border-b border-subtle shrink-0">

@@ -209,8 +209,17 @@ const deactivateDepartment = async (req, res) => {
       return sendError(res, `Cannot deactivate — ${deptData.user_count} user(s) are still assigned.`, 409);
     }
 
-    await req.db.query('UPDATE departments SET is_active = 0, updated_at = NOW() WHERE id = ?', [id]);
-    return sendSuccess(res, { id: parseInt(id) }, 'Department deactivated successfully.');
+    // Suffix the code with _DEL_<id> so the UNIQUE constraint is freed
+    // and the same department code can be reused when recreating.
+    await req.db.query(
+      `UPDATE departments
+       SET is_active  = 0,
+           code       = CONCAT(code, '_DEL_', id),
+           updated_at = NOW()
+       WHERE id = ?`,
+      [id]
+    );
+    return sendSuccess(res, { id: parseInt(id) }, 'Department deleted successfully.');
   } catch (err) {
     console.error('[DepartmentController] deactivateDepartment error:', err.message);
     return sendError(res, 'Failed to deactivate department.', 500);

@@ -8,6 +8,8 @@ import {
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
+import PasswordStrength from "../../components/PasswordStrength";
+import { validatePassword } from "../../utils/passwordValidator";
 
 const inputCls = "w-full bg-white/5 border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-blue-400/60 transition-colors";
 const labelCls = "block text-[11px] font-semibold text-white/40 uppercase tracking-wider mb-1.5";
@@ -32,8 +34,9 @@ export default function Setup() {
   const { loginDirect } = useAuth();
   const [form, setForm]         = useState(INITIAL);
   const [loading, setLoading]   = useState(false);
-  const [showPwd, setShowPwd]   = useState(false);
-  const [step, setStep]         = useState(1); // 1 = org, 2 = admin
+  const [showPwd, setShowPwd]         = useState(false);
+  const [showConfirmPwd, setShowConfirmPwd] = useState(false);
+  const [step, setStep]                 = useState(1); // 1 = org, 2 = admin
 
   const set = (k) => (e) => {
     let v = e.target.value;
@@ -53,7 +56,8 @@ export default function Setup() {
     if (!form.admin_name.trim())     { toast.error("Admin full name is required."); return; }
     if (!form.admin_email.trim())    { toast.error("Admin email is required."); return; }
     if (!form.admin_password.trim()) { toast.error("Password is required."); return; }
-    if (form.admin_password.length < 8) { toast.error("Password must be at least 8 characters."); return; }
+    const { valid: pwValid } = validatePassword(form.admin_password);
+    if (!pwValid) { toast.error("Password does not meet the strength requirements."); return; }
     if (form.admin_password !== form.admin_confirm_password) {
       toast.error("Passwords do not match."); return;
     }
@@ -162,8 +166,9 @@ export default function Setup() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="col-span-2 space-y-1.5">
+              <div className="space-y-4">
+                {/* Organization Name — full width */}
+                <div className="space-y-1.5">
                   <label className={labelCls}>
                     <Building2 className="inline w-3 h-3 mr-1" />
                     Organization Name *
@@ -179,23 +184,40 @@ export default function Setup() {
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <Hash className="inline w-3 h-3 mr-1" />
-                    Short Code *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={20}
-                    value={form.org_code}
-                    onChange={set("org_code")}
-                    placeholder="e.g. ACME"
-                    className={`${inputCls} font-mono tracking-wider`}
-                  />
-                  <p className="text-[10px] text-white/25 mt-0.5">Uppercase letters and numbers only</p>
+                {/* Short Code + Email — side by side (both are short enough) */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className={labelCls}>
+                      <Hash className="inline w-3 h-3 mr-1" />
+                      Short Code *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={20}
+                      value={form.org_code}
+                      onChange={set("org_code")}
+                      placeholder="e.g. ACME"
+                      className={`${inputCls} font-mono tracking-wider`}
+                    />
+                    <p className="text-[10px] text-white/25 mt-0.5">Uppercase &amp; numbers only</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className={labelCls}>
+                      <Phone className="inline w-3 h-3 mr-1" />
+                      Phone
+                    </label>
+                    <input
+                      type="tel"
+                      value={form.org_phone}
+                      onChange={set("org_phone")}
+                      placeholder="+91 22 1234 5678"
+                      className={inputCls}
+                    />
+                  </div>
                 </div>
 
+                {/* Email — full width */}
                 <div className="space-y-1.5">
                   <label className={labelCls}>
                     <Mail className="inline w-3 h-3 mr-1" />
@@ -210,43 +232,31 @@ export default function Setup() {
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <MapPin className="inline w-3 h-3 mr-1" />
-                    City
-                  </label>
-                  <input
-                    type="text"
-                    value={form.org_city}
-                    onChange={set("org_city")}
-                    placeholder="e.g. Mumbai"
-                    className={inputCls}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className={labelCls}>State</label>
-                  <input
-                    type="text"
-                    value={form.org_state}
-                    onChange={set("org_state")}
-                    placeholder="e.g. Maharashtra"
-                    className={inputCls}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <Phone className="inline w-3 h-3 mr-1" />
-                    Phone
-                  </label>
-                  <input
-                    type="tel"
-                    value={form.org_phone}
-                    onChange={set("org_phone")}
-                    placeholder="+91 22 1234 5678"
-                    className={inputCls}
-                  />
+                {/* City + State — side by side */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className={labelCls}>
+                      <MapPin className="inline w-3 h-3 mr-1" />
+                      City
+                    </label>
+                    <input
+                      type="text"
+                      value={form.org_city}
+                      onChange={set("org_city")}
+                      placeholder="e.g. Mumbai"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className={labelCls}>State</label>
+                    <input
+                      type="text"
+                      value={form.org_state}
+                      onChange={set("org_state")}
+                      placeholder="e.g. Maharashtra"
+                      className={inputCls}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -270,8 +280,9 @@ export default function Setup() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="col-span-2 space-y-1.5">
+              <div className="space-y-4">
+                {/* Full Name — full width */}
+                <div className="space-y-1.5">
                   <label className={labelCls}>
                     <User className="inline w-3 h-3 mr-1" />
                     Full Name *
@@ -287,6 +298,7 @@ export default function Setup() {
                   />
                 </div>
 
+                {/* Email — full width */}
                 <div className="space-y-1.5">
                   <label className={labelCls}>
                     <Mail className="inline w-3 h-3 mr-1" />
@@ -302,35 +314,38 @@ export default function Setup() {
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <Phone className="inline w-3 h-3 mr-1" />
-                    Phone
-                  </label>
-                  <input
-                    type="tel"
-                    value={form.admin_phone}
-                    onChange={set("admin_phone")}
-                    placeholder="+91 9000000000"
-                    className={inputCls}
-                  />
+                {/* Phone + Employee Code — side by side (both are short) */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className={labelCls}>
+                      <Phone className="inline w-3 h-3 mr-1" />
+                      Phone
+                    </label>
+                    <input
+                      type="tel"
+                      value={form.admin_phone}
+                      onChange={set("admin_phone")}
+                      placeholder="+91 9000000000"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className={labelCls}>
+                      <Hash className="inline w-3 h-3 mr-1" />
+                      Employee Code
+                    </label>
+                    <input
+                      type="text"
+                      value={form.admin_employee_code}
+                      onChange={set("admin_employee_code")}
+                      placeholder="SA-001"
+                      className={`${inputCls} font-mono`}
+                    />
+                  </div>
                 </div>
 
+                {/* Password — full width */}
                 <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <Hash className="inline w-3 h-3 mr-1" />
-                    Employee Code
-                  </label>
-                  <input
-                    type="text"
-                    value={form.admin_employee_code}
-                    onChange={set("admin_employee_code")}
-                    placeholder="SA-001"
-                    className={`${inputCls} font-mono`}
-                  />
-                </div>
-
-                <div className="col-span-2 space-y-1.5">
                   <label className={labelCls}>
                     <Lock className="inline w-3 h-3 mr-1" />
                     Password *
@@ -339,10 +354,9 @@ export default function Setup() {
                     <input
                       type={showPwd ? "text" : "password"}
                       required
-                      minLength={8}
                       value={form.admin_password}
                       onChange={set("admin_password")}
-                      placeholder="Minimum 8 characters"
+                      placeholder="Uppercase, number & symbol required"
                       className={inputCls}
                       autoComplete="new-password"
                     />
@@ -354,25 +368,39 @@ export default function Setup() {
                       {showPwd ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                   </div>
+                  {/* Password strength indicator — CSS variable fallbacks for dark bg */}
+                  <div style={{ "--color-border": "rgba(255,255,255,0.12)", "--color-text-faint": "rgba(255,255,255,0.35)" }}>
+                    <PasswordStrength password={form.admin_password} />
+                  </div>
                 </div>
 
-                <div className="col-span-2 space-y-1.5">
+                {/* Confirm Password — full width */}
+                <div className="space-y-1.5">
                   <label className={labelCls}>Confirm Password *</label>
-                  <input
-                    type={showPwd ? "text" : "password"}
-                    required
-                    value={form.admin_confirm_password}
-                    onChange={set("admin_confirm_password")}
-                    placeholder="Re-enter password"
-                    className={`${inputCls} ${
-                      form.admin_confirm_password && form.admin_password !== form.admin_confirm_password
-                        ? "border-red-500/50"
-                        : form.admin_confirm_password && form.admin_password === form.admin_confirm_password
-                        ? "border-green-500/50"
-                        : ""
-                    }`}
-                    autoComplete="new-password"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showConfirmPwd ? "text" : "password"}
+                      required
+                      value={form.admin_confirm_password}
+                      onChange={set("admin_confirm_password")}
+                      placeholder="Re-enter password"
+                      className={`${inputCls} ${
+                        form.admin_confirm_password && form.admin_password !== form.admin_confirm_password
+                          ? "border-red-500/50"
+                          : form.admin_confirm_password && form.admin_password === form.admin_confirm_password
+                          ? "border-green-500/50"
+                          : ""
+                      }`}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPwd(v => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
+                    >
+                      {showConfirmPwd ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
                   {form.admin_confirm_password && form.admin_password !== form.admin_confirm_password && (
                     <p className="text-[11px] text-red-400 mt-1">Passwords do not match</p>
                   )}
@@ -390,8 +418,8 @@ export default function Setup() {
                 </button>
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-60"
+                  disabled={loading || !validatePassword(form.admin_password).valid}
+                  className="flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{ background: "#3b82f6", color: "#fff" }}
                 >
                   {loading ? (

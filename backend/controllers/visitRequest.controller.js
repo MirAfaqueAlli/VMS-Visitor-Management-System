@@ -158,6 +158,7 @@ const lookupVisitorByPhone = async (req, res) => {
  * visitor_phone, visitor_name, visitor_email stored inline — visitor_id stays NULL until check-in.
  */
 const createRequest = async (req, res) => {
+  let conn = null;
   try {
     const {
       visit_category,
@@ -198,7 +199,7 @@ const createRequest = async (req, res) => {
     let db = req.db;
     let isCrossUnit    = false;  // true when EMPLOYEE_VISIT routes to a different unit's DB
     let crossUnitDbName = null;  // db_name of the target unit (cross-unit only)
-    if (typeCode === 'EMPLOYEE_VISIT' && src === 'SELF' && target_unit_id) {
+    if (typeCode === 'EMPLOYEE_VISIT' && target_unit_id && (!req.user?.unit_id || parseInt(target_unit_id) !== parseInt(req.user.unit_id))) {
       const { centralPool, getPool } = require('../services/dbManager');
       const [unitRows] = await centralPool.query(
         'SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = "ACTIVE"',
@@ -213,11 +214,11 @@ const createRequest = async (req, res) => {
       }
     }
 
-    const conn = await db.getConnection();
+    conn = await db.getConnection();
 
     // ── Resolve effective unit & department ───────────────────────────────────
-    const effectiveUnitId = unit_id || req.user?.unit_id;
-    const effectiveDeptId = (isSuperAdmin(req.user) || isUnitAdmin(req.user))
+    const effectiveUnitId = isCrossUnit ? target_unit_id : (unit_id || req.user?.unit_id);
+    let effectiveDeptId = (isSuperAdmin(req.user) || isUnitAdmin(req.user) || isCrossUnit || typeCode === 'EMPLOYEE_VISIT')
       ? department_id
       : (req.user?.department_id || department_id);
 
@@ -225,6 +226,7 @@ const createRequest = async (req, res) => {
       conn.release();
       return sendError(res, 'department_id is required.', 400);
     }
+
 
     // ── Determine status and request_source by type ───────────────────────────
     let request_source, status, effectiveHostId;
@@ -234,8 +236,8 @@ const createRequest = async (req, res) => {
         // request_source comes from the frontend: 'SELF' (visiting) or 'HOST' (hosting)
         const src = (req.body.request_source || 'SELF').toUpperCase();
         request_source  = src === 'HOST' ? 'HOST' : 'SELF';
-        status          = src === 'HOST' ? 'APPROVED' : 'PENDING'; // host-creates → auto-approved
-        effectiveHostId = src === 'HOST'
+        status          = (src === 'HOST' && !isCrossUnit) ? 'APPROVED' : 'PENDING'; // host-creates → auto-approved
+        effectiveHostId = (src === 'HOST' && !(isSuperAdmin(req.user) || isUnitAdmin(req.user)))
           ? req.user.id                // Host = me
           : (host_user_id || null);    // Host = selected employee
         break;
@@ -243,7 +245,9 @@ const createRequest = async (req, res) => {
       case 'VENDOR':
         request_source  = 'HOST';
         status          = 'APPROVED';
-        effectiveHostId = host_user_id || requester_user_id;
+        // Always use the explicit host_user_id from the form — do NOT fall back to
+        // req.user.id because super/global admins live in vms_central, not the unit DB.
+        effectiveHostId = host_user_id || null;
         break;
       case 'SPOT':
         request_source  = 'RECEPTION';
@@ -253,7 +257,11 @@ const createRequest = async (req, res) => {
       case 'PERSONAL_VISIT':
         request_source  = 'SELF';
         status          = 'APPROVED';
-        effectiveHostId = requester_user_id;
+        // For super/unit admins creating on behalf of a user: use host_user_id from body.
+        // For a regular employee creating their own personal visit: use their own ID.
+        effectiveHostId = (isSuperAdmin(req.user) || isUnitAdmin(req.user))
+          ? (host_user_id || requester_user_id)
+          : requester_user_id;
         break;
       default:
         conn.release();
@@ -263,6 +271,21 @@ const createRequest = async (req, res) => {
     if (!effectiveHostId) {
       conn.release();
       return sendError(res, 'host_user_id is required.', 400);
+    }
+
+    // ── Auto-derive department_id from host when still missing ────────────────
+    // The DB column is NOT NULL with a FK, so we must supply a valid dept ID.
+    // Fall back to the host user's own department_id if not explicitly sent.
+    if (!effectiveDeptId) {
+      try {
+        const [hostDeptRows] = await db.query(
+          'SELECT department_id FROM users WHERE id = ? AND department_id IS NOT NULL LIMIT 1',
+          [effectiveHostId]
+        );
+        if (hostDeptRows.length > 0 && hostDeptRows[0].department_id) {
+          effectiveDeptId = hostDeptRows[0].department_id;
+        }
+      } catch (_) { /* non-fatal */ }
     }
 
     // ── Resolve visitor details from visitor_id if provided ──────────────────
@@ -357,10 +380,35 @@ const createRequest = async (req, res) => {
       }
     }
 
+    // ── Validate host exists in the target unit's DB ──────────────────────────
+    // This MUST happen before beginTransaction to return a clean error instead of
+    // letting MySQL throw a FK constraint violation on INSERT.
+    const [hostCheckRows] = await db.query(
+      'SELECT id FROM users WHERE id = ? AND is_active = 1 LIMIT 1',
+      [effectiveHostId]
+    );
+    if (hostCheckRows.length === 0) {
+      conn.release();
+      return sendError(res, `Host user (id=${effectiveHostId}) does not exist or is inactive in this unit's database. Please refresh and select a valid host.`, 422);
+    }
+
+    // ── Validate department exists in the target unit's DB ────────────────────
+    if (effectiveDeptId) {
+      const [deptCheckRows] = await db.query(
+        'SELECT id FROM departments WHERE id = ? AND is_active = 1 LIMIT 1',
+        [effectiveDeptId]
+      );
+      if (deptCheckRows.length === 0) {
+        conn.release();
+        return sendError(res, `Department (id=${effectiveDeptId}) does not exist in this unit's database. Please refresh and select a valid department.`, 422);
+      }
+    }
+
     // ── Insert visit request (visitor_id = NULL — stored inline) ──────────────
     await conn.beginTransaction();
 
     const [reqResult] = await conn.query(
+
       `INSERT INTO visit_requests (
          visitor_id, visitor_phone, visitor_name, visitor_email,
          requester_user_id, host_user_id, department_id, unit_id, target_unit_id,
@@ -381,7 +429,9 @@ const createRequest = async (req, res) => {
         resolvedVisitorPhone,
         resolvedVisitorName || (typeCode === 'VENDOR' ? (company_name || null) : null),
         resolvedVisitorEmail,
-        requester_user_id,
+        // For cross-unit requests the requester lives in a different DB;
+        // their local ID cannot satisfy the FK in the target unit's users table.
+        isCrossUnit ? null : requester_user_id,
         effectiveHostId,
         effectiveDeptId || null,
         effectiveUnitId,
@@ -412,11 +462,17 @@ const createRequest = async (req, res) => {
     }
 
     // ── Insert approval_history for PENDING types ─────────────────────────────
+    // For cross-unit requests the requester lives in a different DB and their ID
+    // cannot satisfy the FK in the target unit's users table.  Use the host's ID
+    // (who IS in the target DB) as the actor for the initial PENDING record.
     if (status === 'PENDING') {
+      const historyActor = isCrossUnit
+        ? effectiveHostId                      // host is in the target unit DB
+        : (requester_user_id || effectiveHostId); // same-unit: use requester
       await conn.query(
         `INSERT INTO approval_history (visit_request_id, acted_by_user_id, action, remarks, created_at)
          VALUES (?, ?, 'PENDING', 'Initial Request', NOW())`,
-        [visitRequestId, requester_user_id || effectiveHostId]
+        [visitRequestId, historyActor]
       );
     }
 
@@ -478,7 +534,7 @@ const createRequest = async (req, res) => {
     }
 
     if (typeCode === 'EMPLOYEE_VISIT') {
-      const isVisiting = request_source === 'SELF';
+      const isVisiting = request_source === 'SELF' || isCrossUnit;
       if (isVisiting) {
         const myName = req.user?.full_name || resolvedVisitorName || 'A colleague';
         if (host.email) {
@@ -562,10 +618,12 @@ const createRequest = async (req, res) => {
 
     return sendSuccess(res, { ...fullRequest[0], gate_pass: passResult }, 'Visit request created successfully.', 201);
   } catch (err) {
-    try { await conn.rollback(); } catch (_) {}
-    conn.release();
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+      conn.release();
+    }
     console.error('[VisitRequestController] createRequest error:', err.message);
-    return sendError(res, 'Failed to create visit request.', 500);
+    return sendError(res, 'Failed to create visit request. ' + err.message, 500);
   }
 };
 
@@ -962,10 +1020,29 @@ const createPublicRequest = async (req, res) => {
       });
     }
 
-    // Verify host exists
-    const [hostRows] = await unitDb.query('SELECT * FROM users WHERE id = ? AND is_active = 1', [host_user_id]);
-    if (hostRows.length === 0) { conn.release(); return sendError(res, 'Host not found or inactive.', 404); }
+    // ── Verify host exists in this unit's DB (inside transaction context) ────
+    const [hostRows] = await unitDb.query(
+      'SELECT id, full_name, email, phone, unit_id FROM users WHERE id = ? AND is_active = 1 LIMIT 1',
+      [parseInt(host_user_id)]
+    );
+    if (hostRows.length === 0) {
+      conn.release();
+      return sendError(res, 'The selected host does not exist or is inactive in this unit. Please refresh and select again.', 404);
+    }
     const host = hostRows[0];
+
+    // ── Verify department exists in this unit's DB ────────────────────────────
+    const parsedDeptId = parseInt(department_id);
+    if (parsedDeptId) {
+      const [deptRows] = await unitDb.query(
+        'SELECT id FROM departments WHERE id = ? AND unit_id = ? AND is_active = 1 LIMIT 1',
+        [parsedDeptId, unit.id]
+      );
+      if (deptRows.length === 0) {
+        conn.release();
+        return sendError(res, 'The selected department does not exist in this unit. Please refresh and select again.', 404);
+      }
+    }
 
     await conn.beginTransaction();
 
@@ -981,7 +1058,7 @@ const createPublicRequest = async (req, res) => {
                  ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
       [
         visitor_phone, visitor_full_name, visitor_email || null,
-        host.id, department_id, unit.id,
+        host.id, parsedDeptId || null, unit.id,
         visit_category,
         purpose, visit_date,
         visit_start_time || null, visit_end_time || null, accompanying_count,
@@ -989,6 +1066,7 @@ const createPublicRequest = async (req, res) => {
       ]
     );
     const visitRequestId = reqResult.insertId;
+
 
     if (Array.isArray(companions) && companions.length > 0) {
       for (const c of companions) {

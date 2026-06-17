@@ -22,7 +22,7 @@ import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 
-// ── Category definitions ───────────────────────────────────────────────────────
+// â”€â”€ Category definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ALL_CATEGORIES = [
   { id: "EMPLOYEE_VISIT", label: "Employee Visit",      desc: "Visit or invite a fellow employee" },
   { id: "PERSONAL_VISIT", label: "Personal Visit",      desc: "Family / friend visiting you" },
@@ -33,7 +33,8 @@ const ALL_CATEGORIES = [
 const ROLE_CATEGORIES = {
   security:     ["SPOT"],
   employee:     ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR"],
-  unit_admin:   ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT"],
+  unit_admin:   ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
+  super_admin:  ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
   receptionist: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
   org_admin:    ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT"],
 };
@@ -41,16 +42,16 @@ const ROLE_CATEGORIES = {
 export default function NewRequest() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { user } = useAuth();
+  const { user, activeUnit } = useAuth();
   const [loading, setLoading] = useState(false);
   const [hosts, setHosts] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [selectedDeptId, setSelectedDeptId] = useState("");
 
-  // ── Conflict confirmation modal state ─────────────────────────────────────────
+  // â”€â”€ Conflict confirmation modal state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [conflictModal, setConflictModal] = useState(null); // null | { types, host_conflict, visitor_conflict, pendingPayload }
 
-  // ── Visitor phone lookup state ────────────────────────────────────────────────
+  // â”€â”€ Visitor phone lookup state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [visitorLookupState, setVisitorLookupState] = useState("idle"); // idle | loading | found | not_found
   const [foundVisitorData,   setFoundVisitorData]   = useState(null);
 
@@ -59,14 +60,14 @@ export default function NewRequest() {
     setFoundVisitorData(null);
   }, []);
 
-  // ── Vendor phone lookup state ────────────────────────────────────────────────
+  // â”€â”€ Vendor phone lookup state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [vendorLookupState, setVendorLookupState] = useState("idle"); // idle | loading | found | not_found
 
   const resetVendorLookup = useCallback(() => {
     setVendorLookupState("idle");
   }, []);
 
-  // ── EMPLOYEE_VISIT state ─────────────────────────────────────────────────────
+  // â”€â”€ EMPLOYEE_VISIT state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [visitMode,      setVisitMode]      = useState("visiting"); // 'visiting' | 'hosting'
   const [units,          setUnits]          = useState([]);
   const [selectedUnitId, setSelectedUnitId] = useState("");
@@ -75,7 +76,7 @@ export default function NewRequest() {
   const [employees,      setEmployees]      = useState([]);
   const [selectedEmpId,  setSelectedEmpId]  = useState("");
 
-  // ── Unit Admin EMPLOYEE_VISIT state ──────────────────────────────────────────
+  // â”€â”€ Unit Admin EMPLOYEE_VISIT state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [adminVisitorDeptId, setAdminVisitorDeptId] = useState("");
   const [adminVisitorEmpId, setAdminVisitorEmpId] = useState("");
   const [adminVisitorAllEmployees, setAdminVisitorAllEmployees] = useState([]);
@@ -125,11 +126,11 @@ export default function NewRequest() {
     companions: [],
   });
 
-  // ── Data fetching ─────────────────────────────────────────────────────────────
+  // â”€â”€ Data fetching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     const fetchDropdownData = async () => {
       try {
-        // Use the authenticated endpoint — the JWT tells the backend which unit DB to query.
+        // Use the authenticated endpoint  -  the JWT tells the backend which unit DB to query.
         const deptsRes = await apiClient.get("/departments");
         setDepartments(deptsRes.data.data || []);
       } catch (err) {
@@ -151,7 +152,24 @@ export default function NewRequest() {
     }
   }, [user?.role_type, formData.visit_category]);
 
-  // ── Visitor phone lookup ───────────────────────────────────────────────────────
+  // Fetch employees of the currently-managed unit for Super Admin EMPLOYEE_VISIT visitor picker
+  useEffect(() => {
+    if (user?.role_type === "super_admin" && activeUnit?.id && formData.visit_category === "EMPLOYEE_VISIT") {
+      const _t = Date.now();
+      Promise.allSettled([
+        apiClient.get("/departments", { params: { _t } }),
+        apiClient.get("/users/hosts", { params: { include_all: 'true', roles: 'employee', _t } }),
+      ]).then(([deptRes, empRes]) => {
+        if (deptRes.status === 'fulfilled') setDepartments(deptRes.value.data?.data ?? []);
+        if (empRes.status  === 'fulfilled') {
+          setAdminVisitorAllEmployees(empRes.value.data?.data ?? []);
+          setAdminVisitorEmployees(empRes.value.data?.data ?? []);
+        }
+      });
+    }
+  }, [user?.role_type, activeUnit?.id, formData.visit_category]);
+
+  // â”€â”€ Visitor phone lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleVisitorLookup = async () => {
     const phone = formData.visitor_phone.trim();
     if (!phone || phone.length < 5) {
@@ -189,7 +207,7 @@ export default function NewRequest() {
     }
   };
 
-  // ── Vendor phone lookup ───────────────────────────────────────────────────────
+  // â”€â”€ Vendor phone lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleVendorLookup = async () => {
     const phone = formData.visitor_phone.trim();
     if (!phone || phone.length < 5) {
@@ -230,7 +248,7 @@ export default function NewRequest() {
       .catch(() => {});
   }, []);
 
-  // ── Time helper: add minutes to "HH:MM" string ────────────────────────────────
+  // â”€â”€ Time helper: add minutes to "HH:MM" string â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const addMinutesToTime = (timeStr, minutes) => {
     const [h, m] = timeStr.split(':').map(Number);
     const total = h * 60 + m + minutes;
@@ -244,16 +262,21 @@ export default function NewRequest() {
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   };
 
-  // ── Standard handlers ─────────────────────────────────────────────────────────
+  // â”€â”€ Standard handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => {
       const next = { ...prev, [name]: value };
-      // Auto-fill end time when start time is set
+      // Auto-fill end time when start time changes.
+      // Update if: end is empty, end <= new start (invalid), or end is within
+      // the auto-30-min window of the new start (was previously auto-set).
+      // Only preserve end if user deliberately chose a window > 30 min after new start.
       if (name === 'visit_start_time' && value) {
         const auto30 = addMinutesToTime(value, 30);
-        // Only auto-fill if end is empty OR currently before/equal to new start
-        if (!prev.visit_end_time || prev.visit_end_time <= value) {
+        const noEnd          = !prev.visit_end_time;
+        const endBeforeStart = prev.visit_end_time && prev.visit_end_time <= value;
+        const endWithinAuto  = prev.visit_end_time && prev.visit_end_time <= auto30;
+        if (noEnd || endBeforeStart || endWithinAuto) {
           next.visit_end_time = auto30;
         }
       }
@@ -291,7 +314,7 @@ export default function NewRequest() {
     }));
   };
 
-  // ── EMPLOYEE_VISIT handlers ───────────────────────────────────────────────────
+  // â”€â”€ EMPLOYEE_VISIT handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const resetEmpVisitState = () => {
     setSelectedUnitId("");
     setEmpDeptId("");
@@ -325,7 +348,7 @@ export default function NewRequest() {
     if (uId) {
       try {
         // Load departments and ALL employees in this unit independently
-        const _t = Date.now(); // cache-buster — prevents 304 stale responses
+        const _t = Date.now(); // cache-buster  -  prevents 304 stale responses
         const [deptResult, empResult] = await Promise.allSettled([
           apiClient.get("/departments/public", { params: { unit_id: uId, _t } }),
           apiClient.get("/users/hosts", { params: { unit_id: uId, include_all: 'true', roles: 'employee', _t } }),
@@ -348,7 +371,7 @@ export default function NewRequest() {
           const list = (empResult.value.data?.data ?? []).filter(
             (emp) => !(String(emp.id) === String(user?.id) && String(emp.unit_id) === String(user?.unit_id))
           );
-          console.log("[NewRequest] Loaded", empResult.value.data?.data?.length, "employees from unit", uId, "→ after self-filter:", list.length);
+          console.log("[NewRequest] Loaded", empResult.value.data?.data?.length, "employees from unit", uId, "-> after self-filter:", list.length);
           setAllUnitEmployees(list);
           // If there are departments, we force department selection before listing employees
           if (hasDepts) {
@@ -439,7 +462,7 @@ export default function NewRequest() {
     }
   };
 
-  // ── Category change ────────────────────────────────────────────────────────────
+  // â”€â”€ Category change â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleCategoryChange = (category) => {
     const isSpot = category === 'SPOT';
     const isSecurity = ['security', 'receptionist', 'unit_admin'].includes(role);
@@ -467,7 +490,7 @@ export default function NewRequest() {
     resetAdminEmpVisitState();
   };
 
-  // ── Companions ─────────────────────────────────────────────────────────────────
+  // â”€â”€ Companions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const addCompanion = () => {
     setFormData((prev) => ({
       ...prev,
@@ -487,7 +510,7 @@ export default function NewRequest() {
     setFormData((prev) => ({ ...prev, companions: updated, accompanying_count: updated.length }));
   };
 
-  // ── Submit ─────────────────────────────────────────────────────────────────────
+  // â”€â”€ Submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const buildPayload = () => {
     const payload = { ...formData };
     const cat = payload.visit_category;
@@ -502,7 +525,7 @@ export default function NewRequest() {
     }
 
     if (cat === "EMPLOYEE_VISIT") {
-      if (isUnitAdmin) {
+      if (isAdminEmpVisit) {
         const selectedVisitor = adminVisitorAllEmployees.find(emp => String(emp.id) === String(adminVisitorEmpId));
         payload.visitor_name   = selectedVisitor?.full_name || null;
         payload.visitor_phone  = selectedVisitor?.phone     || null;
@@ -527,7 +550,10 @@ export default function NewRequest() {
           payload.visitor_name   = selectedEmp?.full_name || null;
           payload.visitor_phone  = selectedEmp?.phone     || null;
           payload.visitor_email  = selectedEmp?.email     || null;
-          payload.target_unit_id = Number(selectedUnitId) || null;
+          // Hosting mode: request is always stored in the HOST's own unit DB.
+          // Do NOT send target_unit_id — that would wrongly route the INSERT to the
+          // visitor's unit DB where the host_user_id doesn't exist (FK violation).
+          payload.target_unit_id = null;
         }
       }
       if (payload.host_user_id)   payload.host_user_id   = Number(payload.host_user_id);
@@ -558,7 +584,7 @@ export default function NewRequest() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // ── Time order validation ──────────────────────────────────────────────────
+    // â”€â”€ Time order validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const { visit_start_time, visit_end_time } = formData;
     if (visit_start_time && visit_end_time && visit_end_time <= visit_start_time) {
       toast.error('End time must be after start time.');
@@ -574,7 +600,7 @@ export default function NewRequest() {
       navigate("/requests");
     } catch (error) {
       const data = error.response?.data;
-      // ── Conflict detected → show confirmation modal instead of toast ──────
+      // ── Conflict detected → show confirmation modal instead of toast ──
       if (error.response?.status === 409 && data?.conflict) {
         setConflictModal({
           types:           data.types || [],
@@ -591,7 +617,7 @@ export default function NewRequest() {
         const details = zodErrors
           .map((e) => `${e.path?.join('.') || 'field'}: ${e.message}`)
           .join(' | ');
-        toast.error(`Validation failed — ${details}`, { duration: 8000 });
+        toast.error(`Validation failed  -  ${details}`, { duration: 8000 });
       } else {
         toast.error(data?.message || "Failed to create request");
       }
@@ -600,7 +626,7 @@ export default function NewRequest() {
     }
   };
 
-  // ── Force submit (override conflict) ──────────────────────────────────────────
+  // â”€â”€ Force submit (override conflict) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleForceSubmit = async () => {
     if (!conflictModal) return;
     setLoading(true);
@@ -617,8 +643,11 @@ export default function NewRequest() {
     }
   };
 
-  // ── Derived booleans ──────────────────────────────────────────────────────────
+  // â”€â”€ Derived booleans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const isUnitAdmin   = user?.role_type === "unit_admin";
+  const isSuperAdminUser = user?.role_type === "super_admin";
+  // Super Admin can create emp-visit only when managing a unit
+  const isAdminEmpVisit = (isUnitAdmin || (isSuperAdminUser && !!activeUnit));
   const cat           = formData.visit_category;
   const isVendor      = cat === "VENDOR";
   const isEmpVisit    = cat === "EMPLOYEE_VISIT";
@@ -643,7 +672,7 @@ export default function NewRequest() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">
-        {/* ── Step 1: Category Selection ──────────────────────────────────────── */}
+        {/* â”€â”€ Step 1: Category Selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         <div className="vms-card rounded-md p-8 shadow-card">
           <h2 className="text-xl text-loud mb-6 flex items-center gap-2">
             <span className="w-8 h-8 rounded-full bg-mixed-bg text-accent flex items-center justify-center text-sm font-bold">
@@ -672,7 +701,7 @@ export default function NewRequest() {
           </div>
         </div>
 
-        {/* ── Step 2: Visit Details ──────────────────────────────────────────── */}
+        {/* â”€â”€ Step 2: Visit Details â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         <div className="vms-card rounded-md p-8 shadow-card">
           <h2 className="text-xl text-loud mb-6 flex items-center gap-2">
             <span className="w-8 h-8 rounded-full bg-mixed-bg text-accent flex items-center justify-center text-sm font-bold">
@@ -725,14 +754,14 @@ export default function NewRequest() {
                 />
                 {formData.visit_start_time && formData.visit_end_time && formData.visit_end_time <= formData.visit_start_time && (
                   <p className="text-xs font-medium" style={{ color: '#ef4444' }}>
-                    ⚠ End time must be after {formData.visit_start_time}
+                    &#9888; End time must be after {formData.visit_start_time}
                   </p>
                 )}
               </div>
             </div>
 
-            {/* ── EMPLOYEE VISIT — mode selector + cascading employee picker ── */}
-            {isEmpVisit && !isUnitAdmin && (
+            {/* Employee Visit - mode selector + cascading employee picker */}
+            {isEmpVisit && !isAdminEmpVisit && (
               <div className="md:col-span-2 space-y-5">
 
                 {/* Mode toggle */}
@@ -742,8 +771,8 @@ export default function NewRequest() {
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {[
-                      { mode: "visiting", label: "I'm visiting someone",  desc: "You are the visitor — they must approve" },
-                      { mode: "hosting",  label: "I'm hosting someone",   desc: "You are the host — auto-approved" },
+                      { mode: "visiting", label: "I'm visiting someone",  desc: "You are the visitor  -  they must approve" },
+                      { mode: "hosting",  label: "I'm hosting someone",   desc: "You are the host  -  auto-approved" },
                     ].map(({ mode, label, desc }) => (
                       <button
                         key={mode}
@@ -770,7 +799,7 @@ export default function NewRequest() {
                     <span className="text-faint text-xs uppercase tracking-wider block mb-0.5">
                       {visitMode === "visiting" ? "Visitor (You)" : "Host (You)"}
                     </span>
-                    {user?.full_name} — {user?.designation || user?.role_type}
+                    {user?.full_name}  -  {user?.designation || user?.role_type}
                   </p>
                 </div>
 
@@ -786,16 +815,16 @@ export default function NewRequest() {
                     required
                     className={inputCls}
                   >
-                    <option value="">— Select Unit —</option>
+                    <option value=""> -  Select Unit  - </option>
                     {units.map(u => (
                       <option key={u.id} value={u.id}>
-                        {u.name}{u.city ? ` — ${u.city}` : ""}
+                        {u.name}{u.city ? `  -  ${u.city}` : ""}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                {/* Department picker — mandatory */}
+                {/* Department picker  -  mandatory */}
                 {selectedUnitId && empDepartments.length > 0 && (
                   <div className="space-y-2">
                     <label className="block text-sm font-medium text-loud flex items-center gap-1.5">
@@ -808,7 +837,7 @@ export default function NewRequest() {
                       required
                       className={inputCls}
                     >
-                      <option value="">— Select Department —</option>
+                      <option value=""> -  Select Department  - </option>
                       {empDepartments.map(d => (
                         <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
                       ))}
@@ -816,7 +845,7 @@ export default function NewRequest() {
                   </div>
                 )}
 
-                {/* Employee picker — disabled until department is selected if departments exist */}
+                {/* Employee picker  -  disabled until department is selected if departments exist */}
                 {selectedUnitId && (
                   <div className="space-y-2">
                     <label className="block text-sm font-medium text-loud flex items-center gap-1.5">
@@ -835,26 +864,26 @@ export default function NewRequest() {
                     >
                       <option value="">
                         {empDepartments.length > 0 && !empDeptId
-                          ? "— Select Department First —"
+                          ? " -  Select Department First  - "
                           : employees.length === 0
-                            ? (empDepartments.length > 0 ? "— No users found in this department —" : "— No users found in this unit —")
-                            : "— Select Person —"
+                            ? (empDepartments.length > 0 ? " -  No users found in this department  - " : " -  No users found in this unit  - ")
+                            : " -  Select Person  - "
                         }
                       </option>
                       {employees.map(emp => (
                         <option key={emp.id} value={emp.id}>
-                          {emp.full_name} ({emp.department_name ? `${emp.department_name} · ` : ''}{emp.designation_name || emp.role_type})
+                          {emp.full_name} ({emp.department_name ? `${emp.department_name}  ·  ` : ''}{emp.designation_name || emp.role_type})
                         </option>
                       ))}
                     </select>
                     {visitMode === "hosting" && (
                       <p className="text-xs text-faint mt-1">
-                        ✅ This request will be auto-approved since you are the host.
+                        &#10003; This request will be auto-approved since you are the host.
                       </p>
                     )}
                     {visitMode === "visiting" && (
                       <p className="text-xs text-faint mt-1">
-                        ⏳ The selected person will need to approve your visit.
+                        &#9203; The selected person will need to approve your visit.
                       </p>
                     )}
                   </div>
@@ -862,8 +891,8 @@ export default function NewRequest() {
               </div>
             )}
 
-            {/* ── EMPLOYEE VISIT for Unit Admin ── */}
-            {isEmpVisit && isUnitAdmin && (
+            {/* â”€â”€ EMPLOYEE VISIT for Unit Admin & Super Admin (while managing a unit) â”€â”€ */}
+            {isEmpVisit && isAdminEmpVisit && (
               <div className="md:col-span-2 space-y-6">
                 
                 {/* Section header or info */}
@@ -872,7 +901,10 @@ export default function NewRequest() {
                     Arrange Employee Visit
                   </p>
                   <p className="text-xs text-muted mt-1">
-                    Select a visitor from your unit and a host from any unit.
+                    {isSuperAdminUser
+                      ? `Select a visitor from the managed unit (${activeUnit?.name}) and a host from any unit.`
+                      : "Select a visitor from your unit and a host from any unit."
+                    }
                   </p>
                 </div>
 
@@ -880,7 +912,7 @@ export default function NewRequest() {
                 <div className="space-y-4 p-5 rounded-md border border-subtle bg-bg-primary/30">
                   <h3 className="text-sm font-semibold text-accent uppercase tracking-wider flex items-center gap-2">
                     <User className="w-4 h-4" />
-                    Visitor (From your unit: {user?.unit_name || 'My Unit'})
+                    Visitor (From: {isSuperAdminUser ? (activeUnit?.name || 'Managed Unit') : (user?.unit_name || 'My Unit')})
                   </h3>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -892,7 +924,7 @@ export default function NewRequest() {
                         onChange={handleAdminVisitorDeptChange}
                         className={inputCls}
                       >
-                        <option value="">— All Departments —</option>
+                        <option value=""> -  All Departments  - </option>
                         {departments.map(d => (
                           <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
                         ))}
@@ -910,11 +942,11 @@ export default function NewRequest() {
                         className={`${inputCls} disabled:opacity-50`}
                       >
                         <option value="">
-                          {adminVisitorEmployees.length === 0 ? "— No users found —" : "— Select Person —"}
+                          {adminVisitorEmployees.length === 0 ? " -  No users found  - " : " -  Select Person  - "}
                         </option>
                         {adminVisitorEmployees.map(emp => (
                           <option key={emp.id} value={emp.id}>
-                            {emp.full_name} ({emp.department_name ? `${emp.department_name} · ` : ''}{emp.designation_name || emp.role_type})
+                            {emp.full_name} ({emp.department_name ? `${emp.department_name}  ·  ` : ''}{emp.designation_name || emp.role_type})
                           </option>
                         ))}
                       </select>
@@ -939,10 +971,10 @@ export default function NewRequest() {
                         required
                         className={inputCls}
                       >
-                        <option value="">— Select Unit —</option>
+                        <option value=""> -  Select Unit  - </option>
                         {units.map(u => (
                           <option key={u.id} value={u.id}>
-                            {u.name}{u.city ? ` — ${u.city}` : ""}
+                            {u.name}{u.city ? `  -  ${u.city}` : ""}
                           </option>
                         ))}
                       </select>
@@ -959,7 +991,7 @@ export default function NewRequest() {
                               onChange={handleAdminHostDeptChange}
                               className={inputCls}
                             >
-                              <option value="">— All Departments —</option>
+                              <option value=""> -  All Departments  - </option>
                               {adminHostDepts.map(d => (
                                 <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
                               ))}
@@ -978,11 +1010,11 @@ export default function NewRequest() {
                             className={`${inputCls} disabled:opacity-50`}
                           >
                             <option value="">
-                              {adminHostEmployees.length === 0 ? "— No users found —" : "— Select Person —"}
+                              {adminHostEmployees.length === 0 ? " -  No users found  - " : " -  Select Person  - "}
                             </option>
                             {adminHostEmployees.map(emp => (
                               <option key={emp.id} value={emp.id}>
-                                {emp.full_name} ({emp.department_name ? `${emp.department_name} · ` : ''}{emp.designation_name || emp.role_type})
+                                {emp.full_name} ({emp.department_name ? `${emp.department_name}  ·  ` : ''}{emp.designation_name || emp.role_type})
                               </option>
                             ))}
                           </select>
@@ -995,7 +1027,7 @@ export default function NewRequest() {
               </div>
             )}
 
-            {/* ── Standard Visitor / Host section (non-EMPLOYEE_VISIT) ──────── */}
+            {/* â”€â”€ Standard Visitor / Host section (non-EMPLOYEE_VISIT) â”€â”€â”€â”€â”€â”€â”€â”€ */}
             {(() => {
               return (
                 <>
@@ -1011,7 +1043,7 @@ export default function NewRequest() {
                       <div className="flex gap-2">
                         <input
                           type="tel"
-                          placeholder="Enter visitor mobile number"
+                          placeholder="WhatsApp / mobile number"
                           value={formData.visitor_phone}
                           onChange={e => {
                             setFormData(p => ({ ...p, visitor_phone: e.target.value, visitor_name: '', visitor_email: '', visitor_id: '' }));
@@ -1040,19 +1072,19 @@ export default function NewRequest() {
                         <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
                           style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
                           <CheckCircle2 className="w-4 h-4 shrink-0" />
-                          <span><strong>Returning visitor</strong> — details auto-filled from our records.</span>
+                          <span><strong>Returning visitor</strong>  -  details auto-filled from our records.</span>
                         </div>
                       )}
                       {visitorLookupState === 'not_found' && (
                         <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
                           style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
                           <AlertCircle className="w-4 h-4 shrink-0" />
-                          <span><strong>New visitor</strong> — fill in the details below. They will be saved automatically.</span>
+                          <span><strong>New visitor</strong>  -  fill in the details below. They will be saved automatically.</span>
                         </div>
                       )}
                       {visitorLookupState === 'idle' && (
                         <p className="text-xs text-faint">
-                          Enter the visitor mobile number and click <strong>Lookup</strong>.
+                          Enter the visitor's WhatsApp / mobile number and click <strong>Lookup</strong>.
                           Details auto-fill for returning visitors.
                         </p>
                       )}
@@ -1144,7 +1176,7 @@ export default function NewRequest() {
                         Host (You)
                       </label>
                       <div className="py-2 text-loud font-medium border-b border-subtle">
-                        {user?.full_name} — {user?.designation || user?.role}
+                        {user?.full_name}  -  {user?.designation || user?.role}
                       </div>
                       <input type="hidden" name="host_user_id" value={user?.id || ""} />
                     </div>
@@ -1173,7 +1205,7 @@ export default function NewRequest() {
         </div>
 
 
-        {/* ── Step 3: Vendor Details (conditional) ─────────────────────────────── */}
+        {/* â”€â”€ Step 3: Vendor Details (conditional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {isVendor && (
           <div className="vms-card rounded-md p-8 shadow-card animate-fade-in">
             <h2 className="text-xl text-loud mb-6 flex items-center gap-2">
@@ -1203,7 +1235,7 @@ export default function NewRequest() {
                 />
               </div>
 
-              {/* Contact Phone with Lookup — full width */}
+              {/* Contact Phone with Lookup  -  full width */}
               <div className="space-y-2 md:col-span-2">
                 <label className="block text-sm font-medium text-loud flex items-center gap-2">
                   <Phone className="w-4 h-4 text-accent" />
@@ -1212,7 +1244,7 @@ export default function NewRequest() {
                 <div className="flex gap-2">
                   <input
                     type="tel" name="visitor_phone" required
-                    placeholder="Representative's mobile number"
+                    placeholder="Representative's WhatsApp / mobile number"
                     value={formData.visitor_phone}
                     onChange={e => {
                       setFormData(p => ({ ...p, visitor_phone: e.target.value, contact_person: '' }));
@@ -1238,14 +1270,14 @@ export default function NewRequest() {
                   <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
                     style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span><strong>Returning contact</strong> — name and email auto-filled from previous visit.</span>
+                    <span><strong>Returning contact</strong>  -  name and email auto-filled from previous visit.</span>
                   </div>
                 )}
                 {vendorLookupState === 'not_found' && (
                   <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
                     style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span><strong>New contact</strong> — fill in the name below.</span>
+                    <span><strong>New contact</strong>  -  fill in the name below.</span>
                   </div>
                 )}
                 {vendorLookupState === 'idle' && (
@@ -1255,7 +1287,7 @@ export default function NewRequest() {
                 )}
               </div>
 
-              {/* Contact Person — auto-filled or manual */}
+              {/* Contact Person  -  auto-filled or manual */}
               <div className="space-y-2 md:col-span-2">
                 <label className="block text-sm font-medium text-loud">Contact Person *</label>
                 <input
@@ -1283,7 +1315,7 @@ export default function NewRequest() {
           </div>
         )}
 
-        {/* ── Companions ─────────────────────────────────────────────────────── */}
+        {/* â”€â”€ Companions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         <div className="vms-card rounded-md p-5 sm:p-8 shadow-card">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
             <h2 className="text-xl text-loud flex items-center gap-2">
@@ -1359,7 +1391,7 @@ export default function NewRequest() {
           )}
         </div>
 
-        {/* ── Actions ────────────────────────────────────────────────────────── */}
+        {/* â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         <div className="flex justify-end gap-4 pt-4">
           <button
             type="button"
@@ -1385,7 +1417,7 @@ export default function NewRequest() {
         </div>
       </form>
 
-      {/* ── Schedule Conflict Modal — portalled to document.body to escape transform containing block ── */}
+      {/* â”€â”€ Schedule Conflict Modal  -  portalled to document.body to escape transform containing block â”€â”€ */}
       {conflictModal && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
           {/* Backdrop */}
@@ -1437,7 +1469,7 @@ export default function NewRequest() {
                   style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}
                 >
                   <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#c2410c' }}>
-                    🔴 Host is already busy
+                    &#128308; Host is already busy
                   </p>
                   <p className="text-sm" style={{ color: '#9a3412' }}>
                     <strong>{conflictModal.host_conflict.visitor_name}</strong> is already visiting the host during{' '}
@@ -1453,7 +1485,7 @@ export default function NewRequest() {
                   style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}
                 >
                   <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#c2410c' }}>
-                    🔴 Visitor already has another visit
+                    &#128308; Visitor already has another visit
                   </p>
                   <p className="text-sm" style={{ color: '#9a3412' }}>
                     This visitor already has a request at{' '}
@@ -1465,7 +1497,7 @@ export default function NewRequest() {
 
               <p className="text-xs pt-1" style={{ color: 'var(--color-text-faint)' }}>
                 You can go back and adjust the time, or continue anyway to override the conflict.
-                Overridden requests are flagged with a ⚠ badge for admin review.
+                Overridden requests are flagged with a &#9888; badge for admin review.
               </p>
             </div>
 
@@ -1502,3 +1534,4 @@ export default function NewRequest() {
     </div>
   );
 }
+

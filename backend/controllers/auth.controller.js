@@ -276,4 +276,28 @@ const changePassword = async (req, res) => {
   }
 };
 
-module.exports = { login, getMe, changePassword };
+// ── Token Refresh ────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/auth/refresh
+ * Requires a valid (non-expired) JWT via protect middleware.
+ * Issues a fresh JWT with the same payload — extends the session for active users.
+ */
+const refresh = async (req, res) => {
+  try {
+    const payload = {
+      userId:  req.user.id,
+      role:    req.user.role_type,
+      unit_db: req.user.unit_db,
+    };
+    const token = jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN || '8h',
+    });
+    return sendSuccess(res, { token }, 'Token refreshed.');
+  } catch (err) {
+    console.error('[AuthController] refresh error:', err.message);
+    return sendError(res, 'Token refresh failed.', 500);
+  }
+};
+
+module.exports = { login, getMe, changePassword, refresh };
