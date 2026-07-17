@@ -1,11 +1,12 @@
 // frontend/src/pages/super/UnitManagement.jsx
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Building2, Users, Layers, CheckCircle, AlertCircle, Globe } from 'lucide-react';
+import { Plus, X, Building2, Users, Layers, CheckCircle, AlertCircle, Globe, Search } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
 import PasswordStrength from '../../components/PasswordStrength';
 import { validatePassword } from '../../utils/passwordValidator';
+import Pagination from '../../components/shared/Pagination';
 
 const EMPTY_UNIT = {
   name: '', code: '', city: '', state: '', phone: '', email: '',
@@ -29,6 +30,21 @@ export default function UnitManagement() {
   const [unitForm,     setUnitForm]     = useState(EMPTY_UNIT);
   const [adminForm,    setAdminForm]    = useState(EMPTY_ADMIN);
   const [includeAdmin, setIncludeAdmin] = useState(true);
+  const [search,       setSearch]       = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page,         setPage]         = useState(1);
+  const [totalPages,   setTotalPages]   = useState(1);
+  const [totalCount,   setTotalCount]   = useState(0);
+  const limit = 10;
+
+  // Debounce search
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset page when search changes
+  useEffect(() => { setPage(1); }, [debouncedSearch]);
 
   const handleManageUnit = (unit) => {
     setActiveUnit({ id: unit.id, name: unit.name, db_name: unit.db_name });
@@ -38,11 +54,16 @@ export default function UnitManagement() {
   const fetchUnits = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get('/units');
-      setUnits(res.data?.data ?? []);
+      const params = { page, limit };
+      if (debouncedSearch) params.search = debouncedSearch;
+      const res = await apiClient.get('/units', { params });
+      const data = res.data?.data;
+      setUnits(data?.units ?? []);
+      setTotalPages(data?.pagination?.pages ?? 1);
+      setTotalCount(data?.pagination?.total ?? 0);
     } catch { toast.error('Failed to load units.'); }
     finally  { setLoading(false); }
-  }, []);
+  }, [page, debouncedSearch]);
 
   useEffect(() => { fetchUnits(); }, [fetchUnits]);
 
@@ -116,7 +137,7 @@ export default function UnitManagement() {
         {/* Stats row */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
-            { label: 'Total Units',  value: units.length,                                        icon: Building2,    color: 'var(--color-info)' },
+            { label: 'Total Units',  value: totalCount,                                          icon: Building2,    color: 'var(--color-info)' },
             { label: 'Active',       value: units.filter(u => u.db_status === 'ACTIVE').length,  icon: CheckCircle,  color: '#22c55e' },
             { label: 'Provisioning', value: units.filter(u => u.db_status !== 'ACTIVE').length,  icon: AlertCircle,  color: '#eab308' },
           ].map(({ label, value, icon: Icon, color }) => (
@@ -130,6 +151,18 @@ export default function UnitManagement() {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Search */}
+        <div className="vms-card p-3 flex items-center gap-2">
+          <Search size={14} style={{ color: 'var(--color-text-faint)' }} />
+          <input
+            className="flex-1 bg-transparent text-[13px] outline-none"
+            style={{ color: 'var(--color-text)' }}
+            placeholder="Search by name, code or city…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
         </div>
 
         {/* Units grid */}
@@ -211,6 +244,14 @@ export default function UnitManagement() {
               );
             })}
           </div>
+        )}
+        {!loading && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            totalCount={totalCount}
+            onPageChange={(p) => setPage(p)}
+          />
         )}
       </div>
 

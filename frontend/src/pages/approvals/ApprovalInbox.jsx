@@ -10,12 +10,15 @@ import {
  Check,
  X,
  ChevronDown,
+ ChevronLeft,
+ ChevronRight,
  Loader2,
  AlertTriangle,
 } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import StatusBadge from "../../components/shared/StatusBadge";
+import Pagination from "../../components/shared/Pagination";
 import useSocketEvent from "../../hooks/useSocketEvent";
 import useAuth from "../../hooks/useAuth";
 
@@ -391,14 +394,21 @@ function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
 export default function ApprovalInbox() {
  const { user } = useAuth();
  const isUnitAdmin = user?.role_type === "unit_admin";
- const [items, setItems] = useState([]);
- const [loading, setLoading] = useState(true);
+ const [items,      setItems]      = useState([]);
+ const [loading,    setLoading]    = useState(true);
+ const [page,       setPage]       = useState(1);
+ const [totalPages, setTotalPages] = useState(1);
+ const [totalCount, setTotalCount] = useState(0);
+ const limit = 10;
 
  const fetchInbox = useCallback(async () => {
  try {
  setLoading(true);
- const res = await apiClient.get("/approvals/inbox");
- setItems(res.data?.data || []);
+ const res = await apiClient.get("/approvals/inbox", { params: { page, limit } });
+ const data = res.data?.data;
+ setItems(data?.items || []);
+ setTotalPages(data?.pagination?.pages || 1);
+ setTotalCount(data?.pagination?.total || 0);
  } catch (err) {
  toast.error(
  err.response?.data?.message || "Failed to load approval inbox.",
@@ -406,7 +416,7 @@ export default function ApprovalInbox() {
  } finally {
  setLoading(false);
  }
- }, []);
+ }, [page]);
 
  useEffect(() => {
  fetchInbox();
@@ -416,29 +426,34 @@ export default function ApprovalInbox() {
  setItems((prev) =>
  prev.filter((i) => i.visit_request_id !== visitRequestId),
  );
+ setTotalCount((n) => Math.max(0, n - 1));
  };
 
- /* Socket: new request arrives — prepend card live */
+ /* Socket: new request arrives — prepend card live (page 1 only) */
  useSocketEvent('visit:request:new', (data) => {
-   setItems(prev => {
-     if (prev.some(i => i.visit_request_id === data.visit_request_id)) return prev;
-     return [{
-       visit_request_id: data.visit_request_id,
-       visitor_name:     data.visitor_name,
-       visitor_phone:    data.visitor_phone,
-       visit_date:       data.visit_date,
-       visit_start_time: data.visit_start_time,
-       visit_category:   data.visit_category,
-       purpose:          data.purpose,
-       assigned_at:      data.created_at,
-     }, ...prev];
-   });
+   if (page === 1) {
+     setItems(prev => {
+       if (prev.some(i => i.visit_request_id === data.visit_request_id)) return prev;
+       return [{
+         visit_request_id: data.visit_request_id,
+         visitor_name:     data.visitor_name,
+         visitor_phone:    data.visitor_phone,
+         visit_date:       data.visit_date,
+         visit_start_time: data.visit_start_time,
+         visit_category:   data.visit_category,
+         purpose:          data.purpose,
+         assigned_at:      data.created_at,
+       }, ...prev];
+     });
+   }
+   setTotalCount(n => n + 1);
    toast.success('New visit request received!', { icon: '📋', duration: 5000 });
- }, []);
+ }, [page]);
 
  /* Socket: own approve/reject from another view → remove card */
  useSocketEvent('visit:actioned', (data) => {
    setItems(prev => prev.filter(i => i.visit_request_id !== data.visit_request_id));
+   setTotalCount(n => Math.max(0, n - 1));
  }, []);
 
  return (
@@ -450,9 +465,9 @@ export default function ApprovalInbox() {
  <h1 className="text-2xl font-bold text-loud">
  Approval <em className="italic">Inbox</em>
  </h1>
- {!loading && items.length > 0 && (
+ {!loading && totalCount > 0 && (
  <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-accent text-white text-xs font-bold">
- {items.length}
+ {totalCount}
  </span>
  )}
  </div>
@@ -524,6 +539,12 @@ export default function ApprovalInbox() {
  onActionSuccess={handleActionSuccess}
  />
  ))}
+ <Pagination
+   page={page}
+   totalPages={totalPages}
+   totalCount={totalCount}
+   onPageChange={(p) => setPage(p)}
+ />
  </div>
  )}
  </div>

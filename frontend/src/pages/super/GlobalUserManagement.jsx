@@ -5,6 +5,7 @@ import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import PasswordStrength from '../../components/PasswordStrength';
 import { validatePassword } from '../../utils/passwordValidator';
+import Pagination from '../../components/shared/Pagination';
 
 const EMPTY_FORM = {
   full_name: '', email: '', phone: '', employee_code: '', password: '', role_type: 'global_auditor',
@@ -19,23 +20,42 @@ export default function GlobalUserManagement() {
   const [users,      setUsers]      = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [isOpen,     setIsOpen]     = useState(false);
-  const [editUser,   setEditUser]   = useState(null); // null = create, obj = edit
+  const [editUser,   setEditUser]   = useState(null);
   const [form,       setForm]       = useState(EMPTY_FORM);
   const [saving,     setSaving]     = useState(false);
   const [showPwd,    setShowPwd]    = useState(false);
   const [search,     setSearch]     = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page,       setPage]       = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const limit = 10;
+
+  // Debounce search input
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset page when search changes
+  useEffect(() => { setPage(1); }, [debouncedSearch]);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get('/central-users');
-      setUsers(res.data?.data ?? []);
+      const params = { page, limit };
+      if (debouncedSearch) params.search = debouncedSearch;
+      const res = await apiClient.get('/central-users', { params });
+      const data = res.data?.data;
+      setUsers(data?.users ?? []);
+      setTotalPages(data?.pagination?.pages ?? 1);
+      setTotalCount(data?.pagination?.total ?? 0);
     } catch {
       toast.error('Failed to load central users.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, debouncedSearch]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
@@ -122,9 +142,7 @@ export default function GlobalUserManagement() {
     }
   };
 
-  const filtered = users.filter(u =>
-    `${u.full_name} ${u.email} ${u.employee_code}`.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = users;  // server already filters
 
   const inputCls = 'vms-input w-full';
   const labelCls = 'block text-[11px] font-medium uppercase tracking-wider mb-1.5';
@@ -151,7 +169,7 @@ export default function GlobalUserManagement() {
         {/* Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
-            { label: 'Total Central Users', value: users.length,                                        color: 'var(--color-info)' },
+            { label: 'Total Central Users', value: totalCount,                                           color: 'var(--color-info)' },
             { label: 'Super Admins',         value: users.filter(u => u.role_type === 'super_admin').length,    color: '#7c3aed' },
             { label: 'Global Auditors',      value: users.filter(u => u.role_type === 'global_auditor').length, color: '#0369a1' },
           ].map(({ label, value, color }) => (
@@ -281,6 +299,12 @@ export default function GlobalUserManagement() {
                 })}
               </tbody>
             </table>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalCount={totalCount}
+              onPageChange={(p) => setPage(p)}
+            />
           </div>
         )}
       </div>

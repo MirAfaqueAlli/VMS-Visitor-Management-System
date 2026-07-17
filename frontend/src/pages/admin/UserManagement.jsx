@@ -10,6 +10,7 @@ import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
+import Pagination from "../../components/shared/Pagination";
 
 // ── Role styling ────────────────────────────────────────────────────────────
 const ROLE_CONFIG = {
@@ -378,6 +379,10 @@ export default function UserManagement() {
   const [panelOpen,      setPanelOpen]      = useState(false);
   const [editUser,       setEditUser]       = useState(null);
   const [deactivatingId, setDeactivatingId] = useState(null);
+  const [page,           setPage]           = useState(1);
+  const [totalPages,     setTotalPages]     = useState(1);
+  const [totalCount,     setTotalCount]     = useState(0);
+  const limit = 10;
 
   // Debounce search
   useEffect(() => {
@@ -385,21 +390,30 @@ export default function UserManagement() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // Reset to page 1 whenever search or role filter changes
+  useEffect(() => { setPage(1); }, [debouncedSearch, roleFilter]);
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
+      const params = { page, limit };
+      if (roleFilter) params.role = roleFilter;
+      if (debouncedSearch) params.search = debouncedSearch;
       const [usersRes, deptRes] = await Promise.all([
-        apiClient.get("/users", { params: roleFilter ? { role: roleFilter } : {} }),
+        apiClient.get("/users", { params }),
         apiClient.get("/departments"),
       ]);
-      setUsers(usersRes.data?.data || []);
-      setDepartments(deptRes.data?.data || []);
+      const usersData = usersRes.data?.data;
+      setUsers(usersData?.users || []);
+      setTotalPages(usersData?.pagination?.pages || 1);
+      setTotalCount(usersData?.pagination?.total || 0);
+      setDepartments(deptRes.data?.data?.departments || deptRes.data?.data || []);
     } catch {
       toast.error("Failed to load users.");
     } finally {
       setLoading(false);
     }
-  }, [roleFilter]);
+  }, [roleFilter, page, debouncedSearch]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -438,12 +452,6 @@ export default function UserManagement() {
     setEditUser(null); setDesignations([]); setPanelOpen(true);
   };
   const openEdit   = (u) => { setEditUser(u); setPanelOpen(true); };
-
-  const filtered = users.filter(u => {
-    if (!debouncedSearch) return true;
-    const q = debouncedSearch.toLowerCase();
-    return u.full_name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || u.employee_code?.toLowerCase().includes(q);
-  });
 
   const roleFilters = [
     { label: "All",          value: "" },
@@ -519,7 +527,7 @@ export default function UserManagement() {
               {roleFilters.map(({ label, value }) => (
                 <button
                   key={value}
-                  onClick={() => setRoleFilter(value)}
+                  onClick={() => { setRoleFilter(value); setPage(1); }}
                   className={`btn-primary ${roleFilter === value ? "bg-accent text-white" : "bg-bg-primary border border-subtle text-muted hover:border-border"}`}
                 >
                   {label}
@@ -550,12 +558,12 @@ export default function UserManagement() {
                       ))}
                     </tr>
                   ))
-                ) : filtered.length === 0 ? (
+                ) : users.length === 0 ? (
                   <tr>
                     <td colSpan="6" className="text-center py-16 text-faint italic">No users found.</td>
                   </tr>
                 ) : (
-                  filtered.map(u => (
+                  users.map(u => (
                     <tr key={u.id} className={`border-b border-subtle transition-colors duration-300 ${!u.is_active ? "opacity-50" : "hover:bg-bg-primary/40"}`}>
                       <td className="py-4 px-4">
                         <div className="flex items-center gap-3">
@@ -611,15 +619,23 @@ export default function UserManagement() {
             </table>
           </div>
 
-          {/* Footer summary */}
+          {/* Footer: count + pagination */}
           {!loading && (
-            <div className="mt-6 pt-4 border-t border-subtle flex items-center justify-between">
-              <span className="text-xs text-faint flex items-center gap-1.5">
-                <Users strokeWidth={1.5} className="w-3.5 h-3.5" />
-                {filtered.length} user{filtered.length !== 1 ? "s" : ""}
-                {roleFilter ? ` · ${ROLE_CONFIG[roleFilter]?.label}` : ""}
-              </span>
-              <span className="text-xs text-faint">{filtered.filter(u => u.is_active).length} active</span>
+            <div className="mt-6 pt-4 border-t border-subtle">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-faint flex items-center gap-1.5">
+                  <Users strokeWidth={1.5} className="w-3.5 h-3.5" />
+                  {totalCount} user{totalCount !== 1 ? "s" : ""}
+                  {roleFilter ? ` · ${ROLE_CONFIG[roleFilter]?.label}` : ""}
+                </span>
+                <span className="text-xs text-faint">{users.filter(u => u.is_active).length} active (this page)</span>
+              </div>
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                totalCount={totalCount}
+                onPageChange={(p) => setPage(p)}
+              />
             </div>
           )}
         </div>
