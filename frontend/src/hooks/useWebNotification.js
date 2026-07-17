@@ -44,7 +44,6 @@ export default function useWebNotification() {
       .register('/sw.js', { scope: '/' })
       .then((reg) => {
         swRegRef.current = reg;
-        
       })
       .catch((err) => {
         console.warn('[SW] Registration failed:', err.message);

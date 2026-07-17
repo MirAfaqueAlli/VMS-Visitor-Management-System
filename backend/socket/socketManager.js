@@ -94,10 +94,8 @@ function initSocket(httpServer) {
       socket.join(`unit:${unit_id}:all`);
     }
 
-   
 
     socket.on('disconnect', () => {
-      console.log(`[Socket] user #${userId} disconnected`);
     });
   });
 
@@ -126,7 +124,6 @@ function emitToUser(userId, unitDb, event, data) {
   }
   const dbKey = unitDb || 'central';
   const roomName = `user:${dbKey}:${userId}`;
- 
   io.to(roomName).emit(event, data);
 }
 
@@ -136,14 +133,7 @@ function emitToUnitSecurity(unitId, event, data) {
     console.warn('[Socket] emitToUnitSecurity failed: io is not initialized');
     return;
   }
-  const roomName = `unit:${unitId}:security`;
-  const room = io.sockets.adapter.rooms.get(roomName);
-  const socketCount = room ? room.size : 0;
- 
-  if (socketCount === 0) {
-    console.warn(`[Socket] ⚠ NO sockets in room "${roomName}" — event "${event}" will NOT be received by anyone! Check that the security user is logged in and connected.`);
-  }
-  io.to(roomName).emit(event, data);
+  io.to(`unit:${unitId}:security`).emit(event, data);
 }
 
 /** Emit to ALL connected users of a unit. */
@@ -152,11 +142,7 @@ function emitToUnit(unitId, event, data) {
     console.warn('[Socket] emitToUnit failed: io is not initialized');
     return;
   }
-  const roomName = `unit:${unitId}:all`;
-  const room = io.sockets.adapter.rooms.get(roomName);
-  const socketCount = room ? room.size : 0;
-
-  io.to(roomName).emit(event, data);
+  io.to(`unit:${unitId}:all`).emit(event, data);
 }
 
 module.exports = { initSocket, getIO, emitToUser, emitToUnitSecurity, emitToUnit };

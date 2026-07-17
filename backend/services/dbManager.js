@@ -39,7 +39,6 @@ function getPool(dbName) {
   if (!pools.has(dbName)) {
     const pool = mysql.createPool({ ...BASE_CONFIG, database: dbName });
     pools.set(dbName, pool);
-  
   }
   return pools.get(dbName);
 }
@@ -66,7 +65,6 @@ async function provisionUnitDb(dbName) {
 
   try {
     await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-
   } finally {
     await adminConn.end();
   }
@@ -115,7 +113,6 @@ async function provisionUnitDb(dbName) {
     for (const stmt of statements) {
       await conn.query(stmt);
     }
-
   } finally {
     conn.release();
   }
@@ -155,7 +152,6 @@ async function closeAll() {
   for (const [dbName, pool] of pools.entries()) {
     try {
       await pool.end();
-   
     } catch (err) {
       console.error(`[DBManager] Error closing pool for ${dbName}:`, err.message);
     }
