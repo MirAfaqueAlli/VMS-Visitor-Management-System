@@ -8,112 +8,7 @@ import {
 import useAuth from '../../hooks/useAuth';
 import apiClient from '../../api/axios';
 
-/* ── Inline SVG Illustration ──────────────────────────────────────────────── */
-function DeskIllustration() {
-  return (
-    <svg viewBox="0 0 420 280" fill="none" xmlns="http://www.w3.org/2000/svg"
-      style={{ width: '100%', maxWidth: '380px', margin: '0 auto', display: 'block' }}>
-      {/* Sky gradient area */}
-      <rect width="420" height="280" fill="url(#skyGrad)" rx="12" />
 
-      {/* Background buildings */}
-      <rect x="18" y="90" width="32" height="190" fill="#c7d9f8" rx="3" />
-      <rect x="28" y="70" width="18" height="210" fill="#b8cef5" rx="3" />
-      <rect x="370" y="95" width="35" height="185" fill="#c7d9f8" rx="3" />
-      <rect x="376" y="75" width="23" height="205" fill="#b8cef5" rx="3" />
-
-      {/* Middle buildings */}
-      <rect x="60" y="120" width="25" height="160" fill="#d0e3fb" rx="2" />
-      <rect x="340" y="115" width="28" height="165" fill="#d0e3fb" rx="2" />
-
-      {/* Building windows */}
-      <rect x="22" y="100" width="6" height="6" fill="#93c5fd" rx="1" opacity="0.7" />
-      <rect x="33" y="100" width="6" height="6" fill="#93c5fd" rx="1" opacity="0.7" />
-      <rect x="22" y="115" width="6" height="6" fill="#93c5fd" rx="1" opacity="0.5" />
-      <rect x="376" y="90" width="6" height="6" fill="#93c5fd" rx="1" opacity="0.7" />
-      <rect x="388" y="90" width="6" height="6" fill="#93c5fd" rx="1" opacity="0.7" />
-
-      {/* Security gate / turnstile */}
-      <rect x="300" y="140" width="5" height="120" fill="#3b82f6" rx="2" />
-      <rect x="330" y="140" width="5" height="120" fill="#3b82f6" rx="2" />
-      <rect x="300" y="155" width="35" height="4" fill="#60a5fa" rx="2" />
-      <rect x="300" y="200" width="35" height="4" fill="#60a5fa" rx="2" />
-      <rect x="303" y="140" width="29" height="12" fill="#2563eb" rx="3" />
-
-      {/* Gate scanner light */}
-      <circle cx="312" cy="146" r="3" fill="#93c5fd" />
-      <circle cx="312" cy="146" r="5" fill="#3b82f6" opacity="0.3" />
-
-      {/* Reception Desk */}
-      <rect x="110" y="195" width="190" height="65" fill="#1e3a8a" rx="8" />
-      <rect x="110" y="195" width="190" height="15" fill="#2563eb" rx="8" />
-      <rect x="118" y="202" width="174" height="8" fill="#3b82f6" rx="4" />
-
-      {/* Computer monitor */}
-      <rect x="175" y="145" width="70" height="50" fill="#1e40af" rx="5" />
-      <rect x="180" y="150" width="60" height="40" fill="#dbeafe" rx="3" />
-      {/* Screen content */}
-      <rect x="185" y="155" width="35" height="4" fill="#93c5fd" rx="2" />
-      <rect x="185" y="163" width="25" height="3" fill="#bfdbfe" rx="1.5" />
-      <rect x="185" y="170" width="30" height="3" fill="#bfdbfe" rx="1.5" />
-      {/* Monitor stand */}
-      <rect x="206" y="195" width="8" height="10" fill="#1e3a8a" rx="2" />
-      <rect x="200" y="204" width="20" height="3" fill="#1e3a8a" rx="1.5" />
-
-      {/* Security Guard / Person */}
-      {/* Head */}
-      <circle cx="155" cy="135" r="16" fill="#fed7aa" />
-      {/* Hair */}
-      <path d="M140 130 Q155 115 170 130" fill="#92400e" />
-      {/* Body - uniform */}
-      <rect x="136" y="150" width="38" height="45" fill="#1d4ed8" rx="6" />
-      {/* Uniform collar */}
-      <rect x="149" y="150" width="12" height="8" fill="#eff6ff" rx="2" />
-      {/* Badge on uniform */}
-      <rect x="140" y="158" width="10" height="7" fill="#fbbf24" rx="1" />
-      {/* Arms */}
-      <rect x="126" y="152" width="12" height="35" fill="#1d4ed8" rx="5" />
-      <rect x="172" y="152" width="12" height="35" fill="#1d4ed8" rx="5" />
-      {/* Hands */}
-      <circle cx="132" cy="187" r="6" fill="#fed7aa" />
-      <circle cx="178" cy="187" r="6" fill="#fed7aa" />
-      {/* Eyes */}
-      <circle cx="150" cy="134" r="3" fill="white" />
-      <circle cx="160" cy="134" r="3" fill="white" />
-      <circle cx="151" cy="135" r="1.5" fill="#1e293b" />
-      <circle cx="161" cy="135" r="1.5" fill="#1e293b" />
-      {/* Smile */}
-      <path d="M150 142 Q155 146 160 142" stroke="#92400e" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-
-      {/* Decorative plant */}
-      <rect x="60" y="230" width="20" height="30" fill="#854d0e" rx="3" />
-      <rect x="63" y="227" width="14" height="6" fill="#a16207" rx="2" />
-      {/* Plant leaves */}
-      <ellipse cx="70" cy="210" rx="18" ry="28" fill="#166534" />
-      <ellipse cx="55" cy="215" rx="12" ry="20" fill="#15803d" transform="rotate(-20 55 215)" />
-      <ellipse cx="85" cy="215" rx="12" ry="20" fill="#15803d" transform="rotate(20 85 215)" />
-      <ellipse cx="70" cy="195" rx="10" ry="18" fill="#16a34a" />
-
-      {/* VMS Logo/badge floating */}
-      <rect x="350" y="155" width="45" height="35" fill="white" rx="8" opacity="0.9" />
-      <rect x="356" y="161" width="14" height="14" fill="#3b82f6" rx="3" />
-      <rect x="374" y="163" width="15" height="3" fill="#1e3a8a" rx="1.5" />
-      <rect x="374" y="169" width="10" height="2" fill="#93c5fd" rx="1" />
-      <path d="M361 165 L363 172 L359 172 Z" fill="white" />
-
-      {/* Ground */}
-      <rect x="0" y="255" width="420" height="25" fill="#dbeafe" opacity="0.5" rx="0" />
-
-      {/* Gradients */}
-      <defs>
-        <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#eff6ff" />
-          <stop offset="100%" stopColor="#dbeafe" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
-}
 
 /* ── Main Login Component ─────────────────────────────────────────────────── */
 export default function Login() {
@@ -275,8 +170,19 @@ export default function Login() {
           </div>
 
           {/* Illustration */}
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <DeskIllustration />
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 0' }}>
+            <img
+              src="/login-illustration.png"
+              alt="VMS — Visitor Management System"
+              style={{
+                width: '100%',
+                maxWidth: '360px',
+                height: 'auto',
+                objectFit: 'contain',
+                borderRadius: '12px',
+                filter: 'drop-shadow(0 8px 24px rgba(30,58,138,0.18))',
+              }}
+            />
           </div>
 
           {/* Feature pills */}

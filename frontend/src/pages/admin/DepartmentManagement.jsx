@@ -1,9 +1,10 @@
 // frontend/src/pages/admin/DepartmentManagement.jsx
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Trash2, Tag } from 'lucide-react';
+import { Plus, X, Trash2, Tag, Search } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
+import Pagination from '../../components/shared/Pagination';
 
 const EMPTY = { name: '', code: '', description: '', designations: [] };
 
@@ -16,15 +17,35 @@ export default function DepartmentManagement() {
   const [form,       setForm]       = useState(EMPTY);
   const [saving,     setSaving]     = useState(false);
   const [desigInput, setDesigInput] = useState('');
+  const [search,     setSearch]     = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page,       setPage]       = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const limit = 10;
+
+  // Debounce search
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset page on search change
+  useEffect(() => { setPage(1); }, [debouncedSearch]);
 
   const fetchDepts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get('/departments');
-      setDepts(res.data?.data ?? []);
+      const params = { page, limit };
+      if (debouncedSearch) params.search = debouncedSearch;
+      const res = await apiClient.get('/departments', { params });
+      const data = res.data?.data;
+      setDepts(data?.departments ?? []);
+      setTotalPages(data?.pagination?.pages ?? 1);
+      setTotalCount(data?.pagination?.total ?? 0);
     } catch { toast.error('Failed to load departments.'); }
     finally  { setLoading(false); }
-  }, []);
+  }, [page, debouncedSearch]);
 
   useEffect(() => { fetchDepts(); }, [fetchDepts]);
 
@@ -103,16 +124,29 @@ export default function DepartmentManagement() {
         {/* Table card */}
         <div className="vms-card overflow-hidden">
           <div
-            className="px-5 py-4 flex items-center justify-between"
+            className="px-5 py-4 flex items-center justify-between gap-4"
             style={{ borderBottom: '1px solid var(--color-border)' }}
           >
-            <h2 className="font-semibold text-[13px]" style={{ color: 'var(--color-text)' }}>
-              Departments
-              <span className="ml-2 text-[11px] font-normal" style={{ color: 'var(--color-text-faint)' }}>
-                ({depts.length})
-              </span>
-            </h2>
-            <button className="btn-primary" onClick={openAdd}>
+            <div className="flex items-center gap-3 flex-1">
+              <h2 className="font-semibold text-[13px] shrink-0" style={{ color: 'var(--color-text)' }}>
+                Departments
+                <span className="ml-2 text-[11px] font-normal" style={{ color: 'var(--color-text-faint)' }}>
+                  ({totalCount})
+                </span>
+              </h2>
+              {/* Inline search */}
+              <div className="flex items-center gap-1.5 flex-1 max-w-xs px-3 py-1.5 rounded-full border border-subtle bg-bg-primary">
+                <Search size={12} style={{ color: 'var(--color-text-faint)' }} />
+                <input
+                  className="flex-1 bg-transparent text-[12px] outline-none"
+                  style={{ color: 'var(--color-text)' }}
+                  placeholder="Search…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <button className="btn-primary shrink-0" onClick={openAdd}>
               <Plus size={14} /> Add Department
             </button>
           </div>
@@ -184,6 +218,14 @@ export default function DepartmentManagement() {
                 ))}
               </tbody>
             </table>
+          )}
+          {!loading && (
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalCount={totalCount}
+              onPageChange={(p) => setPage(p)}
+            />
           )}
         </div>
       </div>

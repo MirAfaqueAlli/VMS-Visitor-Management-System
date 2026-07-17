@@ -48,6 +48,27 @@ const listPublicDepartments = async (req, res) => {
 // ── List Departments (authenticated) ──────────────────────────────────────────
 const listDepartments = async (req, res) => {
   try {
+    const { search } = req.query;
+    const page   = Math.max(1, parseInt(req.query.page  || '1',  10));
+    const limit  = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const offset = (page - 1) * limit;
+
+    const conditions = ['d.is_active = 1'];
+    const params     = [];
+
+    if (search && search.trim()) {
+      conditions.push('(d.name LIKE ? OR d.code LIKE ?)');
+      const like = `%${search.trim()}%`;
+      params.push(like, like);
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const [[{ total }]] = await req.db.query(
+      `SELECT COUNT(*) AS total FROM departments d ${where}`,
+      params
+    );
+
     const [rows] = await req.db.query(
       `SELECT d.id, d.name, d.code, d.description, d.is_active, d.created_at,
               d.unit_id,
@@ -56,16 +77,22 @@ const listDepartments = async (req, res) => {
        FROM departments d
        LEFT JOIN users u   ON u.department_id = d.id AND u.is_active = 1 AND u.deleted_at IS NULL
        LEFT JOIN designations des ON des.department_id = d.id AND des.is_active = 1
-       WHERE d.is_active = 1
-       GROUP BY d.id ORDER BY d.name ASC`
+       ${where}
+       GROUP BY d.id ORDER BY d.name ASC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
 
-    return sendSuccess(res, rows, 'Departments fetched successfully.');
+    return sendSuccess(res, {
+      departments: rows,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    }, 'Departments fetched successfully.');
   } catch (err) {
     console.error('[DepartmentController] listDepartments error:', err.message);
     return sendError(res, 'Failed to fetch departments.', 500);
   }
 };
+
 
 // ── Create Department ─────────────────────────────────────────────────────────
 /**

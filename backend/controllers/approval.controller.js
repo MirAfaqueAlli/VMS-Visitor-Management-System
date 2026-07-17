@@ -48,9 +48,10 @@ const getISTDateString = (d = new Date()) => {
 
 // ── getInbox ──────────────────────────────────────────────────────────────────
 /**
- * GET /api/approvals/inbox
+ * GET /api/approvals/inbox?page=1&limit=10
  * Returns PENDING visit requests where the logged-in user is the host.
  * Dept admins can also see pending requests in their department.
+ * Supports server-side pagination via page + limit query params.
  */
 const getInbox = async (req, res) => {
   try {
@@ -64,23 +65,32 @@ const getInbox = async (req, res) => {
       !!(req.headers['x-unit-db'] || req.headers['x-unit-id']);
 
     if ((user.role_type === 'super_admin' || user.role_type === 'global_auditor') && !isManagingUnit) {
-      return sendSuccess(res, [], 'Inbox fetched successfully.');
+      return sendSuccess(res, { items: [], pagination: { page: 1, limit: 10, total: 0, pages: 0 } }, 'Inbox fetched successfully.');
     }
+
+    // Pagination params
+    const page  = Math.max(1, parseInt(req.query.page  || '1',  10));
+    const limit = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const offset = (page - 1) * limit;
 
     const conditions = ["vr.status = 'PENDING'"];
     const params     = [];
 
     if (isUnitAdmin(user) || isManagingUnit) {
       // See all pending requests in their unit DB
-
     } else {
-
       // Regular employees see only requests where they are the host
       conditions.push('vr.host_user_id = ?');
       params.push(user.id);
     }
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+    // Count total matching rows
+    const [[{ total }]] = await req.db.query(
+      `SELECT COUNT(*) AS total FROM visit_requests vr ${whereClause}`,
+      params
+    );
 
     const [rows] = await req.db.query(
       `SELECT vr.id AS visit_request_id, vr.visit_date, vr.visit_start_time,
@@ -92,12 +102,16 @@ const getInbox = async (req, res) => {
        JOIN users h ON h.id = vr.host_user_id
        LEFT JOIN departments d ON d.id = vr.department_id
        ${whereClause}
-       ORDER BY vr.created_at DESC`,
-      params
+       ORDER BY vr.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
 
-    const mappedRows = rows.map(r => ({ ...r, approval_id: r.visit_request_id, action: 'PENDING' }));
-    return sendSuccess(res, mappedRows, 'Inbox fetched successfully.');
+    const items = rows.map(r => ({ ...r, approval_id: r.visit_request_id, action: 'PENDING' }));
+    return sendSuccess(res, {
+      items,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    }, 'Inbox fetched successfully.');
   } catch (err) {
     console.error('[ApprovalController] getInbox error:', err.message);
     return sendError(res, 'Failed to fetch approval inbox.', 500);
