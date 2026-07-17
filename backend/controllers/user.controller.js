@@ -165,9 +165,7 @@ const listHosts = async (req, res) => {
     }
 
     // Debug log for cross-unit employee lookup troubleshooting
-    if (isCrossUnit) {
-      console.log(`[UserController] listHosts: unit_id=${unit_id || unit_code} → ${rows.length} hosts found (roleFilter: ${roleFilter}, include_all: ${include_all}, department_id: ${department_id || 'none'})`);
-    }
+    
 
     return sendSuccess(res, rows, 'Hosts fetched successfully.');
   } catch (err) {

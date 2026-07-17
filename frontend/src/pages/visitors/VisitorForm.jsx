@@ -56,7 +56,7 @@ export default function VisitorForm() {
  }
 
  // Debug: log what's being sent
- console.log('[VisitorForm] Submitting fields:', Object.fromEntries(data.entries()));
+
 
  await apiClient.post("/visitors", data);
 
