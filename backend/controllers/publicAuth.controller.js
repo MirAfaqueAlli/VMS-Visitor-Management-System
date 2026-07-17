@@ -69,7 +69,7 @@ const sendPhoneOtp = async (req, res) => {
 
     const apiKey = process.env.FAST2SMS_API_KEY;
     if (!apiKey) {
-      console.log(`[PublicAuth] [DEV] Phone OTP for ${phone}: ${otp}`);
+     
       return sendSuccess(res, { dev_otp: otp }, 'OTP generated (SMS not sent — no API key)', 200);
     }
 
@@ -132,7 +132,7 @@ const sendEmailOtp = async (req, res) => {
       console.error('[PublicAuth] Email OTP delivery failed:', result.error);
       // In dev, still show otp
       const isDev = process.env.NODE_ENV !== 'production';
-      console.log(`[PublicAuth] [DEV] Email OTP for ${email}: ${otp}`);
+     
       return sendSuccess(
         res,
         isDev ? { dev_otp: otp } : {},

@@ -107,7 +107,7 @@ const initialize = async (req, res) => {
     );
 
     const adminId = userResult.insertId;
-    console.log(`[Setup] System initialized — org "${org_name}" (id=${orgId}), super_admin "${admin_email}" (id=${adminId})`);
+   
 
     // ── Issue session token so the frontend can auto-login immediately ──────────
     const token = jwt.sign(

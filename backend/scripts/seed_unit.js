@@ -108,10 +108,7 @@ async function seedUnit() {
          '${passwordHash}', '${empCode}', 1)
     `);
 
-    console.log(`\n✅ Unit "${name}" (${code}) fully provisioned!`);
-    console.log(`   Admin email:  ${email}`);
-    console.log(`   Admin pass:   Admin@1234`);
-    console.log(`   Unit code:    ${code}\n`);
+ 
 
   } catch (err) {
     console.error('❌ Seed failed:', err.message);

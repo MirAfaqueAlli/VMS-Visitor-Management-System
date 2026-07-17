@@ -583,7 +583,7 @@ const createRequest = async (req, res) => {
             purpose:          purpose,
             created_at:       new Date(),
           });
-          console.log(`[VisitRequestController] visit:request:new emitted to host #${effectiveHostId} (db: ${hostSocketDb})`);
+        
         } catch (socketErr) {
           console.error('[VisitRequestController] Failed to emit socket notification:', socketErr.message);
         }
