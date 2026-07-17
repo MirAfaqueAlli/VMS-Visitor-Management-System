@@ -13,13 +13,16 @@ const UNIT_MANAGEABLE_ROLES = ['unit_admin', 'employee', 'security', 'receptioni
 
 // ── List Users ────────────────────────────────────────────────────────────────
 /**
- * GET /api/users
+ * GET /api/users?page=1&limit=10&role=employee&search=john
  * super_admin / unit_admin → all users in their unit DB
- * dept_admin              → only their own department
  */
 const listUsers = async (req, res) => {
   try {
-    const { role } = req.query;
+    const { role, search } = req.query;
+    const page   = Math.max(1, parseInt(req.query.page  || '1',  10));
+    const limit  = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const offset = (page - 1) * limit;
+
     const conditions = ['u.deleted_at IS NULL'];
     const params     = [];
 
@@ -32,7 +35,18 @@ const listUsers = async (req, res) => {
       params.push(role);
     }
 
+    if (search && search.trim()) {
+      conditions.push('(u.full_name LIKE ? OR u.email LIKE ? OR u.employee_code LIKE ?)');
+      const like = `%${search.trim()}%`;
+      params.push(like, like, like);
+    }
+
     const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const [[{ total }]] = await req.db.query(
+      `SELECT COUNT(*) AS total FROM users u ${where}`,
+      params
+    );
 
     const [rows] = await req.db.query(
       `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
@@ -42,16 +56,21 @@ const listUsers = async (req, res) => {
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id
        ${where}
-       ORDER BY u.full_name ASC`,
-      params
+       ORDER BY u.full_name ASC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
 
-    return sendSuccess(res, rows, 'Users fetched successfully.');
+    return sendSuccess(res, {
+      users: rows,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    }, 'Users fetched successfully.');
   } catch (err) {
     console.error('[UserController] listUsers error:', err.message);
     return sendError(res, 'Failed to fetch users.', 500);
   }
 };
+
 
 // ── List Hosts (public-ish — used by visitor form and employee visit picker) ─────────
 /**

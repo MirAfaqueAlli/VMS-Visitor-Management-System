@@ -322,7 +322,8 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
     if (showLoading) setPanelLoading(true);
     try {
       const res   = await apiClient.get('/approvals/inbox');
-      const items = res.data?.data ?? [];
+      // Inbox is now paginated — response shape: { items: [], pagination: {} }
+      const items = res.data?.data?.items ?? res.data?.data ?? [];
       if (items.length > prevCountRef.current) {
         toast.success('New visit request waiting for your approval!', { icon: '🔔', duration: 5000 });
       }
@@ -349,6 +350,57 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
       icon: '🔔',
       duration: 6000,
     });
+  }, []);
+
+  /* Socket: my request was APPROVED — notify the requester (Employee A) */
+  useSocketEvent('visit:approved', (data) => {
+    const by   = data.approved_by  ? ` by ${data.approved_by}`  : '';
+    const date = data.visit_date   ? ` on ${data.visit_date}`   : '';
+    const pass = data.pass_number  ? ` · Gate Pass: ${data.pass_number}` : '';
+    toast.success(
+      `✅ Your visit request${date} was approved${by}.${pass}`,
+      {
+        duration: 10000,
+        style: {
+          maxWidth: '400px',
+          fontWeight: 600,
+          fontSize: '13px',
+          background: 'var(--color-bg-primary)',
+          color: 'var(--color-text)',
+          border: '1px solid #22c55e',
+          borderRadius: '10px',
+          padding: '14px 16px',
+          cursor: 'pointer',
+        },
+        icon: '✅',
+        id: `approved-${data.visit_request_id}`,
+      }
+    );
+  }, []);
+
+  /* Socket: my request was REJECTED — notify the requester (Employee A) */
+  useSocketEvent('visit:rejected', (data) => {
+    const by     = data.rejected_by ? ` by ${data.rejected_by}` : '';
+    const reason = data.remarks     ? `\nReason: "${data.remarks}"` : '';
+    toast.error(
+      `❌ Your visit request was declined${by}.${reason}`,
+      {
+        duration: 12000,
+        style: {
+          maxWidth: '400px',
+          fontWeight: 600,
+          fontSize: '13px',
+          background: 'var(--color-bg-primary)',
+          color: 'var(--color-text)',
+          border: '1px solid #ef4444',
+          borderRadius: '10px',
+          padding: '14px 16px',
+          cursor: 'pointer',
+        },
+        icon: '❌',
+        id: `rejected-${data.visit_request_id}`,
+      }
+    );
   }, []);
 
   /* Socket: meeting conflict alert — host is already in a meeting when a new visitor checks in */

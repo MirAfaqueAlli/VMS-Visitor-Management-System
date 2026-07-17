@@ -10,13 +10,33 @@ const { validatePassword } = require('../utils/passwordValidator.util');
 
 // ── List Units ────────────────────────────────────────────────────────────────
 /**
- * GET /api/units
+ * GET /api/units?page=1&limit=10&search=hq
  * super_admin → all units
  * global_auditor → all units (read-only)
- * Others → 403
  */
 const listUnits = async (req, res) => {
   try {
+    const { search } = req.query;
+    const page   = Math.max(1, parseInt(req.query.page  || '1',  10));
+    const limit  = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const offset = (page - 1) * limit;
+
+    const conditions = [];
+    const params     = [];
+
+    if (search && search.trim()) {
+      conditions.push('(u.name LIKE ? OR u.code LIKE ? OR u.city LIKE ?)');
+      const like = `%${search.trim()}%`;
+      params.push(like, like, like);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const [[{ total }]] = await centralPool.query(
+      `SELECT COUNT(*) AS total FROM units u ${where}`,
+      params
+    );
+
     const [units] = await centralPool.query(
       `SELECT u.id, u.name, u.code, u.type, u.db_name, u.db_status,
               u.city, u.state, u.phone, u.email, u.is_active,
@@ -24,10 +44,13 @@ const listUnits = async (req, res) => {
               o.name AS organization_name
        FROM units u
        JOIN organizations o ON o.id = u.organization_id
-       ORDER BY u.name ASC`
+       ${where}
+       ORDER BY u.name ASC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
 
-    // For each unit, fetch live stats from its own DB
+    // For each unit in this PAGE only, fetch live stats from its own DB
     const enriched = await Promise.all(
       units.map(async (unit) => {
         let userCount = 0;
@@ -49,12 +72,16 @@ const listUnits = async (req, res) => {
       })
     );
 
-    return sendSuccess(res, enriched, 'Units fetched successfully.');
+    return sendSuccess(res, {
+      units: enriched,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    }, 'Units fetched successfully.');
   } catch (err) {
     console.error('[UnitController] listUnits error:', err.message);
     return sendError(res, 'Failed to fetch units.', 500);
   }
 };
+
 
 // ── Get Unit By ID ────────────────────────────────────────────────────────────
 const getUnitById = async (req, res) => {

@@ -12,19 +12,47 @@ const { logAudit } = require('../utils/auditLogger.util');
 // ── List Central Users ────────────────────────────────────────────────────────
 const listCentralUsers = async (req, res) => {
   try {
+    const { search } = req.query;
+    const page   = Math.max(1, parseInt(req.query.page  || '1',  10));
+    const limit  = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const offset = (page - 1) * limit;
+
+    const conditions = ['deleted_at IS NULL'];
+    const params     = [];
+
+    if (search && search.trim()) {
+      conditions.push('(full_name LIKE ? OR email LIKE ? OR employee_code LIKE ?)');
+      const like = `%${search.trim()}%`;
+      params.push(like, like, like);
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const [[{ total }]] = await centralPool.query(
+      `SELECT COUNT(*) AS total FROM users ${where}`,
+      params
+    );
+
     const [rows] = await centralPool.query(
       `SELECT id, role_type, full_name, email, phone, employee_code, is_active,
               last_login_at, created_at, updated_at
        FROM users
-       WHERE deleted_at IS NULL
-       ORDER BY role_type ASC, full_name ASC`
+       ${where}
+       ORDER BY role_type ASC, full_name ASC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
-    return sendSuccess(res, rows, 'Central users fetched successfully.');
+
+    return sendSuccess(res, {
+      users: rows,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    }, 'Central users fetched successfully.');
   } catch (err) {
     console.error('[CentralUserController] listCentralUsers error:', err.message);
     return sendError(res, 'Failed to fetch central users.', 500);
   }
 };
+
 
 // ── Create Central User ───────────────────────────────────────────────────────
 const createCentralUser = async (req, res) => {
