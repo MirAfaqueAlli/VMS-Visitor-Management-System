@@ -37,12 +37,10 @@ export function SocketProvider({ children }) {
     setSocket(newSocket); // ← triggers re-render so children get the socket
 
     newSocket.on('connect', () => {
-      console.log('[Socket] Connected:', newSocket.id);
       setConnected(true);
     });
 
-    newSocket.on('disconnect', (reason) => {
-      console.log('[Socket] Disconnected:', reason);
+    newSocket.on('disconnect', () => {
       setConnected(false);
     });
 

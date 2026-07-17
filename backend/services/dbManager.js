@@ -39,7 +39,6 @@ function getPool(dbName) {
   if (!pools.has(dbName)) {
     const pool = mysql.createPool({ ...BASE_CONFIG, database: dbName });
     pools.set(dbName, pool);
-    console.log(`[DBManager] Pool created for database: ${dbName}`);
   }
   return pools.get(dbName);
 }
@@ -55,8 +54,6 @@ const centralPool = getPool(CENTRAL_DB_NAME);
  * Returns the pool for the new database.
  */
 async function provisionUnitDb(dbName) {
-  console.log(`[DBManager] Provisioning new unit database: ${dbName}`);
-
   // Step 1: Connect WITHOUT a database to run CREATE DATABASE
   const adminConn = await mysql.createConnection({
     host:     BASE_CONFIG.host,
@@ -66,7 +63,6 @@ async function provisionUnitDb(dbName) {
 
   try {
     await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    console.log(`[DBManager] Database '${dbName}' created or already exists.`);
   } finally {
     await adminConn.end();
   }
@@ -115,7 +111,6 @@ async function provisionUnitDb(dbName) {
     for (const stmt of statements) {
       await conn.query(stmt);
     }
-    console.log(`[DBManager] Schema applied to '${dbName}' — ${statements.length} statements executed.`);
   } finally {
     conn.release();
   }
@@ -155,7 +150,6 @@ async function closeAll() {
   for (const [dbName, pool] of pools.entries()) {
     try {
       await pool.end();
-      console.log(`[DBManager] Pool closed: ${dbName}`);
     } catch (err) {
       console.error(`[DBManager] Error closing pool for ${dbName}:`, err.message);
     }

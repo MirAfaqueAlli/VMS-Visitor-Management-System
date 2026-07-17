@@ -521,9 +521,10 @@ function EmployeeDashboard() {
  apiClient.get("/visit-requests/my?upcoming=true&limit=5"),
  apiClient.get("/visit-requests/my?limit=1"),
  ]);
- setInbox(inboxRes.data?.data ?? []);
- setUpcomingVisits(upcomingRes.data?.data?.requests ?? []);
- setMyTotal(totalRes.data?.data?.pagination?.total ?? 0);
+  // Inbox is paginated: response is { items: [], pagination: {} }
+  setInbox(inboxRes.data?.data?.items ?? inboxRes.data?.data ?? []);
+  setUpcomingVisits(upcomingRes.data?.data?.requests ?? []);
+  setMyTotal(totalRes.data?.data?.pagination?.total ?? 0);
  } catch (err) {
  toast.error(err?.response?.data?.message || "Failed to load dashboard.");
  } finally {
@@ -780,9 +781,11 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
  apiClient.get("/visit-requests?status=PENDING&limit=1"),
  ]);
  setDashData(dashRes.data?.data ?? dashRes.data);
- const ib = inboxRes.data?.data ?? [];
- setInbox(Array.isArray(ib) ? ib : []);
- setPendingCount(pendingRes.data?.data?.pagination?.total ?? 0);
+  // Inbox is paginated: response is { items: [], pagination: {} }
+  const ibRaw = inboxRes.data?.data;
+  const ib = ibRaw?.items ?? (Array.isArray(ibRaw) ? ibRaw : []);
+  setInbox(ib);
+  setPendingCount(pendingRes.data?.data?.pagination?.total ?? 0);
  } catch (err) {
  toast.error(err?.response?.data?.message || "Failed to load dashboard.");
  } finally {
@@ -1046,7 +1049,9 @@ function SuperAdminDashboard() {
         apiClient.get('/units'),
         apiClient.get('/reports/global-summary'),
       ]);
-      setUnits(unitsRes.data?.data ?? []);
+      // Units API is paginated: response is { units: [], pagination: {} }
+      const unitsRaw = unitsRes.data?.data;
+      setUnits(unitsRaw?.units ?? (Array.isArray(unitsRaw) ? unitsRaw : []));
       setSummary(summaryRes.data?.data ?? {});
     } catch { /* silent */ }
     finally { setLoading(false); }
