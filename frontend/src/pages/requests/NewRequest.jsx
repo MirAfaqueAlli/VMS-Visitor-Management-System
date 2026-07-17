@@ -297,7 +297,6 @@ export default function NewRequest() {
         });
         setHosts(hostsRes.data.data || []);
       } catch (err) {
-        console.warn("Failed to load hosts", err);
         toast.error("Failed to load hosts for selected department.");
       }
     }
@@ -371,7 +370,6 @@ export default function NewRequest() {
           const list = (empResult.value.data?.data ?? []).filter(
             (emp) => !(String(emp.id) === String(user?.id) && String(emp.unit_id) === String(user?.unit_id))
           );
-          console.log("[NewRequest] Loaded", empResult.value.data?.data?.length, "employees from unit", uId, "-> after self-filter:", list.length);
           setAllUnitEmployees(list);
           // If there are departments, we force department selection before listing employees
           if (hasDepts) {
@@ -594,7 +592,6 @@ export default function NewRequest() {
     setLoading(true);
     try {
       const payload = buildPayload();
-      console.log('[NewRequest] Submitting payload:', JSON.stringify(payload, null, 2));
       await apiClient.post("/visit-requests", payload);
       toast.success("Visit request created successfully");
       navigate("/requests");

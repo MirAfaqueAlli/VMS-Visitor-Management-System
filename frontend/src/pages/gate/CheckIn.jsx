@@ -115,8 +115,6 @@ export default function CheckIn() {
     const entered  = passNumber.trim().toUpperCase();
     const expected = (request?.pass_number || "").trim().toUpperCase();
 
-    console.log('[QR Scan] decoded:', entered, '| expected:', expected);
-
     setFormData(p => ({ ...p, pass_number: entered }));
     if (entered === expected) {
       setPassVerified(true);

@@ -55,9 +55,6 @@ export default function VisitorForm() {
  data.append("photo", photo);
  }
 
- // Debug: log what's being sent
- console.log('[VisitorForm] Submitting fields:', Object.fromEntries(data.entries()));
-
  await apiClient.post("/visitors", data);
 
  toast.success("Visitor registered successfully");
