@@ -40,30 +40,20 @@ const sendOtp = async (db, mobileNumber, purpose, userId = null) => {
       [userId, mobileNumber, otpCode, purpose, expiresAt]
     );
 
-    // Send via Fast2SMS
-    const apiKey = process.env.FAST2SMS_API_KEY;
-    if (!apiKey) {
-      console.warn(`[OTPService] FAST2SMS_API_KEY not set. OTP for ${mobileNumber}: ${otpCode}`);
-      return { success: true, message: 'OTP generated (SMS not sent — no API key configured)' };
-    }
+    // Send via iCloudSMS
+    const authKey = process.env.ICLOUDSMS_AUTH_KEY;
+    const senderId = process.env.ICLOUDSMS_SENDER_ID;
+    const routeId = process.env.ICLOUDSMS_ROUTE_ID;
+    const message = encodeURIComponent(`Your OTP for login is ${otpCode} . STPL`);
 
-    const body = new URLSearchParams({
-      route:            'otp',
-      variables_values: otpCode,
-      numbers:          mobileNumber,
-      flash:            '0',
-    });
+    const smsUrl = `http://msg.icloudsms.com/rest/services/sendSMS/sendGroupSms?AUTH_KEY=${authKey}&message=${message}&senderId=${senderId}&routeId=${routeId}&mobileNos=${mobileNumber}&smsContentType=english`;
 
-    const smsRes  = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-      method:  'POST',
-      headers: { authorization: apiKey, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body:    body.toString(),
-    });
-    const smsData = await smsRes.json().catch(() => ({}));
+    const smsRes = await fetch(smsUrl, { method: 'GET' });
+    const smsData = await smsRes.text().catch(() => '');
 
-    if (!smsRes.ok || smsData.return === false) {
-      console.error('[OTPService] Fast2SMS delivery failed:', smsData);
-      return { success: true, message: 'OTP generated but SMS delivery failed. Check Fast2SMS balance.' };
+    if (!smsRes.ok) {
+      console.error('[OTPService] SMS delivery failed:', smsData);
+      return { success: true, message: 'OTP generated but SMS delivery failed.' };
     }
 
     return { success: true, message: 'OTP sent successfully' };
