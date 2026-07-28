@@ -60,15 +60,23 @@ export function AuthProvider({ children }) {
   }, []);
 
   /**
-   * login — sends email + password + optional unit_id (numeric ID from dropdown) to backend.
-   * unit_id is required for all non-super-admin users.
-   * If unitId is empty string / falsy, it's a super admin login against central DB.
+   * login — Step 1: sends email + password to backend.
+   * Returns { loginToken, email, requires_otp: true } — does NOT log in yet.
    */
   const login = useCallback(async (email, password, unitId = "") => {
     const body = { email, password };
     if (unitId) body.unit_id = parseInt(unitId);
 
     const response = await apiClient.post("/auth/login", body);
+    // Returns { loginToken, email, requires_otp: true }
+    return response.data.data;
+  }, []);
+
+  /**
+   * verifyLoginOtp — Step 2: sends the OTP to complete login and store the session.
+   */
+  const verifyLoginOtp = useCallback(async (loginToken, otp) => {
+    const response = await apiClient.post("/auth/verify-login-otp", { loginToken, otp });
     const { token, user } = response.data.data;
     localStorage.setItem("vms_token", token);
     localStorage.setItem("vms_user", JSON.stringify(user));
@@ -136,6 +144,7 @@ export function AuthProvider({ children }) {
         ...state,
         login,
         loginDirect,
+        verifyLoginOtp,
         logout,
         hasRole,
         setActiveUnit,
