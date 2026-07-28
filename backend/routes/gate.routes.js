@@ -8,6 +8,13 @@ const { protect }   = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
 const { uploadVisitorPhoto } = require('../middlewares/upload.middleware');
 const { sendError } = require('../utils/response.util');
+const { validate }  = require('../middlewares/validate.middleware');
+const {
+  checkinSchema,
+  checkoutSchema,
+  checkoutQRSchema,
+  rejectAtGateSchema,
+} = require('../validators/schemas');
 
 const gateController = require('../controllers/gate.controller');
 
@@ -38,6 +45,7 @@ router.post(
       next();
     });
   },
+  validate(checkinSchema),
   gateController.checkIn
 );
 
@@ -46,6 +54,7 @@ router.post(
   '/checkout',
   protect,
   authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  validate(checkoutSchema),
   gateController.checkOut
 );
 
@@ -54,6 +63,7 @@ router.post(
   '/checkout/qr',
   protect,
   authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  validate(checkoutQRSchema),
   gateController.checkOutByQR
 );
 
@@ -61,6 +71,7 @@ router.post(
   '/checkout/:visitLogId',
   protect,
   authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  validate(checkoutSchema),
   gateController.checkOut
 );
 
@@ -69,6 +80,7 @@ router.post(
   '/reject',
   protect,
   authorize('super_admin', 'unit_admin', 'security'),
+  validate(rejectAtGateSchema),
   gateController.rejectAtGate
 );
 
