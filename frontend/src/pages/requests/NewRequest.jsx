@@ -132,7 +132,9 @@ export default function NewRequest() {
       try {
         // Use the authenticated endpoint  -  the JWT tells the backend which unit DB to query.
         const deptsRes = await apiClient.get("/departments");
-        setDepartments(deptsRes.data.data || []);
+        // Departments API is now paginated: { departments: [], pagination: {} }
+        const dRaw = deptsRes.data?.data;
+        setDepartments(dRaw?.departments ?? (Array.isArray(dRaw) ? dRaw : []));
       } catch (err) {
         console.error("Failed to load departments", err);
       }
@@ -160,7 +162,10 @@ export default function NewRequest() {
         apiClient.get("/departments", { params: { _t } }),
         apiClient.get("/users/hosts", { params: { include_all: 'true', roles: 'employee', _t } }),
       ]).then(([deptRes, empRes]) => {
-        if (deptRes.status === 'fulfilled') setDepartments(deptRes.value.data?.data ?? []);
+        if (deptRes.status === 'fulfilled') {
+          const dRaw = deptRes.value.data?.data;
+          setDepartments(dRaw?.departments ?? (Array.isArray(dRaw) ? dRaw : []));
+        }
         if (empRes.status  === 'fulfilled') {
           setAdminVisitorAllEmployees(empRes.value.data?.data ?? []);
           setAdminVisitorEmployees(empRes.value.data?.data ?? []);
