@@ -25,7 +25,7 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
   // Step 1 state
   const [verifyMode,   setVerifyMode]   = useState(null);
   const [qrScanActive, setQrScanActive] = useState(false);
-  const [qrStream,     setQrStream]     = useState(null);
+  const qrStreamRef = useRef(null);   // useRef — no stale-closure on stop
   const [passNumber,   setPassNumber]   = useState("");
   const [passVerified, setPassVerified] = useState(false);
   const [qrError,      setQrError]      = useState("");
@@ -42,17 +42,26 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
 
   // Cleanup camera on unmount
   useEffect(() => {
-    return () => stopQrCamera();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (qrStreamRef.current) {
+        qrStreamRef.current.getTracks().forEach(t => t.stop());
+        if (qrVideoRef.current) qrVideoRef.current.srcObject = null;
+        qrStreamRef.current = null;
+      }
+    };
   }, []);
 
   // ── QR helpers ───────────────────────────────────────────────────────────
   const stopQrCamera = useCallback(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    if (qrStream) qrStream.getTracks().forEach(t => t.stop());
-    setQrStream(null);
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (qrStreamRef.current) {
+      qrStreamRef.current.getTracks().forEach(t => t.stop());
+      if (qrVideoRef.current) qrVideoRef.current.srcObject = null;
+      qrStreamRef.current = null;
+    }
     setQrScanActive(false);
-  }, [qrStream]);
+  }, []);
 
   const verifyPassString = useCallback((rawData) => {
     if (!rawData) return;
@@ -84,11 +93,13 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
       });
-      setQrStream(stream);
+      qrStreamRef.current = stream;
       setQrScanActive(true);
-      setTimeout(() => {
-        if (qrVideoRef.current) { qrVideoRef.current.srcObject = stream; qrVideoRef.current.play(); }
-      }, 80);
+      // Attach directly — no setTimeout race condition
+      if (qrVideoRef.current) {
+        qrVideoRef.current.srcObject = stream;
+        qrVideoRef.current.play().catch(() => {});
+      }
     } catch {
       toast.error("Camera not accessible. Try uploading or entering manually.");
     }
