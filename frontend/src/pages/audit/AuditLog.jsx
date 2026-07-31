@@ -108,11 +108,6 @@ export default function AuditLog() {
           <h1 className="text-2xl font-bold text-loud">
             Audit <em className="italic">Logs</em>
           </h1>
-          <p className="text-faint mt-1 text-sm">
-            {isCentral
-              ? `Immutable record of all actions across every unit. ${totalLogs > 0 ? `${totalLogs.toLocaleString()} entries found.` : ''}`
-              : 'Immutable record of all system actions.'}
-          </p>
         </div>
         <button
           onClick={fetchLogs}

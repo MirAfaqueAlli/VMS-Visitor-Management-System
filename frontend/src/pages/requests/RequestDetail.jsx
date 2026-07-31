@@ -1,7 +1,7 @@
 // frontend/src/pages/requests/RequestDetail.jsx
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, User, Building2, Calendar, Clock, QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, User, Building2, Calendar, Clock, QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
@@ -290,13 +290,15 @@ export default function RequestDetail() {
   if (loading) return <Spinner />;
   if (!request) return <div className="text-center py-20" style={{ color: 'var(--color-text-faint)' }}>Request not found.</div>;
 
-  const isHost     = String(request.host_user_id) === String(user?.id);
-  const isAdmin    = ['super_admin', 'unit_admin'].includes(user?.role_type);
-  const canApprove = (isHost || isAdmin) && request.status === 'PENDING';
-  const isBlocked  = !!request.host_block_id;
-  const canBlock   = (isHost || isAdmin) && !!request.visitor_phone;
-  const companions = request.companions ?? [];
-  const timeline   = buildTimeline(request);
+  const role        = user?.role_type || user?.role;
+  const canViewPass = ['security', 'receptionist', 'unit_admin', 'super_admin'].includes(role);
+  const isHost      = String(request.host_user_id) === String(user?.id);
+  const isAdmin     = ['super_admin', 'unit_admin'].includes(role);
+  const canApprove  = (isHost || isAdmin) && request.status === 'PENDING';
+  const isBlocked   = !!request.host_block_id;
+  const canBlock    = (isHost || isAdmin) && !!request.visitor_phone;
+  const companions  = request.companions ?? [];
+  const timeline    = buildTimeline(request);
 
   const apiBase = (import.meta.env.VITE_API_URL ?? '').replace(/\/api\/?$/, '');
   const qrSrc   = request.qr_code_path ? `${apiBase}/${request.qr_code_path}` : null;
@@ -330,7 +332,7 @@ export default function RequestDetail() {
         </div>
 
         <div className="flex gap-2 flex-wrap">
-          {request.status === 'APPROVED' && request.pass_number && (
+          {canViewPass && request.status === 'APPROVED' && request.pass_number && (
             <button className="btn-primary" onClick={() => navigate(`/gate/pass/${request.pass_number}`)}>
               <QrCode size={14} /> Gate Pass
             </button>
@@ -429,8 +431,8 @@ export default function RequestDetail() {
         </div>
       </div>
 
-      {/* ── Gate pass QR ───────────────────────────────────────────────────── */}
-      {request.qr_code_path && qrSrc && (
+      {/* ── Gate pass QR / Status info ────────────────────────────────────────── */}
+      {canViewPass && request.pass_number && (
         <div className="vms-card p-5 flex items-center justify-between gap-4"
              style={{ background: 'var(--color-info-bg)' }}>
           <div>
@@ -438,26 +440,30 @@ export default function RequestDetail() {
             <p className="font-bold text-[20px] font-mono" style={{ color: 'var(--color-text)' }}>{request.pass_number}</p>
             <div className="mt-2"><StatusBadge status={request.gate_pass_status ?? 'ISSUED'} /></div>
           </div>
-          <img
-            src={qrSrc}
-            alt="Gate Pass QR Code"
-            className="w-24 h-24 object-contain rounded"
-            style={{ border: '1px solid var(--color-border)' }}
-            onError={e => { e.currentTarget.style.display = 'none'; }}
-          />
+          {request.qr_code_path && qrSrc ? (
+            <img
+              src={qrSrc}
+              alt="Gate Pass QR Code"
+              className="w-24 h-24 object-contain rounded"
+              style={{ border: '1px solid var(--color-border)' }}
+              onError={e => { e.currentTarget.style.display = 'none'; }}
+            />
+          ) : (
+            <div className="flex items-center justify-center w-24 h-24 rounded"
+                 style={{ border: '1px dashed var(--color-border)', color: 'var(--color-text-faint)' }}>
+              <QrCode size={28} strokeWidth={1.2} />
+            </div>
+          )}
         </div>
       )}
-      {request.pass_number && !request.qr_code_path && (
-        <div className="vms-card p-5 flex items-center justify-between gap-4"
-             style={{ background: 'var(--color-info-bg)' }}>
+      {!canViewPass && request.status === 'APPROVED' && (
+        <div className="vms-card p-5 flex items-center gap-3.5" style={{ background: 'var(--color-info-bg)' }}>
+          <CheckCircle2 size={22} style={{ color: 'var(--color-accent)' }} className="shrink-0" />
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--color-text-faint)' }}>Gate Pass</p>
-            <p className="font-bold text-[20px] font-mono" style={{ color: 'var(--color-text)' }}>{request.pass_number}</p>
-            <div className="mt-2"><StatusBadge status={request.gate_pass_status ?? 'ISSUED'} /></div>
-          </div>
-          <div className="flex items-center justify-center w-24 h-24 rounded"
-               style={{ border: '1px dashed var(--color-border)', color: 'var(--color-text-faint)' }}>
-            <QrCode size={28} strokeWidth={1.2} />
+            <p className="text-[14px] font-semibold text-loud">Visit Approved &amp; Pass Issued</p>
+            <p className="text-[12px] text-muted mt-0.5">
+              The digital gate pass has been generated and emailed directly to the visitor for entry verification at security.
+            </p>
           </div>
         </div>
       )}

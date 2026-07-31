@@ -360,9 +360,6 @@ export default function SuperArchiveManagement() {
               Global FY <em className="italic">Archives</em>
             </h1>
           </div>
-          <p className="text-muted text-sm ml-12">
-            Archive, download and purge visitor data across all units by financial year.
-          </p>
         </div>
         <button
           onClick={fetchStatus}

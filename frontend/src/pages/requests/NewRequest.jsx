@@ -660,7 +660,7 @@ export default function NewRequest() {
   const showHostPicker    = (!isSelfHosting || isUnitAdmin) && !isEmpVisit;
 
   // Shared input style
-  const inputCls = "w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300";
+  const inputCls = "w-full bg-bg-primary border-0 border-b border-subtle px-3 py-2.5 text-loud focus:ring-0 focus:border-border transition-colors duration-300";
 
   return (
     <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8 animate-fade-in">
@@ -668,9 +668,7 @@ export default function NewRequest() {
         <h1 className="text-2xl font-bold text-loud">
           New <em className="italic">Request</em>
         </h1>
-        <p className="text-muted mt-3 text-lg">
-          Schedule a new visit or register a walk-in.
-        </p>
+
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">
@@ -694,10 +692,9 @@ export default function NewRequest() {
                     : "border-subtle hover:border-border hover:bg-bg-primary"
                 }`}
               >
-                <div className={`font-medium mb-1 ${formData.visit_category === c.id ? "text-accent" : "text-loud"}`}>
+                <div className={`font-medium ${formData.visit_category === c.id ? "text-accent" : "text-loud"}`}>
                   {c.label}
                 </div>
-                <div className="text-xs text-muted">{c.desc}</div>
               </button>
             ))}
           </div>

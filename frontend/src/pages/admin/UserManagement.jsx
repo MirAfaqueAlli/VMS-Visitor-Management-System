@@ -10,6 +10,7 @@ import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
+import { getApiErrorMessage } from "../../utils/apiError";
 import Pagination from "../../components/shared/Pagination";
 
 // ── Role styling ────────────────────────────────────────────────────────────
@@ -88,12 +89,42 @@ function UserSlideOver({
 
   const handleSubmit = async (e) => {
     e?.preventDefault();
+
+    // ── Client-side validation ────────────────────────────────────────────────
+    if (!form.full_name.trim()) {
+      toast.error('Full name is required.');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!form.email.trim()) {
+      toast.error('Email address is required.');
+      return;
+    }
+    if (!emailRegex.test(form.email.trim())) {
+      toast.error('Please enter a valid email address (e.g. user@company.com).');
+      return;
+    }
+
+    const phoneRaw = form.phone.trim();
+    if (!phoneRaw) {
+      toast.error('Phone number is required.');
+      return;
+    }
+    // Allow optional leading +, then digits, spaces, hyphens; strip non-digit to count
+    const phoneDigits = phoneRaw.replace(/\D/g, '');
+    if (!/^[+]?[\d\s\-]+$/.test(phoneRaw) || phoneDigits.length < 7 || phoneDigits.length > 15) {
+      toast.error('Phone number must contain only digits (7–15 digits). Example: +91 9876543210');
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     setSubmitting(true);
     try {
       const payload = {
         full_name:      form.full_name.trim(),
         email:          form.email.trim(),
-        phone:          form.phone.trim(),
+        phone:          phoneRaw,
         role_type:      form.role_type,
         department_id:  form.department_id ? parseInt(form.department_id) : undefined,
         designation_id: form.designation_id ? parseInt(form.designation_id) : undefined,
@@ -122,7 +153,7 @@ function UserSlideOver({
       onSuccess();
       onClose();
     } catch (err) {
-      toast.error(err.response?.data?.message || "Failed to save user.");
+      toast.error(getApiErrorMessage(err, "Failed to save user."));
     } finally {
       setSubmitting(false);
     }
@@ -471,7 +502,6 @@ export default function UserManagement() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
           <div>
             <h1 className="text-2xl font-bold text-loud">Team <em className="italic">Management</em></h1>
-            <p className="text-muted mt-2">Manage user accounts, roles, and department assignments.</p>
           </div>
           <button onClick={openCreate} className="btn-primary px-4 py-2 text-xs">
             <Plus className="w-4 h-4" /> Add New User

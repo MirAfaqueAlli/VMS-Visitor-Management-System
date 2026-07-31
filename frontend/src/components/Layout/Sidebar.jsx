@@ -129,8 +129,10 @@ export default function Sidebar({ isOpen, onClose }) {
 
       {/* ── Active Unit banner ────────────────────────────────────────── */}
       {(isSuperAdmin || isGlobalAuditor) && activeUnit && (
-        <div className="px-3 py-2.5 mx-2.5 mt-3 bg-blue-500/10 border border-blue-500/20 rounded flex flex-col gap-1.5 shrink-0">
-          <p className="text-[9px] text-blue-400 uppercase font-bold tracking-widest leading-none">Active Unit</p>
+        <div className="px-3 py-2.5 mx-2.5 mt-3 rounded flex flex-col gap-1.5 shrink-0"
+          style={{ background: 'rgba(26,115,233,0.12)', border: '1px solid rgba(26,115,233,0.25)' }}>
+          <p className="text-[9px] uppercase font-bold tracking-widest leading-none"
+            style={{ color: '#4d90fe' }}>Active Unit</p>
           <div className="flex items-center justify-between gap-1.5">
             <span className="text-[11px] text-white font-semibold truncate leading-none">{activeUnit.name}</span>
             <button
@@ -138,7 +140,10 @@ export default function Sidebar({ isOpen, onClose }) {
                 setActiveUnit(null);
                 toast.success('Cleared unit context — back to central view');
               }}
-              className="p-0.5 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+              className="p-0.5 rounded-full hover:bg-white/10 transition-colors"
+              style={{ color: 'rgba(255,255,255,0.55)' }}
+              onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+              onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.55)'}
               title="Leave Unit View"
             >
               <X size={11} />
@@ -163,11 +168,11 @@ export default function Sidebar({ isOpen, onClose }) {
             <div className="px-2 pt-3 pb-1">
               <div
                 className="flex items-center gap-2"
-                style={{ borderTop: '1px solid rgba(59,130,246,0.3)' }}
+                style={{ borderTop: '1px solid var(--sidebar-border)' }}
               >
                 <span
                   className="text-[9px] font-bold uppercase tracking-widest whitespace-nowrap pt-2 flex items-center gap-1"
-                  style={{ color: '#3b82f6' }}
+                  style={{ color: 'var(--sidebar-active-bg)' }}
                 >
                   <Building2 size={9} />
                   {activeUnit.name}

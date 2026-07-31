@@ -88,9 +88,6 @@ export default function RequestList() {
  <h1 className="text-2xl font-bold text-loud">
  Visit <em className="italic">Requests</em>
  </h1>
- <p className="text-muted mt-2">
- Manage and monitor all visit requests.
- </p>
  </div>
  <Link
  to="/requests/new"

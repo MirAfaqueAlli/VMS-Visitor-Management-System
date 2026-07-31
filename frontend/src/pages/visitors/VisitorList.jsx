@@ -140,7 +140,6 @@ export default function VisitorList() {
             <h1 className="text-2xl font-bold text-loud">
               Visitor <em className="italic" style={{ color: 'var(--color-accent)' }}>Directory</em>
             </h1>
-            <p className="text-muted text-sm mt-1">Manage all registered visitors.</p>
           </div>
         </div>
       </div>

@@ -88,9 +88,31 @@ export default function GlobalUserManagement() {
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
   const handleSubmit = async () => {
-    if (!form.full_name.trim() || !form.email.trim() || !form.employee_code.trim()) {
-      return toast.error('Full name, email, and employee code are required.');
+    if (!form.full_name.trim()) {
+      return toast.error('Full name is required.');
     }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!form.email.trim()) {
+      return toast.error('Email address is required.');
+    }
+    if (!emailRegex.test(form.email.trim())) {
+      return toast.error('Please enter a valid email address (e.g. auditor@company.com).');
+    }
+
+    if (!form.employee_code.trim()) {
+      return toast.error('Employee code is required.');
+    }
+
+    // Phone is optional for central users, but validate format if provided
+    const phoneRaw = form.phone.trim();
+    if (phoneRaw) {
+      const phoneDigits = phoneRaw.replace(/\D/g, '');
+      if (!/^[+]?[\d\s\-]+$/.test(phoneRaw) || phoneDigits.length < 7 || phoneDigits.length > 15) {
+        return toast.error('Phone number must contain only digits (7–15 digits). Example: +91 9000000000');
+      }
+    }
+
     if (!editUser && !form.password.trim()) {
       return toast.error('Password is required when creating a new user.');
     }
@@ -106,7 +128,7 @@ export default function GlobalUserManagement() {
         const payload = {
           full_name:     form.full_name.trim(),
           email:         form.email.trim(),
-          phone:         form.phone.trim() || null,
+          phone:         phoneRaw || null,
           employee_code: form.employee_code.trim(),
         };
         await apiClient.put(`/central-users/${editUser.id}`, payload);
@@ -115,7 +137,7 @@ export default function GlobalUserManagement() {
         await apiClient.post('/central-users', {
           full_name:     form.full_name.trim(),
           email:         form.email.trim(),
-          phone:         form.phone.trim() || null,
+          phone:         phoneRaw || null,
           employee_code: form.employee_code.trim(),
           password:      form.password,
           role_type:     form.role_type,
@@ -157,9 +179,6 @@ export default function GlobalUserManagement() {
             <h1 className="text-[18px] font-bold" style={{ color: 'var(--color-text)' }}>
               Central User Management
             </h1>
-            <p className="text-[12px] mt-1" style={{ color: 'var(--color-text-faint)' }}>
-              Manage Super Admins and Global Auditors stored in the central database.
-            </p>
           </div>
           <button className="btn-primary" onClick={openCreate}>
             <Plus size={14} /> Add Global Auditor
@@ -186,15 +205,35 @@ export default function GlobalUserManagement() {
         </div>
 
         {/* Search */}
-        <div className="vms-card p-3 flex items-center gap-2">
-          <Search size={14} style={{ color: 'var(--color-text-faint)' }} />
+        <div className="relative flex items-center">
+          <div className="absolute left-3.5 flex items-center pointer-events-none z-10">
+            <Search size={18} style={{ color: 'var(--color-accent)' }} />
+          </div>
           <input
-            className="flex-1 bg-transparent text-[13px] outline-none"
-            style={{ color: 'var(--color-text)' }}
+            type="text"
+            className="w-full h-12 pl-10 pr-28 bg-bg-secondary border border-subtle rounded-xl text-[14px] text-loud placeholder-faint shadow-card focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
             placeholder="Search by name, email or employee code…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+          <div className="absolute right-1.5 flex items-center gap-2 z-10">
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="text-[12px] font-medium px-2 py-1 text-faint hover:text-loud transition-colors"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-primary h-9 px-4 text-[13px] font-medium flex items-center gap-1.5 rounded-lg shadow-sm"
+            >
+              <Search size={14} />
+              <span>Search</span>
+            </button>
+          </div>
         </div>
 
         {/* Table */}

@@ -16,17 +16,32 @@ const emailFieldOpt = z.preprocess(
   z.string().trim().toLowerCase().email('Invalid email format.').nullable()
 );
 
-/** Required phone — digits only, 10-15 characters */
-const phoneField = z.string({ required_error: 'Phone number is required.' })
-  .trim()
-  .regex(/^\d{10,15}$/, 'Phone must be 10-15 digits (numbers only).');
+/** Flexible phone preprocessor — strips spaces, dashes, +, () before checking digit count */
+const cleanPhone = (v) => {
+  if (v === '' || v === undefined || v === null) return null;
+  if (typeof v !== 'string') return v;
+  const digitsOnly = v.replace(/[\s\-\+\(\)]/g, '');
+  return digitsOnly === '' ? null : digitsOnly;
+};
 
-/** Optional phone — digits only when provided, empty/null → null */
-const phoneFieldOpt = z.preprocess(
-  (v) => (v === '' || v === undefined || v === null) ? null : v,
-  z.string().trim()
-    .regex(/^\d{10,15}$/, 'Phone must be 10-15 digits (numbers only).')
+/** Required phone — digits only, 10-15 characters */
+const phoneField = z.preprocess(
+  cleanPhone,
+  z.string({ required_error: 'Phone number is required.' })
     .nullable()
+    .refine((val) => val !== null && /^\d{10,15}$/.test(val), {
+      message: 'Phone number must contain 10-15 digits.',
+    })
+);
+
+/** Optional phone — digits only when provided (10-15 digits), empty/null → null */
+const phoneFieldOpt = z.preprocess(
+  cleanPhone,
+  z.string()
+    .nullable()
+    .refine((val) => val === null || /^\d{10,15}$/.test(val), {
+      message: 'Phone number must contain 10-15 digits.',
+    })
 );
 
 /** Required name — 2-100 chars */

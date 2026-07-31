@@ -213,6 +213,20 @@ const createUser = async (req, res) => {
       return sendError(res, 'full_name, email, password, role_type, and employee_code are required.', 400);
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return sendError(res, 'Please enter a valid email address (e.g. user@company.com).', 400);
+    }
+
+    // Validate phone format — digits, spaces, hyphens, optional leading +; 7-15 digits total
+    if (phone && phone.trim()) {
+      const digits = phone.replace(/\D/g, '');
+      if (!/^[+]?[\d\s\-]+$/.test(phone.trim()) || digits.length < 7 || digits.length > 15) {
+        return sendError(res, 'Phone number must contain only digits (7–15 digits). Example: +91 9876543210', 400);
+      }
+    }
+
     // Role-based permission check
     if (isSuperAdmin(req.user) || isUnitAdmin(req.user)) {
       if (!UNIT_MANAGEABLE_ROLES.includes(role_type)) {
@@ -306,6 +320,22 @@ const updateUser = async (req, res) => {
     if (existing.length === 0) return sendError(res, 'User not found.', 404);
 
     const targetUser = existing[0];
+
+    // Validate email format if provided
+    if (email && email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return sendError(res, 'Please enter a valid email address (e.g. user@company.com).', 400);
+      }
+    }
+
+    // Validate phone format if provided
+    if (phone && phone.trim()) {
+      const digits = phone.replace(/\D/g, '');
+      if (!/^[+]?[\d\s\-]+$/.test(phone.trim()) || digits.length < 7 || digits.length > 15) {
+        return sendError(res, 'Phone number must contain only digits (7–15 digits). Example: +91 9876543210', 400);
+      }
+    }
 
     if (role_type && !UNIT_MANAGEABLE_ROLES.includes(role_type)) {
       return sendError(res, `role_type must be one of: ${UNIT_MANAGEABLE_ROLES.join(', ')}.`, 400);
