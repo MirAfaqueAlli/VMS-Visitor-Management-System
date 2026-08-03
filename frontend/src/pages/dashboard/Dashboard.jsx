@@ -421,7 +421,7 @@ function SecurityDashboard() {
  {v.visitor_name ?? "—"}
  </td>
  <td className="px-5 py-3">
- <StatusBadge status={v.visitor_type_code} />
+ <StatusBadge status={v.visit_category || v.visitor_type_code || v.visitor_type} />
  </td>
  <td className="px-5 py-3 text-muted whitespace-nowrap">
  {v.host_name ?? "—"}
@@ -740,7 +740,7 @@ function EmployeeDashboard() {
  {v.visitor_name ?? "—"}
  </td>
  <td className="px-5 py-3">
- <StatusBadge status={v.visitor_type_code} />
+ <StatusBadge status={v.visit_category || v.visitor_type_code || v.visitor_type} />
  </td>
  <td className="px-5 py-3 text-muted whitespace-nowrap">
  {fmtDate(v.visit_date)}

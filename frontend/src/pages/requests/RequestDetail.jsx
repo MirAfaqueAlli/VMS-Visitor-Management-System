@@ -1,7 +1,7 @@
 // frontend/src/pages/requests/RequestDetail.jsx
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, User, Building2, Calendar, Clock, QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, User, Building2, Calendar, Clock, QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2, Briefcase } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
@@ -367,8 +367,9 @@ export default function RequestDetail() {
               label: 'Visitor', icon: User,
               lines: [
                 request.visitor_name ?? request.company_name ?? 'Visitor TBD',
+                request.company_name && request.visitor_name ? `🏢 ${request.company_name}` : null,
                 request.visitor_phone ? `📞 ${request.visitor_phone}` : null,
-                request.visitor_email ? `✉ ${request.visitor_email}` : null,
+                request.visitor_email || request.vendor_email ? `✉ ${request.visitor_email || request.vendor_email}` : null,
               ].filter(Boolean),
             },
             { label: 'Host',  icon: Building2, lines: [request.host_name, request.host_designation, request.host_email] },
@@ -389,6 +390,44 @@ export default function RequestDetail() {
           ))}
         </div>
       </div>
+
+      {/* ── Vendor & Business Details Card ───────────────────────────────── */}
+      {(request.visit_category === 'VENDOR' || request.company_name || request.work_order_ref || request.service_type || request.vendor_email) && (
+        <div className="vms-card p-5">
+          <div className="flex items-center gap-2 mb-4 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
+            <Briefcase size={15} style={{ color: 'var(--color-accent)' }} />
+            <h3 className="font-semibold text-[13px]" style={{ color: 'var(--color-text)' }}>
+              Vendor &amp; Business Details
+            </h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            {request.company_name && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Company / Organisation</p>
+                <p className="text-[13px] font-semibold text-loud">{request.company_name}</p>
+              </div>
+            )}
+            {request.vendor_email && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Vendor Email</p>
+                <p className="text-[13px] text-loud">{request.vendor_email}</p>
+              </div>
+            )}
+            {request.service_type && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Service Type</p>
+                <p className="text-[13px] text-loud">{request.service_type}</p>
+              </div>
+            )}
+            {request.work_order_ref && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Work Order Ref</p>
+                <p className="text-[13px] font-mono font-medium text-loud">{request.work_order_ref}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Gate pass QR / Status info ────────────────────────────────────────── */}
       {canViewPass && request.pass_number && (

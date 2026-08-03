@@ -264,7 +264,7 @@ const runArchive = async (req, res) => {
     }, `Financial year ${financial_year} archived successfully — ${totalRecords} records backed up.`);
   } catch (err) {
     console.error('[ArchiveController] runArchive error:', err.message);
-    return sendError(res, 'Archival failed: ' + err.message, 500);
+    return sendError(res, 'Archival failed. Please try again.', 500);
   }
 };
 
@@ -386,7 +386,7 @@ const purgeArchive = async (req, res) => {
     return sendSuccess(res, { financial_year: fy, purged_records: purgedCount }, `${purgedCount} records for FY ${fy} permanently purged from live database.`);
   } catch (err) {
     console.error('[ArchiveController] purgeArchive error:', err.message);
-    return sendError(res, 'Purge failed: ' + err.message, 500);
+    return sendError(res, 'Purge failed. Please try again.', 500);
   }
 };
 
@@ -610,7 +610,7 @@ async function runGlobalArchive(req, res) {
       `Global archive complete: ${succeeded} archived, ${skipped} skipped, ${failed} failed.`);
   } catch (err) {
     console.error('[ArchiveController] runGlobalArchive error:', err.message);
-    return sendError(res, 'Global archive failed: ' + err.message, 500);
+    return sendError(res, 'Global archive failed. Please try again.', 500);
   }
 }
 
@@ -742,6 +742,6 @@ async function purgeGlobalArchive(req, res) {
       `Global purge complete: ${purged} units purged, ${skipped} skipped, ${failed} failed.`);
   } catch (err) {
     console.error('[ArchiveController] purgeGlobalArchive error:', err.message);
-    return sendError(res, 'Global purge failed: ' + err.message, 500);
+    return sendError(res, 'Global purge failed. Please try again.', 500);
   }
 }

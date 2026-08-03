@@ -211,7 +211,7 @@ export default function VisitorDetail() {
                         className="cursor-pointer"
                         onClick={() => navigate(`/requests/${v.id}`)}>
                       <td className="whitespace-nowrap">{fmtDate(v.visit_date)}</td>
-                      <td><StatusBadge status={v.visitor_type_code} /></td>
+                      <td><StatusBadge status={v.visit_category || v.visitor_type_code || v.visitor_type} /></td>
                       <td className="whitespace-nowrap">{v.host_name ?? '—'}</td>
                       <td className="whitespace-nowrap">{v.department_name ?? '—'}</td>
                       <td><StatusBadge status={v.status} /></td>

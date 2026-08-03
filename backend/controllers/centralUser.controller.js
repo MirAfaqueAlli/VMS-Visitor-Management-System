@@ -125,7 +125,7 @@ const createCentralUser = async (req, res) => {
     if (err.code === 'ER_DUP_ENTRY') {
       return sendError(res, 'A user with this email, phone, or employee code already exists.', 409);
     }
-    return sendError(res, `Failed to create user: ${err.message}`, 500);
+    return sendError(res, 'Failed to create user. Please try again.', 500);
   }
 };
 

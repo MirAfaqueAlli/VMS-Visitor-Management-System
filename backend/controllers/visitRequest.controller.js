@@ -10,6 +10,7 @@ const { logAudit }               = require('../utils/auditLogger.util');
 const { generateGatePass }       = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUser, emitToUnitSecurity } = require('../socket/socketManager');
+const { encryptField, decryptRows } = require('../utils/crypto.util');
 
 // IST date helper (mirrors the one in approval.controller.js)
 const getISTDateString = (d = new Date()) =>
@@ -178,6 +179,8 @@ const createRequest = async (req, res) => {
       visitor_email,
       company_name,
       vendor_email,
+      service_type,
+      work_order_ref,
       contact_person,
       force_create = false,
     } = req.body;
@@ -414,14 +417,14 @@ const createRequest = async (req, res) => {
          requester_user_id, host_user_id, department_id, unit_id, target_unit_id,
          visit_category, request_source,
          purpose, visit_date, visit_start_time, visit_end_time, accompanying_count,
-         status, company_name, vendor_email, force_created,
+         status, company_name, vendor_email, service_type, work_order_ref, force_created,
          created_at, updated_at
        ) VALUES (
          ?, ?, ?, ?,
          ?, ?, ?, ?, ?,
          ?, ?,
          ?, ?, ?, ?, ?,
-         ?, ?, ?, ?,
+         ?, ?, ?, ?, ?, ?,
          NOW(), NOW()
        )`,
       [
@@ -446,6 +449,8 @@ const createRequest = async (req, res) => {
         status,
         typeCode === 'VENDOR' ? (company_name || null) : null,
         typeCode === 'VENDOR' ? (vendor_email || null) : null,
+        typeCode === 'VENDOR' ? (service_type || null) : null,
+        typeCode === 'VENDOR' ? (work_order_ref || null) : null,
         force_create ? 1 : 0,
       ]
     );
@@ -456,7 +461,7 @@ const createRequest = async (req, res) => {
       for (const c of companions) {
         await conn.query(
           `INSERT INTO request_companions (visit_request_id, full_name, id_type, id_number, created_at) VALUES (?, ?, ?, ?, NOW())`,
-          [visitRequestId, c.full_name, c.id_type || null, c.id_number || null]
+          [visitRequestId, c.full_name, c.id_type || null, encryptField(c.id_number || null)]   // encrypt before storing
         );
       }
     }
@@ -623,7 +628,7 @@ const createRequest = async (req, res) => {
       conn.release();
     }
     console.error('[VisitRequestController] createRequest error:', err.message);
-    return sendError(res, 'Failed to create visit request. ' + err.message, 500);
+    return sendError(res, 'Failed to create visit request. Please try again.', 500);
   }
 };
 
@@ -646,9 +651,11 @@ const getRequest = async (req, res) => {
     if (rows.length === 0) return sendError(res, 'Visit request not found.', 404);
 
     const request = rows[0];
-    const [companions] = await req.db.query(
+    const [rawCompanions] = await req.db.query(
       'SELECT id, full_name, id_type, id_number FROM request_companions WHERE visit_request_id = ?', [id]
     );
+    // Decrypt companion id_number before sending to client
+    const companions = decryptRows(rawCompanions, ['id_number']);
     const [approvalRows] = await req.db.query(
       `SELECT ah.*, u.full_name AS acted_by_name, u.email AS acted_by_email
        FROM approval_history ah

@@ -6,7 +6,7 @@ const { logAudit }               = require('../utils/auditLogger.util');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
 const { verifyQRToken }          = require('../utils/qrToken.util');
-const { uploadToCloudinary }     = require('../services/cloudinary.service');
+const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
 
 
 // ── getDashboard ──────────────────────────────────────────────────────────────
@@ -138,16 +138,6 @@ const checkIn = async (req, res) => {
     const { id_verified_type, id_verified_number, remarks, pass_number } = req.body;
     const visitorPhotoPath = req.file ? req.file.path.replace(/\\/g, '/') : null;
 
-    // ── Upload visitor photo to Cloudinary (non-blocking, runs alongside validation) ──
-    // We kick off the upload immediately so it runs in parallel with DB queries.
-    const photoCloudPromise = visitorPhotoPath
-      ? uploadToCloudinary(
-          req.file.path,   // absolute path multer saved
-          'visitor_photo',
-          `vms/visitor-photos/photo-${Date.now()}`
-        )
-      : Promise.resolve(null);
-
     if (!id_verified_type || !id_verified_number) {
       conn.release();
       return sendError(res, 'id_verified_type and id_verified_number are required.', 400);
@@ -276,14 +266,19 @@ const checkIn = async (req, res) => {
         `SELECT id_number FROM visitor_documents WHERE visitor_id = ? AND id_type = ? LIMIT 1`,
         [visitorId, id_verified_type]
       );
-      if (idProofRows.length > 0 && idProofRows[0].id_number !== id_verified_number) {
-        conn.release();
-        return sendError(res, `ID Mismatch: The provided ${id_verified_type} does not match our records for this visitor.`, 400);
+      if (idProofRows.length > 0) {
+        // Decrypt stored value before comparing with what was presented at gate
+        const storedNumber = decryptField(idProofRows[0].id_number);
+        if (storedNumber !== id_verified_number) {
+          conn.release();
+          return sendError(res, `ID Mismatch: The provided ${id_verified_type} does not match our records for this visitor.`, 400);
+        }
       }
       // Store ID doc if not already there (INSERT IGNORE respects the unique constraint)
+      // Encrypt before storing
       await req.db.query(
         `INSERT IGNORE INTO visitor_documents (visitor_id, id_type, id_number, is_primary, created_at) VALUES (?, ?, ?, TRUE, NOW())`,
-        [visitorId, id_verified_type, id_verified_number]
+        [visitorId, id_verified_type, encryptField(id_verified_number)]
       );
     }
 
@@ -298,53 +293,23 @@ const checkIn = async (req, res) => {
       );
     }
 
-    // Resolve Cloudinary URL (awaited here — it was started earlier in parallel)
-    const visitorPhotoUrl = await photoCloudPromise;
-
-    let visitLogId;
-    try {
-      const [logInsert] = await conn.query(
-        `INSERT INTO visit_logs
-           (gate_pass_id, visit_request_id, checked_in_by,
-            visitor_photo_path, visitor_photo_url, id_verified_type, id_verified_number,
-            check_in_at, status, remarks, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 'ACTIVE', ?, NOW(), NOW())`,
-        [
-          request.gate_pass_id,
-          requestId,
-          req.user.id,
-          visitorPhotoPath,
-          visitorPhotoUrl,
-          id_verified_type,
-          id_verified_number,
-          remarks || null,
-        ]
-      );
-      visitLogId = logInsert.insertId;
-    } catch (colErr) {
-      // Fallback: insert without visitor_photo_url if column doesn't exist yet
-      if (colErr.code === 'ER_BAD_FIELD_ERROR') {
-        const [logInsert] = await conn.query(
-          `INSERT INTO visit_logs
-             (gate_pass_id, visit_request_id, checked_in_by,
-              visitor_photo_path, id_verified_type, id_verified_number,
-              check_in_at, status, remarks, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, NOW(), 'ACTIVE', ?, NOW(), NOW())`,
-          [
-            request.gate_pass_id,
-            requestId,
-            req.user.id,
-            visitorPhotoPath,
-            id_verified_type,
-            id_verified_number,
-            remarks || null,
-          ]
-        );
-        visitLogId = logInsert.insertId;
-      } else {
-        throw colErr;
-      }
-    }
+    const [logInsert] = await conn.query(
+      `INSERT INTO visit_logs
+         (gate_pass_id, visit_request_id, checked_in_by,
+          visitor_photo_path, id_verified_type, id_verified_number,
+          check_in_at, status, remarks, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), 'ACTIVE', ?, NOW(), NOW())`,
+      [
+        request.gate_pass_id,
+        requestId,
+        req.user.id,
+        visitorPhotoPath,
+        id_verified_type,
+        encryptField(id_verified_number),   // encrypt before persisting
+        remarks || null,
+      ]
+    );
+    const visitLogId = logInsert.insertId;
 
     // Mark gate pass as USED and start the 24-hour QR validity window
     await conn.query(
@@ -667,7 +632,7 @@ const getActiveVisitors = async (req, res) => {
        ORDER BY vl.check_in_at DESC`
     );
 
-    return sendSuccess(res, rows, 'Active visitors retrieved successfully.');
+    return sendSuccess(res, decryptRows(rows, ['id_verified_number']), 'Active visitors retrieved successfully.');
   } catch (err) {
     console.error('[GateController] getActiveVisitors error:', err.message);
     return sendError(res, 'Failed to retrieve active visitors.', 500);

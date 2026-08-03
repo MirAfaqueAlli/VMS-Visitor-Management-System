@@ -6,6 +6,12 @@
  * Provides OTP-based identity verification for the public request form.
  * Uses vms_central.public_otp_logs — no unit DB required.
  *
+ * SECURITY:
+ *  - OTP codes are stored as SHA-256 hashes in public_otp_logs (never plaintext).
+ *  - The visitor JWT contains only a verification flag (aadhaar_verified: true),
+ *    NOT the raw Aadhaar number. The raw number is forwarded via the request body
+ *    and stored encrypted server-side when the visit request is created.
+ *
  * Flow:
  *  1. POST /send-phone-otp   → generate + send OTP via Fast2SMS
  *  2. POST /verify-phone-otp → validate phone OTP
@@ -17,6 +23,7 @@ const jwt = require('jsonwebtoken');
 const { centralPool } = require('../services/dbManager');
 const emailService    = require('../services/email.service');
 const { sendSuccess, sendError } = require('../utils/response.util');
+const { hashOtp }     = require('../utils/crypto.util');
 
 const OTP_EXPIRY_MINUTES = parseInt(process.env.OTP_EXPIRY_MINUTES, 10) || 10;
 const VISITOR_TOKEN_EXPIRY = '30m';
@@ -27,8 +34,14 @@ function generateOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
+/**
+ * Stores the SHA-256 hash of the OTP (never the raw code).
+ * Invalidates any prior unused OTPs for the same identifier+type.
+ */
 async function storeOtp(identifier, identifierType, otpCode) {
+  const otpHash   = hashOtp(otpCode);   // hash before storing
   const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
   // Invalidate existing unused OTPs for same identifier + type
   await centralPool.query(
     `UPDATE public_otp_logs SET is_used = TRUE
@@ -38,19 +51,25 @@ async function storeOtp(identifier, identifierType, otpCode) {
   await centralPool.query(
     `INSERT INTO public_otp_logs (identifier, identifier_type, otp_code, is_used, expires_at)
      VALUES (?, ?, ?, FALSE, ?)`,
-    [identifier, identifierType, otpCode, expiresAt]
+    [identifier, identifierType, otpHash, expiresAt]
   );
+  // Return the raw OTP so we can send it via SMS/email (never stored raw)
   return otpCode;
 }
 
+/**
+ * Validates a user-supplied OTP by comparing its hash to the stored hash.
+ */
 async function validateOtp(identifier, identifierType, otp) {
+  const suppliedHash = hashOtp(otp);
+
   const [rows] = await centralPool.query(
     `SELECT id, otp_code FROM public_otp_logs
      WHERE identifier = ? AND identifier_type = ? AND is_used = FALSE AND expires_at > NOW()
      ORDER BY created_at DESC LIMIT 1`,
     [identifier, identifierType]
   );
-  if (!rows.length || rows[0].otp_code !== otp) {
+  if (!rows.length || rows[0].otp_code !== suppliedHash) {
     return false;
   }
   await centralPool.query('UPDATE public_otp_logs SET is_used = TRUE WHERE id = ?', [rows[0].id]);
@@ -69,13 +88,26 @@ const sendPhoneOtp = async (req, res) => {
 
     const apiKey = process.env.FAST2SMS_API_KEY;
     if (!apiKey) {
-      console.log(`[PublicAuth] [DEV] Phone OTP for ${phone}: ${otp}`);
-      return sendSuccess(res, { dev_otp: otp }, 'OTP generated (SMS not sent — no API key)', 200);
+      console.warn(`[PublicAuth] FAST2SMS_API_KEY not set. OTP generated for ${phone.slice(0, 4)}****`);
+
+      // ── Dev / test fallback ──────────────────────────────────────────────────
+      // In production the SMS key MUST be configured — fail loudly.
+      // In development/testing, return the OTP directly so the flow can be tested
+      // without an SMS gateway.
+      if (process.env.NODE_ENV === 'production') {
+        return sendError(res, 'SMS service is not configured. Contact the system administrator.', 503);
+      }
+      // DEV / TEST MODE: expose OTP in response body for easier manual testing
+      return sendSuccess(res,
+        { dev_otp: otp, dev_note: 'OTP returned because FAST2SMS_API_KEY is not set (non-production mode only).' },
+        'OTP generated (dev mode — no SMS sent). Use the otp value from this response to verify.',
+        200
+      );
     }
 
     const body = new URLSearchParams({
       route: 'otp',
-      variables_values: otp,
+      variables_values: otp,   // raw OTP sent via SMS only — stored hash in DB
       numbers: phone.replace(/\s+/g, ''),
       flash: '0',
     });
@@ -130,14 +162,16 @@ const sendEmailOtp = async (req, res) => {
 
     if (!result.success) {
       console.error('[PublicAuth] Email OTP delivery failed:', result.error);
-      // In dev, still show otp
-      const isDev = process.env.NODE_ENV !== 'production';
-      console.log(`[PublicAuth] [DEV] Email OTP for ${email}: ${otp}`);
-      return sendSuccess(
-        res,
-        isDev ? { dev_otp: otp } : {},
-        isDev ? 'OTP generated (email not sent — check SMTP config)' : 'Failed to send email OTP.',
-        isDev ? 200 : 500
+
+      // ── Dev / test fallback ──────────────────────────────────────────────────
+      if (process.env.NODE_ENV === 'production') {
+        return sendError(res, 'Failed to send email OTP. Please check your email address or contact support.', 500);
+      }
+      // DEV / TEST MODE: expose OTP in response body
+      return sendSuccess(res,
+        { dev_otp: otp, dev_note: 'OTP returned because email delivery failed (non-production mode only).' },
+        'OTP generated (dev mode — email delivery failed). Use the otp value from this response to verify.',
+        200
       );
     }
 
@@ -167,22 +201,31 @@ const verifyEmailOtp = async (req, res) => {
     const valid = await validateOtp(email, 'email', otp);
     if (!valid) return sendError(res, 'Invalid or expired OTP. Please try again.', 400);
 
-    // Issue a short-lived visitor session token
+    // Issue a short-lived visitor session token.
+    // SECURITY: The raw Aadhaar number is NOT embedded in the JWT (JWTs are only
+    // base64-encoded, not encrypted). We store only a verification flag.
+    // The frontend must re-send the aadhaar_number in the visit request body,
+    // where the backend will encrypt it before persisting.
     const visitorToken = jwt.sign(
       {
-        purpose:       'PUBLIC_VISITOR',
-        visitor_name:  visitor_name.trim(),
-        visitor_phone: visitor_phone.trim(),
-        visitor_email: email.trim(),
-        aadhaar:       cleanAadhaar,
-        phone_verified: true,
-        email_verified: true,
+        purpose:          'PUBLIC_VISITOR',
+        visitor_name:     visitor_name.trim(),
+        visitor_phone:    visitor_phone.trim(),
+        visitor_email:    email.trim(),
+        phone_verified:   true,
+        email_verified:   true,
+        aadhaar_verified: true,   // confirmation flag only — raw number NOT included
       },
       process.env.JWT_SECRET,
       { expiresIn: VISITOR_TOKEN_EXPIRY }
     );
 
-    return sendSuccess(res, { visitor_token: visitorToken }, 'Identity verified. You may now submit your visit request.', 200);
+    return sendSuccess(
+      res,
+      { visitor_token: visitorToken },
+      'Identity verified. You may now submit your visit request.',
+      200
+    );
   } catch (err) {
     console.error('[PublicAuth] verifyEmailOtp error:', err.message);
     return sendError(res, 'Failed to verify email OTP.', 500);

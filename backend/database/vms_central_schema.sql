@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS public_otp_logs (
     id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     identifier       VARCHAR(255)              NOT NULL,
     identifier_type  ENUM('phone','email')     NOT NULL,
-    otp_code         VARCHAR(6)                NOT NULL,
+    otp_code         VARCHAR(64)               NOT NULL,
     is_used          BOOLEAN                   NOT NULL DEFAULT FALSE,
     expires_at       DATETIME                  NOT NULL,
     created_at       DATETIME                  NOT NULL DEFAULT CURRENT_TIMESTAMP,
