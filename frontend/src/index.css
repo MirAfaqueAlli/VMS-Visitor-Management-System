@@ -194,10 +194,19 @@
     opacity: 0.65;
   }
 
-  /* ── Native select option dark-mode fix ────────────────────────────────── */
-  /* color-scheme on [data-theme="dark"] handles most browsers natively,      */
-  /* but we also set these explicitly as a fallback.                          */
+  /* ── Native select option styling fix ──────────────────────────────────── */
+  select {
+    color-scheme: light;
+  }
+  [data-theme="dark"] select {
+    color-scheme: dark;
+  }
+
   select option {
+    background-color: #ffffff;
+    color: #0f172a;
+  }
+  [data-theme="dark"] select option {
     background-color: var(--color-bg-secondary);
     color: var(--color-text);
   }

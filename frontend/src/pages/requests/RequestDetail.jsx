@@ -216,17 +216,6 @@ export default function RequestDetail() {
 
   useEffect(() => { fetchRequest(); }, [fetchRequest]);
 
-  // ── Cancel ─────────────────────────────────────────────────────────────────
-  const handleCancel = async () => {
-    if (!window.confirm('Cancel this visit request?')) return;
-    setActionLoading(true);
-    try {
-      await apiClient.put(`/visit-requests/${id}/cancel`);
-      toast.success('Request cancelled.'); fetchRequest();
-    } catch (err) { toast.error(err?.response?.data?.message || 'Failed.'); }
-    finally { setActionLoading(false); }
-  };
-
   // ── Approve / Reject ───────────────────────────────────────────────────────
   const submitAction = async (type, forceApprove = false) => {
     setActionLoading(true);
@@ -337,9 +326,6 @@ export default function RequestDetail() {
               <QrCode size={14} /> Gate Pass
             </button>
           )}
-          {['PENDING','APPROVED'].includes(request.status) && (
-            <button className="btn-secondary" onClick={handleCancel} disabled={actionLoading}>Cancel</button>
-          )}
           {canApprove && !actionMode && (
             <>
               <button className="btn-primary" onClick={() => setActionMode('approve')}><Check size={14}/> Approve</button>
@@ -371,33 +357,6 @@ export default function RequestDetail() {
         </div>
       </div>
 
-      {/* ── Approve / Reject inline panel ──────────────────────────────────── */}
-      {actionMode && (
-        <div className="vms-card p-4 space-y-3">
-          <p className="text-[13px] font-medium" style={{ color: 'var(--color-text)' }}>
-            {actionMode === 'approve' ? 'Approve request?' : 'Reject request?'}
-          </p>
-          <textarea
-            className="w-full text-[13px] p-2 rounded border"
-            placeholder={actionMode === 'reject' ? 'Reason for rejection (required)…' : 'Add remarks (optional)…'}
-            value={remarks}
-            onChange={(e) => setRemarks(e.target.value)}
-            style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text)' }}
-          />
-          <div className="flex gap-2">
-            <button
-              className="btn-primary text-[12px]"
-              onClick={() => submitAction(actionMode)}
-              disabled={actionLoading || (actionMode === 'reject' && !remarks.trim())}
-            >
-              {actionLoading ? 'Please wait…' : 'Confirm'}
-            </button>
-            <button className="btn-secondary text-[12px]" onClick={() => { setActionMode(null); setRemarks(''); }}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ── Info grid ──────────────────────────────────────────────────────── */}
       <div className="vms-card p-5">
@@ -616,6 +575,75 @@ export default function RequestDetail() {
         onForceApprove={handleForceApprove}
         loading={actionLoading}
       />
+
+      {/* Approve / Reject Action Modal */}
+      {actionMode && (
+        <div className="fixed inset-0 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="vms-card max-w-md w-full p-6 space-y-4 shadow-xl border rounded-xl" style={{ background: 'var(--color-bg-secondary)', borderColor: 'var(--color-border)' }}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--color-text-loud)' }}>
+                {actionMode === 'approve' ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                    Approve Visit Request
+                  </>
+                ) : (
+                  <>
+                    <X className="w-5 h-5 text-red-500" />
+                    Reject Visit Request
+                  </>
+                )}
+              </h3>
+              <button
+                onClick={() => { setActionMode(null); setRemarks(''); }}
+                className="text-faint hover:text-loud transition-colors"
+                disabled={actionLoading}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted">
+              {actionMode === 'approve'
+                ? 'Please confirm approval. You may optionally add remarks for reference.'
+                : 'Please state the reason for rejecting this visit request.'}
+            </p>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1">
+                Remarks {actionMode === 'reject' && <span className="text-red-500">*</span>}
+              </label>
+              <textarea
+                rows={3}
+                className="w-full text-xs p-3 rounded-lg border resize-none focus:outline-none focus:ring-2 focus:ring-accent/30"
+                placeholder={actionMode === 'reject' ? 'Enter reason for rejection (required)…' : 'Add any optional remarks or instructions…'}
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-primary)', color: 'var(--color-text)' }}
+                autoFocus
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-subtle">
+              <button
+                className="btn-secondary text-xs px-4 py-2"
+                onClick={() => { setActionMode(null); setRemarks(''); }}
+                disabled={actionLoading}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary text-xs px-4 py-2 flex items-center gap-1.5"
+                style={actionMode === 'reject' ? { background: '#dc2626', borderColor: '#dc2626' } : {}}
+                onClick={() => submitAction(actionMode)}
+                disabled={actionLoading || (actionMode === 'reject' && !remarks.trim())}
+              >
+                {actionLoading ? 'Processing…' : actionMode === 'approve' ? 'Confirm Approval' : 'Confirm Rejection'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

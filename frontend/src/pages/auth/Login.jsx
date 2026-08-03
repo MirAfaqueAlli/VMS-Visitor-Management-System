@@ -9,6 +9,81 @@ import {
 import useAuth from '../../hooks/useAuth';
 import apiClient from '../../api/axios';
 
+/* -- Custom Unit Dropdown (avoids native select OS dark-mode popup) --------- */
+function UnitDropdown({ value, units, loading, onChange, inputStyle }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const allOptions = [
+    { value: '',       label: loading ? 'Loading units...' : '-- Select your unit --', muted: true },
+    { value: 'global', label: '-- Central / Global Context --', muted: true },
+    ...units.map(u => ({ value: String(u.id), label: `${u.name}${u.city ? ` - ${u.city}` : ''}`, muted: false })),
+  ];
+
+  const selected = allOptions.find(o => o.value === String(value));
+
+  return (
+    <div ref={ref} style={{ position: 'relative', width: '100%' }}>
+      {/* Trigger */}
+      <div
+        onClick={() => !loading && setOpen(o => !o)}
+        style={{
+          ...inputStyle,
+          paddingRight: '32px',
+          cursor: loading ? 'wait' : 'pointer',
+          display: 'flex', alignItems: 'center',
+          userSelect: 'none',
+          color: selected && !selected.muted ? '#0f172a' : '#94a3b8',
+        }}
+      >
+        <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {selected ? selected.label : '-- Select your unit --'}
+        </span>
+        <ChevronDown
+          size={14} strokeWidth={1.8}
+          style={{ position: 'absolute', right: '12px', top: '50%', transform: `translateY(-50%) rotate(${open ? 180 : 0}deg)`, pointerEvents: 'none', color: '#94a3b8', transition: 'transform 200ms' }}
+        />
+      </div>
+
+      {/* Dropdown list — always light themed */}
+      {open && (
+        <ul style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 9999,
+          background: '#ffffff', border: '1.5px solid #e2e8f0', borderRadius: '10px',
+          boxShadow: '0 8px 32px rgba(15,30,80,0.14)', padding: '4px',
+          margin: 0, listStyle: 'none', maxHeight: '220px', overflowY: 'auto',
+        }}>
+          {allOptions.map((opt) => (
+            <li
+              key={opt.value}
+              onClick={() => { if (!loading) { onChange(opt.value); setOpen(false); } }}
+              style={{
+                padding: '9px 12px', borderRadius: '7px', cursor: loading ? 'wait' : 'pointer',
+                fontSize: '13px', fontFamily: 'Inter, system-ui, sans-serif',
+                color: opt.muted ? '#94a3b8' : '#0f172a',
+                fontWeight: opt.muted ? 400 : 500,
+                background: String(value) === opt.value ? '#eff6ff' : 'transparent',
+                transition: 'background 100ms',
+              }}
+              onMouseEnter={e => { if (String(value) !== opt.value) e.currentTarget.style.background = '#f8fafc'; }}
+              onMouseLeave={e => { if (String(value) !== opt.value) e.currentTarget.style.background = 'transparent'; }}
+            >
+              {opt.label}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* -- Main Login Component -------------------------------------------------- */
 export default function Login() {
   const { login, verifyLoginOtp } = useAuth();
@@ -269,24 +344,13 @@ export default function Login() {
                       }}>{unitCode?.toUpperCase()}</span>
                     </div>
                   ) : (
-                    <>
-                      <select
-                        id="login-unit-select"
-                        value={unitId}
-                        onChange={e => { setUnitId(e.target.value); setError(''); }}
-                        disabled={unitsLoading}
-                        style={{ ...inputStyle, paddingRight: '32px', appearance: 'none', cursor: unitsLoading ? 'wait' : 'pointer' }}
-                      >
-                        <option value="">{unitsLoading ? 'Loading units...' : '-- Select your unit --'}</option>
-                        <option value="global">-- Central / Global Context --</option>
-                        {units.map(u => (
-                          <option key={u.id} value={u.id}>
-                            {u.name}{u.city ? ` - ${u.city}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown size={14} strokeWidth={1.8} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#94a3b8' }} />
-                    </>
+                    <UnitDropdown
+                      value={unitId}
+                      units={units}
+                      loading={unitsLoading}
+                      onChange={(val) => { setUnitId(val); setError(''); }}
+                      inputStyle={inputStyle}
+                    />
                   )}
                 </div>
               </div>
