@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS visit_requests (
     request_source    ENUM('SELF','RECEPTION','HOST','SYSTEM','PUBLIC') NOT NULL,
     company_name      VARCHAR(100) NULL,
     vendor_email      VARCHAR(100) NULL,
+    service_type      VARCHAR(100) NULL,
+    work_order_ref    VARCHAR(100) NULL,
     purpose           TEXT         NOT NULL,
     visit_date        DATE         NOT NULL,
     visit_start_time  TIME         NULL,

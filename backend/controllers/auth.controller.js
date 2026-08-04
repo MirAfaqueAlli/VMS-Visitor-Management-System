@@ -7,6 +7,19 @@ const jwt    = require('jsonwebtoken');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
+const { sendEmail, otpTemplate } = require('../services/email.service');
+
+// ── In-Memory Login OTP Store ─────────────────────────────────────────────────
+// Map<loginToken, { otp, email, expiresAt, userId, unitDb, unitName, lastSent }>
+const loginOtpStore = new Map();
+
+// Clean up expired entries every 15 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of loginOtpStore.entries()) {
+    if (val.expiresAt < now) loginOtpStore.delete(key);
+  }
+}, 15 * 60 * 1000);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -82,7 +95,6 @@ const login = async (req, res) => {
         return sendError(res, 'Please select your unit / branch to sign in.', 400);
       }
 
-      // Find the unit's database name from central
       let unitRows;
       if (unitId) {
         [unitRows] = await centralPool.query(
@@ -136,21 +148,112 @@ const login = async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) return sendError(res, 'Invalid credentials.', 401);
 
-    // ── Step 4: Issue JWT with unit_db ────────────────────────────────────────
-    const payload = {
-      userId:  user.id,
-      role:    user.role_type,
-      unit_db: unitDb,          // ← key for multi-DB routing in auth.middleware
-    };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, {
+    // ── Step 4: Generate login OTP and send via email ─────────────────────────
+    const userEmail = user.email;
+    if (!userEmail) {
+      return sendError(res, 'No email address is associated with this account. Cannot send OTP.', 400);
+    }
+
+    // Rate-limit: allow max 1 send per 60 seconds per email
+    const existingEntry = [...loginOtpStore.values()].find(
+      v => v.email === userEmail && v.lastSent > Date.now() - 60_000
+    );
+    if (existingEntry) {
+      return sendError(res, 'OTP already sent. Please wait 60 seconds before requesting a new one.', 429);
+    }
+
+    const otpCode      = String(Math.floor(100000 + Math.random() * 900000));
+    const OTP_TTL_MS   = 10 * 60 * 1000; // 10 minutes
+    const loginToken   = jwt.sign(
+      { otp_pending: true, userId: user.id, unitDb },
+      process.env.JWT_SECRET,
+      { expiresIn: '10m' }
+    );
+
+    loginOtpStore.set(loginToken, {
+      otp:      otpCode,
+      email:    userEmail,
+      userId:   user.id,
+      unitDb,
+      unitName,
+      user,      // full user row — reused in verifyLoginOtp
+      dbPool,
+      expiresAt: Date.now() + OTP_TTL_MS,
+      lastSent:  Date.now(),
+    });
+
+    // Send the OTP via email
+    const { subject, html } = otpTemplate(otpCode, 'email');
+    sendEmail({ to: userEmail, subject, html }).catch(() => {});
+
+    return sendSuccess(
+      res,
+      { loginToken, email: userEmail, requires_otp: true },
+      `OTP sent to ${userEmail}. Please verify to complete sign-in.`,
+      200
+    );
+  } catch (err) {
+    console.error('[AuthController] login error:', err.message);
+    return sendError(res, 'Login failed due to a server error.', 500);
+  }
+};
+
+// ── Verify Login OTP ──────────────────────────────────────────────────────────
+
+/**
+ * POST /api/auth/verify-login-otp
+ * Body: { loginToken, otp }
+ * Validates the OTP against the in-memory store and issues the real session JWT.
+ */
+const verifyLoginOtp = async (req, res) => {
+  try {
+    const { loginToken, otp } = req.body;
+    if (!loginToken || !otp) {
+      return sendError(res, 'loginToken and otp are required.', 400);
+    }
+
+    // Verify the temp token is genuine
+    let decoded;
+    try {
+      decoded = jwt.verify(loginToken, process.env.JWT_SECRET);
+    } catch {
+      return sendError(res, 'Invalid or expired session. Please log in again.', 401);
+    }
+
+    if (!decoded.otp_pending) {
+      return sendError(res, 'Invalid token type.', 400);
+    }
+
+    const entry = loginOtpStore.get(loginToken);
+    if (!entry) {
+      return sendError(res, 'OTP session not found or already used. Please log in again.', 401);
+    }
+
+    if (Date.now() > entry.expiresAt) {
+      loginOtpStore.delete(loginToken);
+      return sendError(res, 'OTP has expired. Please log in again.', 401);
+    }
+
+    if (otp.trim() !== entry.otp) {
+      return sendError(res, 'Incorrect OTP. Please try again.', 401);
+    }
+
+    // OTP is correct — consume it
+    loginOtpStore.delete(loginToken);
+
+    const { user, unitDb, unitName, dbPool } = entry;
+
+    // Issue the real session JWT
+    const payload = { userId: user.id, role: user.role_type, unit_db: unitDb };
+    const token   = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '8h',
     });
 
-    // ── Step 5: Update last_login_at ──────────────────────────────────────────
+    // Update last_login_at
     dbPool.query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id])
       .catch(err => console.error('[AuthController] last_login_at update failed:', err.message));
 
-    // ── Step 6: Audit log ─────────────────────────────────────────────────────
+    // Audit log
     await logAudit({
       db:                 unitDb !== 'central' ? dbPool : null,
       isSuperAdminAction: unitDb === 'central',
@@ -171,8 +274,8 @@ const login = async (req, res) => {
       200
     );
   } catch (err) {
-    console.error('[AuthController] login error:', err.message);
-    return sendError(res, 'Login failed due to a server error.', 500);
+    console.error('[AuthController] verifyLoginOtp error:', err.message);
+    return sendError(res, 'OTP verification failed.', 500);
   }
 };
 
@@ -300,4 +403,4 @@ const refresh = async (req, res) => {
   }
 };
 
-module.exports = { login, getMe, changePassword, refresh };
+module.exports = { login, verifyLoginOtp, getMe, changePassword, refresh };

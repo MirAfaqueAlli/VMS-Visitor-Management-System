@@ -132,7 +132,9 @@ export default function NewRequest() {
       try {
         // Use the authenticated endpoint  -  the JWT tells the backend which unit DB to query.
         const deptsRes = await apiClient.get("/departments");
-        setDepartments(deptsRes.data.data || []);
+        // Departments API is now paginated: { departments: [], pagination: {} }
+        const dRaw = deptsRes.data?.data;
+        setDepartments(dRaw?.departments ?? (Array.isArray(dRaw) ? dRaw : []));
       } catch (err) {
         console.error("Failed to load departments", err);
       }
@@ -160,7 +162,10 @@ export default function NewRequest() {
         apiClient.get("/departments", { params: { _t } }),
         apiClient.get("/users/hosts", { params: { include_all: 'true', roles: 'employee', _t } }),
       ]).then(([deptRes, empRes]) => {
-        if (deptRes.status === 'fulfilled') setDepartments(deptRes.value.data?.data ?? []);
+        if (deptRes.status === 'fulfilled') {
+          const dRaw = deptRes.value.data?.data;
+          setDepartments(dRaw?.departments ?? (Array.isArray(dRaw) ? dRaw : []));
+        }
         if (empRes.status  === 'fulfilled') {
           setAdminVisitorAllEmployees(empRes.value.data?.data ?? []);
           setAdminVisitorEmployees(empRes.value.data?.data ?? []);
@@ -297,7 +302,6 @@ export default function NewRequest() {
         });
         setHosts(hostsRes.data.data || []);
       } catch (err) {
-        console.warn("Failed to load hosts", err);
         toast.error("Failed to load hosts for selected department.");
       }
     }
@@ -371,7 +375,6 @@ export default function NewRequest() {
           const list = (empResult.value.data?.data ?? []).filter(
             (emp) => !(String(emp.id) === String(user?.id) && String(emp.unit_id) === String(user?.unit_id))
           );
-    
           setAllUnitEmployees(list);
           // If there are departments, we force department selection before listing employees
           if (hasDepts) {
@@ -594,7 +597,6 @@ export default function NewRequest() {
     setLoading(true);
     try {
       const payload = buildPayload();
-   
       await apiClient.post("/visit-requests", payload);
       toast.success("Visit request created successfully");
       navigate("/requests");
@@ -658,7 +660,7 @@ export default function NewRequest() {
   const showHostPicker    = (!isSelfHosting || isUnitAdmin) && !isEmpVisit;
 
   // Shared input style
-  const inputCls = "w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300";
+  const inputCls = "w-full bg-bg-primary border-0 border-b border-subtle px-3 py-2.5 text-loud focus:ring-0 focus:border-border transition-colors duration-300";
 
   return (
     <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8 animate-fade-in">
@@ -666,9 +668,7 @@ export default function NewRequest() {
         <h1 className="text-2xl font-bold text-loud">
           New <em className="italic">Request</em>
         </h1>
-        <p className="text-muted mt-3 text-lg">
-          Schedule a new visit or register a walk-in.
-        </p>
+
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">
@@ -692,10 +692,9 @@ export default function NewRequest() {
                     : "border-subtle hover:border-border hover:bg-bg-primary"
                 }`}
               >
-                <div className={`font-medium mb-1 ${formData.visit_category === c.id ? "text-accent" : "text-loud"}`}>
+                <div className={`font-medium ${formData.visit_category === c.id ? "text-accent" : "text-loud"}`}>
                   {c.label}
                 </div>
-                <div className="text-xs text-muted">{c.desc}</div>
               </button>
             ))}
           </div>

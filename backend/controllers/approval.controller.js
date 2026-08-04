@@ -1,14 +1,13 @@
 // backend/controllers/approval.controller.js
 'use strict';
 
-const { sendSuccess, sendError }       = require('../utils/response.util');
-const { sendNotification }             = require('../services/notification.service');
-const emailService                     = require('../services/email.service');
-const { logAudit }                     = require('../utils/auditLogger.util');
-const { generateGatePass }             = require('../services/gatePass.service');
-const { isSuperAdmin, isUnitAdmin }    = require('../middlewares/rbac.middleware');
+const { sendSuccess, sendError } = require('../utils/response.util');
+const { sendNotification } = require('../services/notification.service');
+const emailService = require('../services/email.service');
+const { logAudit } = require('../utils/auditLogger.util');
+const { generateGatePass } = require('../services/gatePass.service');
+const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
-
 // ── Inline schedule conflict check for the approval flow ─────────────────────
 // Checks if the host already has another APPROVED visit overlapping the given time.
 const checkApprovalConflict = async (db, hostUserId, visitDate, startTime, endTime, excludeRequestId) => {
@@ -31,8 +30,8 @@ const checkApprovalConflict = async (db, hostUserId, visitDate, startTime, endTi
   if (!rows.length) return null;
   return {
     clashing_request_id: rows[0].id,
-    visitor_name:        rows[0].visitor_name,
-    time_window:         `${rows[0].visit_start_time} – ${rows[0].visit_end_time}`,
+    visitor_name: rows[0].visitor_name,
+    time_window: `${rows[0].visit_start_time} – ${rows[0].visit_end_time}`,
   };
 };
 
@@ -69,12 +68,12 @@ const getInbox = async (req, res) => {
     }
 
     // Pagination params
-    const page  = Math.max(1, parseInt(req.query.page  || '1',  10));
+    const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.max(1, parseInt(req.query.limit || '10', 10));
     const offset = (page - 1) * limit;
 
     const conditions = ["vr.status = 'PENDING'"];
-    const params     = [];
+    const params = [];
 
     if (isUnitAdmin(user) || isManagingUnit) {
       // See all pending requests in their unit DB
@@ -137,7 +136,7 @@ const approveRequest = async (req, res) => {
     const request = vrRows[0];
 
     // Permission check
-    const isHost    = request.host_user_id === user.id;
+    const isHost = request.host_user_id === user.id;
     const canApprove = isHost || isSuperAdmin(user) || isUnitAdmin(user);
 
     if (!canApprove) {
@@ -164,11 +163,11 @@ const approveRequest = async (req, res) => {
         if (conflict) {
           conn.release();
           return res.status(409).json({
-            success:        false,
-            conflict:       true,
-            type:           'HOST_BUSY',
-            host_conflict:  conflict,
-            message:        `Schedule conflict: ${conflict.visitor_name} is already approved for the host during ${conflict.time_window}. Approve anyway with force_approve.`,
+            success: false,
+            conflict: true,
+            type: 'HOST_BUSY',
+            host_conflict: conflict,
+            message: `Schedule conflict: ${conflict.visitor_name} is already approved for the host during ${conflict.time_window}. Approve anyway with force_approve.`,
           });
         }
       } catch (conflictErr) {
@@ -195,14 +194,19 @@ const approveRequest = async (req, res) => {
     try {
       passResult = await generateGatePass(request.id, user.id, req.db);
     } catch (passErr) {
-      console.error('[ApprovalController] Gate pass auto-generation failed:', passErr.message);
+      console.error(
+        `[ApprovalController] ⚠ Gate pass auto-generation FAILED for request #${request.id}:`,
+        passErr.message, '|', passErr.code || ''
+      );
+      // Approval itself is already committed. Security staff can use the
+      // manual "Generate Gate Pass" button on the request detail page.
     }
 
     // ── Respond immediately — don't make the client wait for emails/SMS ───────
     sendSuccess(res, { gate_pass: passResult }, 'Request approved successfully.');
 
     // ── Socket.IO: push real-time updates ────────────────────────────────────
-    const today        = getISTDateString();
+    const today = getISTDateString();
     const visitDateStr = getISTDateString(new Date(request.visit_date));
 
     // Resolve host name and department name for the socket payload
@@ -237,19 +241,19 @@ const approveRequest = async (req, res) => {
     // (the approver belongs to the same unit whose security needs the notification)
     if (visitDateStr === today) {
       emitToUnitSecurity(req.user.unit_id, 'visit:approved:today', {
-        id:               request.id,
-        visitor_name:     request.visitor_name,
-        visitor_phone:    request.visitor_phone,
-        host_user_id:     request.host_user_id,
-        host_name:        hostFullName,
-        department_name:  deptName,
-        visit_date:       request.visit_date,
+        id: request.id,
+        visitor_name: request.visitor_name,
+        visitor_phone: request.visitor_phone,
+        host_user_id: request.host_user_id,
+        host_name: hostFullName,
+        department_name: deptName,
+        visit_date: request.visit_date,
         visit_start_time: request.visit_start_time,
-        visit_end_time:   request.visit_end_time,
-        visit_category:   request.visitor_type_code,
-        status:           'APPROVED',
-        purpose:          request.purpose,
-        pass_number:      passResult?.pass_number || null,
+        visit_end_time: request.visit_end_time,
+        visit_category: request.visitor_type_code,
+        status: 'APPROVED',
+        purpose: request.purpose,
+        pass_number: passResult?.pass_number || null,
       });
     }
 
@@ -257,16 +261,16 @@ const approveRequest = async (req, res) => {
     if (request.requester_user_id && request.requester_user_id !== user.id) {
       emitToUser(request.requester_user_id, req.user.unit_db, 'visit:approved', {
         visit_request_id: request.id,
-        visit_date:       request.visit_date,
-        visit_category:   request.visitor_type_code,
-        approved_by:      user.full_name || user.email,
-        pass_number:      passResult?.pass_number || null,
+        visit_date: request.visit_date,
+        visit_category: request.visitor_type_code,
+        approved_by: user.full_name || user.email,
+        pass_number: passResult?.pass_number || null,
       });
     }
 
     // ── Fire notifications + audit in background (fire-and-forget) ────────────
     const notify = (opts) => sendNotification({ db: req.db, ...opts });
-    const visitorName  = request.visitor_name  || null;
+    const visitorName = request.visitor_name || null;
     const visitorEmail = request.visitor_email || null;
     const visitorPhone = request.visitor_phone || null;
     const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
@@ -275,14 +279,14 @@ const approveRequest = async (req, res) => {
 
     Promise.allSettled([
       // Email visitor
-      ...(visitorEmail && ['EMPLOYEE_VISIT','SPOT','PERSONAL_VISIT'].includes(request.visitor_type_code)
+      ...(visitorEmail && ['EMPLOYEE_VISIT', 'SPOT', 'PERSONAL_VISIT'].includes(request.visitor_type_code)
         ? [(() => {
-            const tmpl = emailService.visitApprovedTemplate(
-              visitorName || 'Visitor', user.full_name, request.visit_date, '',
-              passResult?.pass_number || null, qrCodeUrl, request.visit_start_time || null
-            );
-            return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
-          })()]
+          const tmpl = emailService.visitApprovedTemplate(
+            visitorName || 'Visitor', user.full_name, request.visit_date, '',
+            passResult?.pass_number || null, qrCodeUrl, request.visit_start_time || null
+          );
+          return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
+        })()]
         : []),
       // SMS visitor
       ...(visitorPhone ? [notify({
@@ -302,7 +306,7 @@ const approveRequest = async (req, res) => {
     ]).catch(err => console.error('[ApprovalController] Background task error:', err.message));
 
   } catch (err) {
-    if (conn) { try { await conn.rollback(); } catch (_) {} conn.release(); }
+    if (conn) { try { await conn.rollback(); } catch (_) { } conn.release(); }
     console.error('[ApprovalController] approveRequest error:', err.message);
     return sendError(res, 'Failed to approve request.', 500);
   }
@@ -331,7 +335,7 @@ const rejectRequest = async (req, res) => {
     }
     const request = vrRows[0];
 
-    const isHost    = request.host_user_id === user.id;
+    const isHost = request.host_user_id === user.id;
     const canReject = isHost || isSuperAdmin(user) || isUnitAdmin(user);
 
     if (!canReject) {
@@ -363,22 +367,22 @@ const rejectRequest = async (req, res) => {
     emitToUser(user.id, req.user.unit_db, 'visit:actioned', {
       visit_request_id: parseInt(id),
       action: 'REJECTED',
-      visit_category:   request.visitor_type_code,
+      visit_category: request.visitor_type_code,
     });
 
     // ── Socket: notify requester of rejection ────────────────────────────────
     if (request.requester_user_id) {
       emitToUser(request.requester_user_id, req.user.unit_db, 'visit:rejected', {
         visit_request_id: parseInt(id),
-        visit_category:   request.visitor_type_code,
-        remarks:          remarks.trim(),
-        rejected_by:      user.full_name || user.email,
+        visit_category: request.visitor_type_code,
+        remarks: remarks.trim(),
+        rejected_by: user.full_name || user.email,
       });
     }
 
     // ── Fire notifications + audit in background (fire-and-forget) ────────────
     const notify = (opts) => sendNotification({ db: req.db, ...opts });
-    const visitorName  = request.visitor_name  || null;
+    const visitorName = request.visitor_name || null;
     const visitorEmail = request.visitor_email || request.vendor_email || null; // vendor fallback
     const visitorPhone = request.visitor_phone || null;
     const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
@@ -437,7 +441,7 @@ const rejectRequest = async (req, res) => {
     ]).catch(err => console.error('[ApprovalController] Background task error:', err.message));
 
   } catch (err) {
-    if (conn) { try { await conn.rollback(); } catch (_) {} conn.release(); }
+    if (conn) { try { await conn.rollback(); } catch (_) { } conn.release(); }
     console.error('[ApprovalController] rejectRequest error:', err.message);
     return sendError(res, 'Failed to reject request.', 500);
   }

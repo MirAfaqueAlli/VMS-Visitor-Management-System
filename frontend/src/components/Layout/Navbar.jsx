@@ -155,7 +155,7 @@ function NotificationPanel({ notifications, loading, onAction, onClose, navigate
                     <div
                       style={{
                         width: '32px', height: '32px', borderRadius: '8px', flexShrink: 0,
-                        background: 'rgba(59,130,246,0.12)',
+                        background: 'rgba(26,115,233,0.12)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                       }}
                     >
@@ -513,9 +513,9 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
   return (
     <>
       <header
-        className="fixed top-0 right-0 h-10 flex items-center justify-between px-4 z-30 navbar-header"
+        className="fixed top-0 right-0 h-14 flex items-center justify-between px-4 z-30 navbar-header"
         style={{
-          background: 'var(--color-bg-primary)',
+          background: 'var(--color-bg-secondary)',
           borderBottom: '1px solid var(--color-border)',
         }}
       >
@@ -645,7 +645,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
           <div
             className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
             style={{
-              background: 'rgba(59,130,246,0.15)',
+              background: 'rgba(26,115,233,0.15)',
               color: 'var(--color-accent)',
             }}
           >
@@ -658,7 +658,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
           <span
             className="text-[10px] px-1 py-0.5 rounded hidden sm:block"
             style={{
-              background: 'rgba(59,130,246,0.1)',
+              background: 'rgba(26,115,233,0.10)',
               color: 'var(--color-accent)',
               borderRadius: '4px',
             }}
@@ -674,7 +674,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
       <div
         className="fixed z-20 flex items-center gap-3 px-4 py-2 animate-fade-in navbar-header"
         style={{
-          top: '40px',
+          top: '56px',
           right: 0,
           background: 'var(--color-warning-bg)',
           borderBottom: '1px solid var(--color-accent)',

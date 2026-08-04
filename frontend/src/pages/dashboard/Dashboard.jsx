@@ -421,7 +421,7 @@ function SecurityDashboard() {
  {v.visitor_name ?? "—"}
  </td>
  <td className="px-5 py-3">
- <StatusBadge status={v.visitor_type_code} />
+ <StatusBadge status={v.visit_category || v.visitor_type_code || v.visitor_type} />
  </td>
  <td className="px-5 py-3 text-muted whitespace-nowrap">
  {v.host_name ?? "—"}
@@ -603,9 +603,7 @@ function EmployeeDashboard() {
  <h1 className="text-2xl font-bold text-loud">
  Your <em className="italic">Workspace</em>
  </h1>
- <p className="text-faint mt-2">
- Here&apos;s what needs your attention today.
- </p>
+
  </div>
 
   {/* Stat Cards */}
@@ -742,7 +740,7 @@ function EmployeeDashboard() {
  {v.visitor_name ?? "—"}
  </td>
  <td className="px-5 py-3">
- <StatusBadge status={v.visitor_type_code} />
+ <StatusBadge status={v.visit_category || v.visitor_type_code || v.visitor_type} />
  </td>
  <td className="px-5 py-3 text-muted whitespace-nowrap">
  {fmtDate(v.visit_date)}
@@ -872,9 +870,6 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
  <h1 className="text-2xl font-bold text-loud">
   Operations <em className="italic">Command</em>
  </h1>
- <p className="text-faint mt-2">
-  {unitName ? `Live activity for ${unitName}.` : 'System-wide activity at a glance.'}
- </p>
  </div>
 
   {/* Gate Summary */}
@@ -1067,14 +1062,13 @@ function SuperAdminDashboard() {
   const s = summary ?? {};
 
   return (
-    <div>
+    <div className="pt-4">
       {/* Header */}
-      <div className="mb-10">
+      <div className="mb-8">
         <p className="text-[11px] tracking-widest uppercase text-accent mb-1">
           {greeting} — {user?.full_name?.split(' ')[0] ?? 'Admin'}
         </p>
         <h1 className="text-2xl font-bold text-loud">System <em className="italic">Overview</em></h1>
-        <p className="text-faint mt-2">Live statistics across all units and branches.</p>
       </div>
 
       {/* ── Stat Cards ── */}

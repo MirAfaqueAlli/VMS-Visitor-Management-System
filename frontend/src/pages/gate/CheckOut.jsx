@@ -1,5 +1,6 @@
 // frontend/src/pages/gate/CheckOut.jsx
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   LogOut, Clock, User, Hash, QrCode, Upload, Keyboard,
   X, Check, CheckCircle2, ZoomIn, ShieldCheck, AlertCircle,
@@ -25,7 +26,7 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
   // Step 1 state
   const [verifyMode,   setVerifyMode]   = useState(null);
   const [qrScanActive, setQrScanActive] = useState(false);
-  const [qrStream,     setQrStream]     = useState(null);
+  const qrStreamRef = useRef(null);   // useRef — no stale-closure on stop
   const [passNumber,   setPassNumber]   = useState("");
   const [passVerified, setPassVerified] = useState(false);
   const [qrError,      setQrError]      = useState("");
@@ -42,17 +43,26 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
 
   // Cleanup camera on unmount
   useEffect(() => {
-    return () => stopQrCamera();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (qrStreamRef.current) {
+        qrStreamRef.current.getTracks().forEach(t => t.stop());
+        if (qrVideoRef.current) qrVideoRef.current.srcObject = null;
+        qrStreamRef.current = null;
+      }
+    };
   }, []);
 
   // ── QR helpers ───────────────────────────────────────────────────────────
   const stopQrCamera = useCallback(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    if (qrStream) qrStream.getTracks().forEach(t => t.stop());
-    setQrStream(null);
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (qrStreamRef.current) {
+      qrStreamRef.current.getTracks().forEach(t => t.stop());
+      if (qrVideoRef.current) qrVideoRef.current.srcObject = null;
+      qrStreamRef.current = null;
+    }
     setQrScanActive(false);
-  }, [qrStream]);
+  }, []);
 
   const verifyPassString = useCallback((rawData) => {
     if (!rawData) return;
@@ -84,11 +94,13 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
       });
-      setQrStream(stream);
+      qrStreamRef.current = stream;
       setQrScanActive(true);
-      setTimeout(() => {
-        if (qrVideoRef.current) { qrVideoRef.current.srcObject = stream; qrVideoRef.current.play(); }
-      }, 80);
+      // Attach directly — no setTimeout race condition
+      if (qrVideoRef.current) {
+        qrVideoRef.current.srcObject = stream;
+        qrVideoRef.current.play().catch(() => {});
+      }
     } catch {
       toast.error("Camera not accessible. Try uploading or entering manually.");
     }
@@ -162,17 +174,17 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
   // ── Shared styles ─────────────────────────────────────────────────────────
   const stepActive = (n) => n === step;
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !submitting && onClose()} />
+  return createPortal(
+    <div className="fixed inset-0 z-[999] flex items-start justify-center pt-24 pb-8 px-4 overflow-y-auto">
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !submitting && onClose()} />
       <div
-        className="relative z-10 w-full max-w-lg animate-fade-in"
+        className="relative z-10 w-full max-w-lg animate-fade-in my-auto"
         style={{
           background: "var(--color-bg-primary)",
           border: "1px solid var(--color-border)",
           borderRadius: "16px",
           boxShadow: "0 24px 64px rgba(0,0,0,0.35)",
-          maxHeight: "92vh",
+          maxHeight: "85vh",
           overflowY: "auto",
         }}
       >
@@ -482,7 +494,7 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
                   type="button"
                   onClick={handleSubmit}
                   disabled={submitting}
-                  className="flex items-center gap-2 px-6 py-2 rounded-full text-[13px] font-semibold text-white transition-all hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-full text-[13px] font-semibold text-white transition-all hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed"
                   style={{ background: submitting ? "#8b5cf6aa" : "#8b5cf6" }}
                 >
                   {submitting ? (
@@ -502,9 +514,11 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CheckOut — main page
@@ -571,6 +585,7 @@ export default function CheckOut() {
     setDirectSubmit(true);
     try {
       await apiClient.post(`/gate/checkout/${directModal.visit_log_id}`, {
+        visit_log_id: directModal.visit_log_id,
         remarks: remarks || undefined,
       });
       setDirectModal(null);
@@ -589,7 +604,6 @@ export default function CheckOut() {
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-loud">Gate <em className="italic">Check-Out</em></h1>
-        <p className="text-muted mt-2">Manage currently active visitors on premises.</p>
       </div>
 
       <div className="vms-card rounded-md p-6 shadow-card">
@@ -598,7 +612,6 @@ export default function CheckOut() {
             <thead>
               <tr className="border-b border-subtle text-muted text-sm uppercase tracking-wider">
                 <th className="py-4 px-4 font-medium">Visitor</th>
-                <th className="py-4 px-4 font-medium">Pass Number</th>
                 <th className="py-4 px-4 font-medium">Host</th>
                 <th className="py-4 px-4 font-medium">Check-In Time</th>
                 <th className="py-4 px-4 font-medium text-right">Actions</th>
@@ -607,11 +620,11 @@ export default function CheckOut() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="5" className="text-center py-12 text-faint italic">Loading active visitors...</td>
+                  <td colSpan="4" className="text-center py-12 text-faint italic">Loading active visitors...</td>
                 </tr>
               ) : activeVisitors.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="text-center py-12 text-faint italic">No active visitors on premises.</td>
+                  <td colSpan="4" className="text-center py-12 text-faint italic">No active visitors on premises.</td>
                 </tr>
               ) : (
                 activeVisitors.map((visitor) => (
@@ -628,12 +641,6 @@ export default function CheckOut() {
                         <div className="text-xs text-faint pl-6 mt-0.5">📞 {visitor.visitor_phone}</div>
                       )}
                       <div className="text-sm text-muted pl-6 mt-1 line-clamp-1">{visitor.purpose}</div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="text-loud font-mono text-sm flex items-center gap-1.5 bg-bg-primary px-2 py-1 rounded inline-flex">
-                        <Hash className="w-3 h-3 text-accent" />
-                        {visitor.pass_number}
-                      </div>
                     </td>
                     <td className="py-4 px-4">
                       <div className="text-loud">{visitor.host_name}</div>
@@ -691,16 +698,23 @@ export default function CheckOut() {
       </div>
 
       {/* ── Direct Checkout Modal ─────────────────────────────────────────── */}
-      {directModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+      {directModal && createPortal(
+        <div className="fixed inset-0 z-[999] flex items-start justify-center pt-24 px-4 overflow-y-auto">
           <div
-            className="absolute inset-0 bg-accent/40 backdrop-blur-sm"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => !directSubmit && setDirectModal(null)}
           />
-          <div className="bg-vms-card rounded-md p-8 max-w-md w-full relative z-10 shadow-card animate-fade-in">
+          <div
+            className="relative z-10 w-full max-w-md p-6 rounded-xl animate-fade-in my-auto"
+            style={{
+              background: "var(--color-bg-secondary)",
+              border: "1px solid var(--color-border)",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.35)",
+            }}
+          >
             <div className="flex items-center gap-3 mb-4">
               <div
-                className="w-10 h-10 rounded-full flex items-center justify-center"
+                className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
                 style={{ background: "rgba(239,68,68,0.1)" }}
               >
                 <LogOut size={18} style={{ color: "#dc2626" }} />
@@ -740,7 +754,8 @@ export default function CheckOut() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ── QR Checkout Modal ─────────────────────────────────────────────── */}

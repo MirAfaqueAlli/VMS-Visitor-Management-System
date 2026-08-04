@@ -37,8 +37,8 @@ export default function CheckIn() {
   // ── Step 1: verification mode & state ─────────────────────────────────────
   const [verifyMode,   setVerifyMode]   = useState(null); // null | 'webcam' | 'upload' | 'manual'
   const [qrScanActive, setQrScanActive] = useState(false);
-  const [qrStream,     setQrStream]     = useState(null);
   const [qrDetected,   setQrDetected]   = useState(false);
+  const qrStreamRef   = useRef(null);   // useRef — no stale-closure on stop
   const qrVideoRef    = useRef(null);
   const qrCanvasRef   = useRef(null);
   const qrFileRef     = useRef(null);
@@ -46,7 +46,7 @@ export default function CheckIn() {
 
   // ── Step 2: visitor photo capture ─────────────────────────────────────────
   const [captureMode,  setCaptureMode]  = useState(null); // null | 'camera' | 'preview'
-  const [cameraStream, setCameraStream] = useState(null);
+  const cameraStreamRef = useRef(null); // useRef — no stale-closure on stop
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
   const videoRef  = useRef(null);
   const canvasRef = useRef(null);
@@ -73,13 +73,24 @@ export default function CheckIn() {
 
   useEffect(() => { fetchRequest(); }, [fetchRequest]);
 
-  // Cleanup cameras on unmount
+  // Cleanup ALL cameras on unmount — uses refs so always sees current stream
   useEffect(() => {
     return () => {
-      stopQrCamera();
-      if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+      // Cancel QR animation loop
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      // Stop QR stream
+      if (qrStreamRef.current) {
+        qrStreamRef.current.getTracks().forEach(t => t.stop());
+        if (qrVideoRef.current) qrVideoRef.current.srcObject = null;
+        qrStreamRef.current = null;
+      }
+      // Stop photo-capture stream
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(t => t.stop());
+        if (videoRef.current) videoRef.current.srcObject = null;
+        cameraStreamRef.current = null;
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleChange = (e) =>
@@ -88,11 +99,14 @@ export default function CheckIn() {
   // ── QR Verification helpers ────────────────────────────────────────────────
 
   const stopQrCamera = useCallback(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    if (qrStream) qrStream.getTracks().forEach(t => t.stop());
-    setQrStream(null);
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (qrStreamRef.current) {
+      qrStreamRef.current.getTracks().forEach(t => t.stop());
+      if (qrVideoRef.current) qrVideoRef.current.srcObject = null;
+      qrStreamRef.current = null;
+    }
     setQrScanActive(false);
-  }, [qrStream]);
+  }, []);
 
   /**
    * Verify a decoded pass string against the request's expected pass_number.
@@ -115,8 +129,6 @@ export default function CheckIn() {
     const entered  = passNumber.trim().toUpperCase();
     const expected = (request?.pass_number || "").trim().toUpperCase();
 
-    
-
     setFormData(p => ({ ...p, pass_number: entered }));
     if (entered === expected) {
       setPassVerified(true);
@@ -135,15 +147,14 @@ export default function CheckIn() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
       });
-      setQrStream(stream);
+      qrStreamRef.current = stream;
       setQrScanActive(true);
       setQrDetected(false);
-      setTimeout(() => {
-        if (qrVideoRef.current) {
-          qrVideoRef.current.srcObject = stream;
-          qrVideoRef.current.play();
-        }
-      }, 80);
+      // Attach directly — no setTimeout race condition
+      if (qrVideoRef.current) {
+        qrVideoRef.current.srcObject = stream;
+        qrVideoRef.current.play().catch(() => {});
+      }
     } catch {
       toast.error("Camera not accessible. Try uploading a QR image or enter manually.");
     }
@@ -235,20 +246,25 @@ export default function CheckIn() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
       });
-      setCameraStream(stream);
+      cameraStreamRef.current = stream;
       setCaptureMode("camera");
       setPhotoDataUrl(null);
-      setTimeout(() => {
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      }, 60);
+      // Attach directly — no setTimeout race condition
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
     } catch {
       toast.error("Camera not accessible. Try uploading a photo instead.");
     }
   };
 
   const stopCamera = () => {
-    if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
-    setCameraStream(null);
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach(t => t.stop());
+      // Null out srcObject so the browser releases the camera indicator
+      if (videoRef.current) videoRef.current.srcObject = null;
+      cameraStreamRef.current = null;
+    }
     setCaptureMode(null);
   };
 
@@ -353,7 +369,6 @@ export default function CheckIn() {
     <div className="max-w-5xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-loud">Gate <em className="italic">Check-In</em></h1>
-        <p className="text-muted mt-2">Verify gate pass and ID to grant entry.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">

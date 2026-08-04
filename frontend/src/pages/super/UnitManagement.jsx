@@ -117,7 +117,7 @@ export default function UnitManagement() {
 
   return (
     <>
-      <div className="space-y-6 animate-fade-in">
+      <div className="space-y-6 animate-fade-in pt-4">
 
         {/* Page header */}
         <div className="flex items-start justify-between">
@@ -125,9 +125,6 @@ export default function UnitManagement() {
             <h1 className="text-[18px] font-bold" style={{ color: 'var(--color-text)' }}>
               Unit Management
             </h1>
-            <p className="text-[12px] mt-1" style={{ color: 'var(--color-text-faint)' }}>
-              Each unit gets its own fully isolated MySQL database, provisioned automatically on creation.
-            </p>
           </div>
           <button className="btn-primary" onClick={openCreate}>
             <Plus size={14} /> Create Unit
@@ -154,15 +151,35 @@ export default function UnitManagement() {
         </div>
 
         {/* Search */}
-        <div className="vms-card p-3 flex items-center gap-2">
-          <Search size={14} style={{ color: 'var(--color-text-faint)' }} />
+        <div className="relative flex items-center">
+          <div className="absolute left-3.5 flex items-center pointer-events-none z-10">
+            <Search size={18} style={{ color: 'var(--color-accent)' }} />
+          </div>
           <input
-            className="flex-1 bg-transparent text-[13px] outline-none"
-            style={{ color: 'var(--color-text)' }}
+            type="text"
+            className="w-full h-12 pl-10 pr-28 bg-bg-secondary border border-subtle rounded-xl text-[14px] text-loud placeholder-faint shadow-card focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
             placeholder="Search by name, code or city…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+          <div className="absolute right-1.5 flex items-center gap-2 z-10">
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="text-[12px] font-medium px-2 py-1 text-faint hover:text-loud transition-colors"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-primary h-9 px-4 text-[13px] font-medium flex items-center gap-1.5 rounded-lg shadow-sm"
+            >
+              <Search size={14} />
+              <span>Search</span>
+            </button>
+          </div>
         </div>
 
         {/* Units grid */}

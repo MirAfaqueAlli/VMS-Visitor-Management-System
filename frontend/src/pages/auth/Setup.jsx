@@ -108,9 +108,7 @@ export default function Setup() {
           <h1 className="text-2xl font-bold text-white tracking-tight">
             First-Time Setup
           </h1>
-          <p className="text-white/40 text-sm mt-1.5">
-            Configure your organization and super admin account to get started.
-          </p>
+
         </div>
 
         {/* Step indicator */}
@@ -160,13 +158,7 @@ export default function Setup() {
           {/* ── Step 1: Organization ─────────────────────────────────────── */}
           {step === 1 && (
             <form onSubmit={goNext} className="space-y-5">
-              <div>
-                <p className="text-white/60 text-xs mb-5 leading-relaxed">
-                  Enter your organization's details. This is the root company record — it cannot be changed easily later.
-                </p>
-              </div>
 
-              <div className="space-y-4">
                 {/* Organization Name — full width */}
                 <div className="space-y-1.5">
                   <label className={labelCls}>
@@ -258,7 +250,6 @@ export default function Setup() {
                     />
                   </div>
                 </div>
-              </div>
 
               <button
                 type="submit"

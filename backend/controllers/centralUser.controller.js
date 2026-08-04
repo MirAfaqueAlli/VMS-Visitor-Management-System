@@ -63,6 +63,20 @@ const createCentralUser = async (req, res) => {
       return sendError(res, 'full_name, email, employee_code, password, and role_type are required.', 400);
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return sendError(res, 'Please enter a valid email address (e.g. user@company.com).', 400);
+    }
+
+    // Validate phone format if provided
+    if (phone && phone.trim()) {
+      const digits = phone.replace(/\D/g, '');
+      if (!/^[+]?[\d\s\-]+$/.test(phone.trim()) || digits.length < 7 || digits.length > 15) {
+        return sendError(res, 'Phone number must contain only digits (7–15 digits). Example: +91 9000000000', 400);
+      }
+    }
+
     // Only global_auditor can be created this way — super_admin is provisioned via schema
     if (!['global_auditor', 'super_admin'].includes(role_type)) {
       return sendError(res, 'role_type must be global_auditor or super_admin.', 400);
@@ -111,7 +125,7 @@ const createCentralUser = async (req, res) => {
     if (err.code === 'ER_DUP_ENTRY') {
       return sendError(res, 'A user with this email, phone, or employee code already exists.', 409);
     }
-    return sendError(res, `Failed to create user: ${err.message}`, 500);
+    return sendError(res, 'Failed to create user. Please try again.', 500);
   }
 };
 
@@ -130,6 +144,22 @@ const updateCentralUser = async (req, res) => {
       'SELECT id FROM users WHERE id = ? AND deleted_at IS NULL', [id]
     );
     if (existing.length === 0) return sendError(res, 'User not found.', 404);
+
+    // Validate email format if provided
+    if (email && email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return sendError(res, 'Please enter a valid email address (e.g. user@company.com).', 400);
+      }
+    }
+
+    // Validate phone format if provided
+    if (phone && phone.trim()) {
+      const digits = phone.replace(/\D/g, '');
+      if (!/^[+]?[\d\s\-]+$/.test(phone.trim()) || digits.length < 7 || digits.length > 15) {
+        return sendError(res, 'Phone number must contain only digits (7–15 digits). Example: +91 9000000000', 400);
+      }
+    }
 
     await centralPool.query(
       `UPDATE users SET

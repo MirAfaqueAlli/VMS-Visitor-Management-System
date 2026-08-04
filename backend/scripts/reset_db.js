@@ -70,6 +70,40 @@ async function getAllUnitDbs(conn) {
   }
 }
 
+// ── Safely add a column if it does not already exist ──────────────────────────
+async function addColumnIfMissing(conn, dbName, tableName, columnName, columnDef) {
+  const [cols] = await conn.query(
+    `SELECT COLUMN_NAME
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [dbName, tableName, columnName]
+  );
+  if (cols.length > 0) return false; // already present
+  await conn.query(`ALTER TABLE \`${dbName}\`.\`${tableName}\` ADD COLUMN ${columnName} ${columnDef}`);
+  return true; // added
+}
+
+// ── Run all pending schema migrations on a unit DB ────────────────────────────
+async function runUnitMigrations(conn, dbName) {
+  const migrations = [
+    // Vendor visit fields
+    { table: 'visit_requests', column: 'service_type',   def: 'VARCHAR(100) NULL AFTER vendor_email',  label: 'visit_requests.service_type'  },
+    { table: 'visit_requests', column: 'work_order_ref', def: 'VARCHAR(100) NULL AFTER service_type', label: 'visit_requests.work_order_ref' },
+  ];
+
+  let applied = 0;
+  for (const m of migrations) {
+    try {
+      const added = await addColumnIfMissing(conn, dbName, m.table, m.column, m.def);
+      if (added) { ok(`  [${dbName}] Added column: ${m.label}`); applied++; }
+      else        { info(`  [${dbName}] Already has:  ${m.label}`); }
+    } catch (e) {
+      warn(`  [${dbName}] Migration failed for ${m.label}: ${e.message}`);
+    }
+  }
+  return applied;
+}
+
 // ── Apply schema file (strips the SEED DATA section) ─────────────────────────
 async function applySchema(conn, filePath) {
   if (!fs.existsSync(filePath)) {
@@ -130,7 +164,7 @@ async function main() {
 
 
     // ── Step 2: Drop and recreate vms_central ────────────────────────────────
-    console.log(`[ 2 / 3 ]  Recreating central database: ${CENTRAL_DB}…`);
+    console.log(`[ 2 / 4 ]  Recreating central database: ${CENTRAL_DB}…`);
     await conn.query(`DROP DATABASE IF EXISTS \`${CENTRAL_DB}\``);
     drop(`Dropped central DB: ${CENTRAL_DB}`);
 
@@ -145,8 +179,25 @@ async function main() {
     await applySchema(conn, centralSchemaPath);
     console.log('');
 
-    // ── Step 3: Verify clean state ───────────────────────────────────────────
-    console.log('[ 3 / 3 ]  Verifying clean state…');
+    // ── Step 3: Run schema migrations on all unit DBs ────────────────────────
+    // Applies any missing columns to existing unit DBs (safe — uses INFORMATION_SCHEMA check)
+    // Unit DBs created AFTER this reset will already have the correct columns from the
+    // updated vms_unit_schema.sql — this step handles DBs created before the fix.
+    console.log('[ 3 / 4 ]  Running schema migrations on unit databases…');
+    const unitDbsForMigration = await getAllUnitDbs(conn);
+    if (unitDbsForMigration.length === 0) {
+      info('No unit databases found — migrations will apply automatically when units are created via setup.');
+    } else {
+      let totalApplied = 0;
+      for (const dbName of unitDbsForMigration) {
+        totalApplied += await runUnitMigrations(conn, dbName);
+      }
+      ok(`Migrations complete — ${totalApplied} column(s) added across ${unitDbsForMigration.length} unit DB(s).`);
+    }
+    console.log('');
+
+    // ── Step 4: Verify clean state ───────────────────────────────────────────
+    console.log('[ 4 / 4 ]  Verifying clean state…');
 
     const checks = [
       { table: 'organizations', label: 'Organizations' },

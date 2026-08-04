@@ -172,7 +172,7 @@ const createUnit = async (req, res) => {
       // Rollback: deactivate the unit record
       await centralPool.query(`UPDATE units SET db_status = 'SUSPENDED', is_active = FALSE WHERE id = ?`, [unitId]);
       console.error('[UnitController] DB provisioning failed:', provErr.message);
-      return sendError(res, `Unit created but database provisioning failed: ${provErr.message}`, 500);
+      return sendError(res, 'Unit created but database provisioning failed. Contact system administrator.', 500);
     }
 
     // Mark ACTIVE

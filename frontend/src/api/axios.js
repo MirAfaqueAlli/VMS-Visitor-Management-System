@@ -88,10 +88,11 @@ apiClient.interceptors.response.use(
     // IMPORTANT: Skip the redirect for /auth/login itself — a failed login
     // (wrong password → 401) would otherwise wipe the error message before
     // it can be displayed.
-    const isLoginEndpoint   = error.config?.url?.includes("/auth/login");
-    const isRefreshEndpoint = error.config?.url?.includes("/auth/refresh");
+    const isLoginEndpoint      = error.config?.url?.includes("/auth/login");
+    const isRefreshEndpoint    = error.config?.url?.includes("/auth/refresh");
+    const isVerifyOtpEndpoint  = error.config?.url?.includes("/auth/verify-login-otp");
 
-    if (error.response?.status === 401 && !isLoginEndpoint && !isRefreshEndpoint) {
+    if (error.response?.status === 401 && !isLoginEndpoint && !isRefreshEndpoint && !isVerifyOtpEndpoint) {
       localStorage.removeItem("vms_token");
       localStorage.removeItem("vms_user");
       localStorage.removeItem("vms_active_unit");

@@ -1,6 +1,6 @@
 // frontend/src/pages/admin/DepartmentManagement.jsx
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Trash2, Tag, Search } from 'lucide-react';
+import { Plus, X, Trash2, Tag } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
@@ -17,27 +17,15 @@ export default function DepartmentManagement() {
   const [form,       setForm]       = useState(EMPTY);
   const [saving,     setSaving]     = useState(false);
   const [desigInput, setDesigInput] = useState('');
-  const [search,     setSearch]     = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page,       setPage]       = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const limit = 10;
 
-  // Debounce search
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search), 300);
-    return () => clearTimeout(t);
-  }, [search]);
-
-  // Reset page on search change
-  useEffect(() => { setPage(1); }, [debouncedSearch]);
-
   const fetchDepts = useCallback(async () => {
     setLoading(true);
     try {
       const params = { page, limit };
-      if (debouncedSearch) params.search = debouncedSearch;
       const res = await apiClient.get('/departments', { params });
       const data = res.data?.data;
       setDepts(data?.departments ?? []);
@@ -45,7 +33,7 @@ export default function DepartmentManagement() {
       setTotalCount(data?.pagination?.total ?? 0);
     } catch { toast.error('Failed to load departments.'); }
     finally  { setLoading(false); }
-  }, [page, debouncedSearch]);
+  }, [page]);
 
   useEffect(() => { fetchDepts(); }, [fetchDepts]);
 
@@ -120,35 +108,29 @@ export default function DepartmentManagement() {
 
   return (
     <>
-      <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in space-y-5">
+      <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in space-y-6">
+        {/* Page Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-loud">Department <em className="italic">Management</em></h1>
+          </div>
+          <button onClick={openAdd} className="btn-primary px-4 py-2 text-xs">
+            <Plus className="w-4 h-4" /> Add Department
+          </button>
+        </div>
+
         {/* Table card */}
         <div className="vms-card overflow-hidden">
           <div
             className="px-5 py-4 flex items-center justify-between gap-4"
             style={{ borderBottom: '1px solid var(--color-border)' }}
           >
-            <div className="flex items-center gap-3 flex-1">
-              <h2 className="font-semibold text-[13px] shrink-0" style={{ color: 'var(--color-text)' }}>
-                Departments
-                <span className="ml-2 text-[11px] font-normal" style={{ color: 'var(--color-text-faint)' }}>
-                  ({totalCount})
-                </span>
-              </h2>
-              {/* Inline search */}
-              <div className="flex items-center gap-1.5 flex-1 max-w-xs px-3 py-1.5 rounded-full border border-subtle bg-bg-primary">
-                <Search size={12} style={{ color: 'var(--color-text-faint)' }} />
-                <input
-                  className="flex-1 bg-transparent text-[12px] outline-none"
-                  style={{ color: 'var(--color-text)' }}
-                  placeholder="Search…"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                />
-              </div>
-            </div>
-            <button className="btn-primary shrink-0" onClick={openAdd}>
-              <Plus size={14} /> Add Department
-            </button>
+            <h2 className="font-semibold text-[13px] shrink-0" style={{ color: 'var(--color-text)' }}>
+              Departments
+              <span className="ml-2 text-[11px] font-normal" style={{ color: 'var(--color-text-faint)' }}>
+                ({totalCount})
+              </span>
+            </h2>
           </div>
 
           {loading ? (

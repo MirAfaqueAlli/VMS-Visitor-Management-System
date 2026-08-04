@@ -5,6 +5,8 @@ const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
+const { verifyQRToken }          = require('../utils/qrToken.util');
+const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
 
 
 // ── getDashboard ──────────────────────────────────────────────────────────────
@@ -264,14 +266,19 @@ const checkIn = async (req, res) => {
         `SELECT id_number FROM visitor_documents WHERE visitor_id = ? AND id_type = ? LIMIT 1`,
         [visitorId, id_verified_type]
       );
-      if (idProofRows.length > 0 && idProofRows[0].id_number !== id_verified_number) {
-        conn.release();
-        return sendError(res, `ID Mismatch: The provided ${id_verified_type} does not match our records for this visitor.`, 400);
+      if (idProofRows.length > 0) {
+        // Decrypt stored value before comparing with what was presented at gate
+        const storedNumber = decryptField(idProofRows[0].id_number);
+        if (storedNumber !== id_verified_number) {
+          conn.release();
+          return sendError(res, `ID Mismatch: The provided ${id_verified_type} does not match our records for this visitor.`, 400);
+        }
       }
       // Store ID doc if not already there (INSERT IGNORE respects the unique constraint)
+      // Encrypt before storing
       await req.db.query(
         `INSERT IGNORE INTO visitor_documents (visitor_id, id_type, id_number, is_primary, created_at) VALUES (?, ?, ?, TRUE, NOW())`,
-        [visitorId, id_verified_type, id_verified_number]
+        [visitorId, id_verified_type, encryptField(id_verified_number)]
       );
     }
 
@@ -298,7 +305,7 @@ const checkIn = async (req, res) => {
         req.user.id,
         visitorPhotoPath,
         id_verified_type,
-        id_verified_number,
+        encryptField(id_verified_number),   // encrypt before persisting
         remarks || null,
       ]
     );
@@ -625,7 +632,7 @@ const getActiveVisitors = async (req, res) => {
        ORDER BY vl.check_in_at DESC`
     );
 
-    return sendSuccess(res, rows, 'Active visitors retrieved successfully.');
+    return sendSuccess(res, decryptRows(rows, ['id_verified_number']), 'Active visitors retrieved successfully.');
   } catch (err) {
     console.error('[GateController] getActiveVisitors error:', err.message);
     return sendError(res, 'Failed to retrieve active visitors.', 500);
@@ -651,14 +658,40 @@ const checkOutByQR = async (req, res) => {
       return sendError(res, 'pass_number is required.', 400);
     }
 
-    // ── 1. Find gate pass — must be USED and within 24h validity window ────────
+    // ── 0. Verify the HMAC-SHA256 signature on the QR token ──────────────────
+    // The QR image encodes a signed token, not raw JSON.
+    // If the token is a signed token (contains '.'), verify it.
+    // If someone sends just a raw pass_number string from a forged source,
+    // we still look it up in the DB — the DB gate_pass status guards that path.
+    let resolvedPassNumber = pass_number.trim().toUpperCase();
+
+    if (pass_number.includes('.')) {
+      // Looks like a signed QR token — verify the HMAC signature
+      const { valid, payload, error } = verifyQRToken(pass_number.trim());
+
+      if (!valid) {
+        conn.release();
+        console.warn(`[GateController] QR signature verification FAILED: ${error}`);
+        return sendError(res, `Invalid QR code: ${error}`, 403);
+      }
+
+      // Extract the pass_number from the verified payload
+      if (!payload.pass_number) {
+        conn.release();
+        return sendError(res, 'QR token payload is missing pass_number.', 400);
+      }
+
+      resolvedPassNumber = payload.pass_number.trim().toUpperCase();
+      console.info(`[GateController] QR token verified ✓ — pass: ${resolvedPassNumber}`);
+    }
+
     const [passRows] = await req.db.query(
       `SELECT gp.*, vr.id AS visit_request_id
        FROM gate_passes gp
        JOIN visit_requests vr ON vr.id = gp.visit_request_id
        WHERE gp.pass_number = ? AND gp.status = 'USED'
        LIMIT 1`,
-      [pass_number.trim().toUpperCase()]
+      [resolvedPassNumber]
     );
 
     if (!passRows.length) {

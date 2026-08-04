@@ -6,6 +6,8 @@ const router  = express.Router();
 const ctrl    = require('../controllers/department.controller');
 const { protect }   = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
+const { validate }  = require('../middlewares/validate.middleware');
+const { createDepartmentSchema, updateDepartmentSchema } = require('../validators/schemas');
 
 // Public — external visitor form (no auth required, uses unit_code or unit_id query param)
 router.get('/public', ctrl.listPublicDepartments);
@@ -19,8 +21,8 @@ router.get('/', (req, res, next) => {
 }, protect, ctrl.listDepartments);
 
 // Create/Update/Delete — super_admin or unit_admin
-router.post('/',      protect, authorize('super_admin', 'unit_admin'), ctrl.createDepartment);
-router.put('/:id',    protect, authorize('super_admin', 'unit_admin'), ctrl.updateDepartment);
+router.post('/',      protect, authorize('super_admin', 'unit_admin'), validate(createDepartmentSchema), ctrl.createDepartment);
+router.put('/:id',    protect, authorize('super_admin', 'unit_admin'), validate(updateDepartmentSchema), ctrl.updateDepartment);
 router.delete('/:id', protect, authorize('super_admin', 'unit_admin'), ctrl.deactivateDepartment);
 
 module.exports = router;

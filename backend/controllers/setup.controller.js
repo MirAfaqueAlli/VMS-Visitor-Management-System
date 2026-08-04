@@ -147,7 +147,7 @@ const initialize = async (req, res) => {
     if (err.code === 'ER_DUP_ENTRY') {
       return sendError(res, 'Organization code or admin email already exists.', 409);
     }
-    return sendError(res, 'Initialization failed. ' + err.message, 500);
+    return sendError(res, 'Initialization failed. Please check system configuration and try again.', 500);
   }
 };
 

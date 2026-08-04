@@ -1056,11 +1056,6 @@ export default function Reports() {
           </div>
           Reports &amp; <em className="italic">Analytics</em>
         </h1>
-        <p className="text-muted mt-1.5 text-sm">
-          {isCentral
-            ? 'System-wide reports across all units. Use the Unit filter to scope to a specific unit.'
-            : 'Unit-level reports. Use the Department filter to scope by department.'}
-        </p>
       </div>
 
       {/* ── Overview Charts (collapsible) ─────────────────────────────── */}

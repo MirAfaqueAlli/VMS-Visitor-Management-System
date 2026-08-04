@@ -3,6 +3,7 @@
 
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
 
 // ── createVisitor ─────────────────────────────────────────────────────────────
 /**
@@ -47,7 +48,7 @@ const createVisitor = async (req, res) => {
       await conn.query(
         `INSERT INTO visitor_documents (visitor_id, id_type, id_number, is_primary, created_at)
          VALUES (?, ?, ?, TRUE, NOW())`,
-        [visitorId, id_type, id_number]
+        [visitorId, id_type, encryptField(id_number)]  // encrypt before storing
       );
     }
 
@@ -62,7 +63,10 @@ const createVisitor = async (req, res) => {
     );
 
     conn.release();
-    return sendSuccess(res, newVisitor[0], 'Visitor created successfully.', 201);
+    // Decrypt id_number before returning to client
+    const row = newVisitor[0];
+    if (row && row.id_number) row.id_number = decryptField(row.id_number);
+    return sendSuccess(res, row, 'Visitor created successfully.', 201);
   } catch (err) {
     try { await conn.rollback(); } catch (_) {}
     conn.release();
@@ -122,6 +126,8 @@ const getVisitor = async (req, res) => {
       `SELECT id, id_type, id_number, is_primary, created_at FROM visitor_documents WHERE visitor_id = ?`,
       [id]
     );
+    // Decrypt id_number in each document
+    const decryptedProofs = decryptRows(idProofs, ['id_number']);
 
     const [blacklist] = await req.db.query(
       `SELECT id, reason, blacklisted_at FROM blacklisted_visitors WHERE visitor_id = ? AND is_active = TRUE LIMIT 1`,
@@ -142,10 +148,10 @@ const getVisitor = async (req, res) => {
 
     return sendSuccess(res, {
       ...visitor,
-      id_proofs:        idProofs,
-      blacklisted:      blacklist.length > 0,
+      id_proofs:         decryptedProofs,
+      blacklisted:       blacklist.length > 0,
       blacklist_details: blacklist[0] || null,
-      visit_history:    visitHistory,
+      visit_history:     visitHistory,
     }, 'Visitor fetched successfully.');
   } catch (err) {
     console.error('[VisitorController] getVisitor error:', err.message);

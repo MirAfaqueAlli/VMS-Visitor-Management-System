@@ -10,14 +10,9 @@ const { logAudit }             = require('../utils/auditLogger.util');
  * Generates a gate pass for the given visit request.
  * Idempotent — if a pass already exists for this visit_request_id it is returned as-is.
  *
- * The function resolves the correct unit DB by:
- *   1. Preferring the explicitly passed `db` pool (from req.db), OR
- *   2. Looking up the visit request's unit_id in vms_central to find the db_name.
- *
  * @param {number} visitRequestId
  * @param {number} generatedByUserId
  * @param {object} [db]  — optional: the unit's mysql2/promise pool (req.db).
- *                         If not passed, the service resolves it via centralPool.
  * @returns {Promise<{ pass_number: string, qr_code_path: string, gate_pass_id: number }>}
  */
 const generateGatePass = async (visitRequestId, generatedByUserId, db = null) => {
@@ -25,7 +20,6 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
   let unitDb = db;
 
   if (!unitDb) {
-    // Fallback: look up the unit_id from centralPool → get db_name
     const [vrMeta] = await centralPool.query(
       `SELECT vr.unit_id, u.db_name
        FROM visit_requests vr
@@ -42,9 +36,13 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
     `SELECT id, pass_number, qr_code_path FROM gate_passes WHERE visit_request_id = ? LIMIT 1`,
     [visitRequestId]
   );
-  if (existingRows.length) {
+  if (existingRows && existingRows.length) {
     const ex = existingRows[0];
-    return { pass_number: ex.pass_number, qr_code_path: ex.qr_code_path, gate_pass_id: ex.id };
+    return {
+      pass_number:  ex.pass_number,
+      qr_code_path: ex.qr_code_path,
+      gate_pass_id: ex.id,
+    };
   }
 
   // ── 3. Fetch visit request for QR payload ──────────────────────────────────
@@ -69,7 +67,7 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
     if (unitRows.length) unitCode = unitRows[0].code;
   } catch (_) {} // non-fatal
 
-  // ── 5. Generate pass number + QR code ─────────────────────────────────────
+  // ── 5. Generate pass number + QR code (local only) ─────────────────────────
   const passNumber = generatePassNumber(unitCode);
   const qrData     = {
     pass_number:      passNumber,
@@ -77,6 +75,7 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
     visit_date:       request.visit_date,
     visitor_name:     request.resolved_visitor_name,
   };
+
   const qrCodePath = await generateQRCode(qrData, passNumber);
 
   // ── 6. Persist to gate_passes ─────────────────────────────────────────────

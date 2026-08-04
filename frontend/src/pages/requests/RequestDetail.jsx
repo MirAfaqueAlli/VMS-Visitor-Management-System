@@ -1,7 +1,7 @@
 // frontend/src/pages/requests/RequestDetail.jsx
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, User, Building2, Calendar, Clock, QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, User, Building2, Calendar, Clock, QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2, Briefcase } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
@@ -216,17 +216,6 @@ export default function RequestDetail() {
 
   useEffect(() => { fetchRequest(); }, [fetchRequest]);
 
-  // ── Cancel ─────────────────────────────────────────────────────────────────
-  const handleCancel = async () => {
-    if (!window.confirm('Cancel this visit request?')) return;
-    setActionLoading(true);
-    try {
-      await apiClient.put(`/visit-requests/${id}/cancel`);
-      toast.success('Request cancelled.'); fetchRequest();
-    } catch (err) { toast.error(err?.response?.data?.message || 'Failed.'); }
-    finally { setActionLoading(false); }
-  };
-
   // ── Approve / Reject ───────────────────────────────────────────────────────
   const submitAction = async (type, forceApprove = false) => {
     setActionLoading(true);
@@ -290,13 +279,15 @@ export default function RequestDetail() {
   if (loading) return <Spinner />;
   if (!request) return <div className="text-center py-20" style={{ color: 'var(--color-text-faint)' }}>Request not found.</div>;
 
-  const isHost     = String(request.host_user_id) === String(user?.id);
-  const isAdmin    = ['super_admin', 'unit_admin'].includes(user?.role_type);
-  const canApprove = (isHost || isAdmin) && request.status === 'PENDING';
-  const isBlocked  = !!request.host_block_id;
-  const canBlock   = (isHost || isAdmin) && !!request.visitor_phone;
-  const companions = request.companions ?? [];
-  const timeline   = buildTimeline(request);
+  const role        = user?.role_type || user?.role;
+  const canViewPass = ['security', 'receptionist', 'unit_admin', 'super_admin'].includes(role);
+  const isHost      = String(request.host_user_id) === String(user?.id);
+  const isAdmin     = ['super_admin', 'unit_admin'].includes(role);
+  const canApprove  = (isHost || isAdmin) && request.status === 'PENDING';
+  const isBlocked   = !!request.host_block_id;
+  const canBlock    = (isHost || isAdmin) && !!request.visitor_phone;
+  const companions  = request.companions ?? [];
+  const timeline    = buildTimeline(request);
 
   const apiBase = (import.meta.env.VITE_API_URL ?? '').replace(/\/api\/?$/, '');
   const qrSrc   = request.qr_code_path ? `${apiBase}/${request.qr_code_path}` : null;
@@ -330,13 +321,10 @@ export default function RequestDetail() {
         </div>
 
         <div className="flex gap-2 flex-wrap">
-          {request.status === 'APPROVED' && request.pass_number && (
+          {canViewPass && request.status === 'APPROVED' && request.pass_number && (
             <button className="btn-primary" onClick={() => navigate(`/gate/pass/${request.pass_number}`)}>
               <QrCode size={14} /> Gate Pass
             </button>
-          )}
-          {['PENDING','APPROVED'].includes(request.status) && (
-            <button className="btn-secondary" onClick={handleCancel} disabled={actionLoading}>Cancel</button>
           )}
           {canApprove && !actionMode && (
             <>
@@ -369,33 +357,6 @@ export default function RequestDetail() {
         </div>
       </div>
 
-      {/* ── Approve / Reject inline panel ──────────────────────────────────── */}
-      {actionMode && (
-        <div className="vms-card p-4 space-y-3">
-          <p className="text-[13px] font-medium" style={{ color: 'var(--color-text)' }}>
-            {actionMode === 'approve' ? 'Approve request?' : 'Reject request?'}
-          </p>
-          <textarea
-            className="w-full text-[13px] p-2 rounded border"
-            placeholder={actionMode === 'reject' ? 'Reason for rejection (required)…' : 'Add remarks (optional)…'}
-            value={remarks}
-            onChange={(e) => setRemarks(e.target.value)}
-            style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text)' }}
-          />
-          <div className="flex gap-2">
-            <button
-              className="btn-primary text-[12px]"
-              onClick={() => submitAction(actionMode)}
-              disabled={actionLoading || (actionMode === 'reject' && !remarks.trim())}
-            >
-              {actionLoading ? 'Please wait…' : 'Confirm'}
-            </button>
-            <button className="btn-secondary text-[12px]" onClick={() => { setActionMode(null); setRemarks(''); }}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ── Info grid ──────────────────────────────────────────────────────── */}
       <div className="vms-card p-5">
@@ -406,8 +367,9 @@ export default function RequestDetail() {
               label: 'Visitor', icon: User,
               lines: [
                 request.visitor_name ?? request.company_name ?? 'Visitor TBD',
+                request.company_name && request.visitor_name ? `🏢 ${request.company_name}` : null,
                 request.visitor_phone ? `📞 ${request.visitor_phone}` : null,
-                request.visitor_email ? `✉ ${request.visitor_email}` : null,
+                request.visitor_email || request.vendor_email ? `✉ ${request.visitor_email || request.vendor_email}` : null,
               ].filter(Boolean),
             },
             { label: 'Host',  icon: Building2, lines: [request.host_name, request.host_designation, request.host_email] },
@@ -429,25 +391,46 @@ export default function RequestDetail() {
         </div>
       </div>
 
-      {/* ── Gate pass QR ───────────────────────────────────────────────────── */}
-      {request.qr_code_path && qrSrc && (
-        <div className="vms-card p-5 flex items-center justify-between gap-4"
-             style={{ background: 'var(--color-info-bg)' }}>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--color-text-faint)' }}>Gate Pass</p>
-            <p className="font-bold text-[20px] font-mono" style={{ color: 'var(--color-text)' }}>{request.pass_number}</p>
-            <div className="mt-2"><StatusBadge status={request.gate_pass_status ?? 'ISSUED'} /></div>
+      {/* ── Vendor & Business Details Card ───────────────────────────────── */}
+      {(request.visit_category === 'VENDOR' || request.company_name || request.work_order_ref || request.service_type || request.vendor_email) && (
+        <div className="vms-card p-5">
+          <div className="flex items-center gap-2 mb-4 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
+            <Briefcase size={15} style={{ color: 'var(--color-accent)' }} />
+            <h3 className="font-semibold text-[13px]" style={{ color: 'var(--color-text)' }}>
+              Vendor &amp; Business Details
+            </h3>
           </div>
-          <img
-            src={qrSrc}
-            alt="Gate Pass QR Code"
-            className="w-24 h-24 object-contain rounded"
-            style={{ border: '1px solid var(--color-border)' }}
-            onError={e => { e.currentTarget.style.display = 'none'; }}
-          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            {request.company_name && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Company / Organisation</p>
+                <p className="text-[13px] font-semibold text-loud">{request.company_name}</p>
+              </div>
+            )}
+            {request.vendor_email && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Vendor Email</p>
+                <p className="text-[13px] text-loud">{request.vendor_email}</p>
+              </div>
+            )}
+            {request.service_type && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Service Type</p>
+                <p className="text-[13px] text-loud">{request.service_type}</p>
+              </div>
+            )}
+            {request.work_order_ref && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Work Order Ref</p>
+                <p className="text-[13px] font-mono font-medium text-loud">{request.work_order_ref}</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
-      {request.pass_number && !request.qr_code_path && (
+
+      {/* ── Gate pass QR / Status info ────────────────────────────────────────── */}
+      {canViewPass && request.pass_number && (
         <div className="vms-card p-5 flex items-center justify-between gap-4"
              style={{ background: 'var(--color-info-bg)' }}>
           <div>
@@ -455,9 +438,30 @@ export default function RequestDetail() {
             <p className="font-bold text-[20px] font-mono" style={{ color: 'var(--color-text)' }}>{request.pass_number}</p>
             <div className="mt-2"><StatusBadge status={request.gate_pass_status ?? 'ISSUED'} /></div>
           </div>
-          <div className="flex items-center justify-center w-24 h-24 rounded"
-               style={{ border: '1px dashed var(--color-border)', color: 'var(--color-text-faint)' }}>
-            <QrCode size={28} strokeWidth={1.2} />
+          {request.qr_code_path && qrSrc ? (
+            <img
+              src={qrSrc}
+              alt="Gate Pass QR Code"
+              className="w-24 h-24 object-contain rounded"
+              style={{ border: '1px solid var(--color-border)' }}
+              onError={e => { e.currentTarget.style.display = 'none'; }}
+            />
+          ) : (
+            <div className="flex items-center justify-center w-24 h-24 rounded"
+                 style={{ border: '1px dashed var(--color-border)', color: 'var(--color-text-faint)' }}>
+              <QrCode size={28} strokeWidth={1.2} />
+            </div>
+          )}
+        </div>
+      )}
+      {!canViewPass && request.status === 'APPROVED' && (
+        <div className="vms-card p-5 flex items-center gap-3.5" style={{ background: 'var(--color-info-bg)' }}>
+          <CheckCircle2 size={22} style={{ color: 'var(--color-accent)' }} className="shrink-0" />
+          <div>
+            <p className="text-[14px] font-semibold text-loud">Visit Approved &amp; Pass Issued</p>
+            <p className="text-[12px] text-muted mt-0.5">
+              The digital gate pass has been generated and emailed directly to the visitor for entry verification at security.
+            </p>
           </div>
         </div>
       )}
@@ -610,6 +614,75 @@ export default function RequestDetail() {
         onForceApprove={handleForceApprove}
         loading={actionLoading}
       />
+
+      {/* Approve / Reject Action Modal */}
+      {actionMode && (
+        <div className="fixed inset-0 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="vms-card max-w-md w-full p-6 space-y-4 shadow-xl border rounded-xl" style={{ background: 'var(--color-bg-secondary)', borderColor: 'var(--color-border)' }}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--color-text-loud)' }}>
+                {actionMode === 'approve' ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                    Approve Visit Request
+                  </>
+                ) : (
+                  <>
+                    <X className="w-5 h-5 text-red-500" />
+                    Reject Visit Request
+                  </>
+                )}
+              </h3>
+              <button
+                onClick={() => { setActionMode(null); setRemarks(''); }}
+                className="text-faint hover:text-loud transition-colors"
+                disabled={actionLoading}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted">
+              {actionMode === 'approve'
+                ? 'Please confirm approval. You may optionally add remarks for reference.'
+                : 'Please state the reason for rejecting this visit request.'}
+            </p>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1">
+                Remarks {actionMode === 'reject' && <span className="text-red-500">*</span>}
+              </label>
+              <textarea
+                rows={3}
+                className="w-full text-xs p-3 rounded-lg border resize-none focus:outline-none focus:ring-2 focus:ring-accent/30"
+                placeholder={actionMode === 'reject' ? 'Enter reason for rejection (required)…' : 'Add any optional remarks or instructions…'}
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-primary)', color: 'var(--color-text)' }}
+                autoFocus
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-subtle">
+              <button
+                className="btn-secondary text-xs px-4 py-2"
+                onClick={() => { setActionMode(null); setRemarks(''); }}
+                disabled={actionLoading}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary text-xs px-4 py-2 flex items-center gap-1.5"
+                style={actionMode === 'reject' ? { background: '#dc2626', borderColor: '#dc2626' } : {}}
+                onClick={() => submitAction(actionMode)}
+                disabled={actionLoading || (actionMode === 'reject' && !remarks.trim())}
+              >
+                {actionLoading ? 'Processing…' : actionMode === 'approve' ? 'Confirm Approval' : 'Confirm Rejection'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
