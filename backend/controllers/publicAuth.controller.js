@@ -88,10 +88,6 @@ const sendPhoneOtp = async (req, res) => {
 
     const apiKey = process.env.FAST2SMS_API_KEY;
     if (!apiKey) {
-<<<<<<< HEAD
-     
-      return sendSuccess(res, { dev_otp: otp }, 'OTP generated (SMS not sent — no API key)', 200);
-=======
       console.warn(`[PublicAuth] FAST2SMS_API_KEY not set. OTP generated for ${phone.slice(0, 4)}****`);
 
       // ── Dev / test fallback ──────────────────────────────────────────────────
@@ -107,7 +103,6 @@ const sendPhoneOtp = async (req, res) => {
         'OTP generated (dev mode — no SMS sent). Use the otp value from this response to verify.',
         200
       );
->>>>>>> 7aa91a4d08a7c9d80697648d150bd1445a070b1d
     }
 
     const body = new URLSearchParams({
@@ -167,16 +162,6 @@ const sendEmailOtp = async (req, res) => {
 
     if (!result.success) {
       console.error('[PublicAuth] Email OTP delivery failed:', result.error);
-<<<<<<< HEAD
-      // In dev, still show otp
-      const isDev = process.env.NODE_ENV !== 'production';
-     
-      return sendSuccess(
-        res,
-        isDev ? { dev_otp: otp } : {},
-        isDev ? 'OTP generated (email not sent — check SMTP config)' : 'Failed to send email OTP.',
-        isDev ? 200 : 500
-=======
 
       // ── Dev / test fallback ──────────────────────────────────────────────────
       if (process.env.NODE_ENV === 'production') {
@@ -187,7 +172,6 @@ const sendEmailOtp = async (req, res) => {
         { dev_otp: otp, dev_note: 'OTP returned because email delivery failed (non-production mode only).' },
         'OTP generated (dev mode — email delivery failed). Use the otp value from this response to verify.',
         200
->>>>>>> 7aa91a4d08a7c9d80697648d150bd1445a070b1d
       );
     }
 
