@@ -59,7 +59,7 @@ export default function AppLayout() {
         style={{ marginLeft: 'var(--sidebar-width, 220px)' }}
       >
         {/* pt-14 = navbar (40px). Extra space when banner is visible to avoid overlap. */}
-        <main className={`${bannerVisible ? 'pt-28' : 'pt-20'} px-4 sm:px-5 pb-8 min-h-screen transition-[padding] duration-200`}>
+        <main className={`${bannerVisible ? 'pt-28' : 'pt-20'} max-w-7xl mx-auto px-4 bg-bg-secondary sm:px-5 pb-8 min-h-screen transition-[padding] duration-200`}>
           <Outlet />
         </main>
       </div>

@@ -164,12 +164,6 @@ const listHosts = async (req, res) => {
       );
     }
 
-<<<<<<< HEAD
-    // Debug log for cross-unit employee lookup troubleshooting
-    
-
-=======
->>>>>>> 7aa91a4d08a7c9d80697648d150bd1445a070b1d
     return sendSuccess(res, rows, 'Hosts fetched successfully.');
   } catch (err) {
     console.error('[UserController] listHosts error:', err.message);

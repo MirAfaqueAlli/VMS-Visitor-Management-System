@@ -171,7 +171,7 @@ export default function GlobalUserManagement() {
 
   return (
     <>
-      <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in space-y-6">
+      <div className="max-w-7xl mx-auto  animate-fade-in space-y-6">
 
         {/* Header */}
         <div className="flex items-start justify-between">

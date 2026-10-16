@@ -87,7 +87,7 @@ export default function Setup() {
   return (
     <div
       className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden"
-      style={{ background: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)" }}
+      style={{ background: "#242424" }}
     >
       {/* Background orbs */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -150,7 +150,7 @@ export default function Setup() {
         <div
           className="rounded-2xl p-7"
           style={{
-            background:  "rgba(255,255,255,0.04)",
+            background:  "rgb(5 5 5 / 84%)",
             border:      "1px solid rgba(255,255,255,0.08)",
             backdropFilter: "blur(20px)",
           }}

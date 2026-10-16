@@ -271,9 +271,11 @@ export default function Login() {
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'linear-gradient(135deg, #eff6ff 0%, #f0f4ff 50%, #e8eeff 100%)',
+      // background: 'linear-gradient(135deg, #eff6ff 0%, #f0f4ff 50%, #e8eeff 100%)',
       padding: '16px', fontFamily: 'Inter, system-ui, sans-serif',
-    }}>
+    }}
+    className="bg-bg-secondary"
+    >
       {/* Card */}
       <div style={{
         width: '100%', maxWidth: '440px', borderRadius: '20px',

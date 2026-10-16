@@ -108,7 +108,7 @@ export default function DepartmentManagement() {
 
   return (
     <>
-      <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in space-y-6">
+      <div className="max-w-7xl mx-auto  animate-fade-in space-y-6">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
