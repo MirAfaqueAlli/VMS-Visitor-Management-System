@@ -19,6 +19,10 @@ import toast from "react-hot-toast";
 import Pagination from "../../components/shared/Pagination";
 import useSocketEvent from "../../hooks/useSocketEvent";
 import useAuth from "../../hooks/useAuth";
+import useTheme from "../../context/ThemeContext";
+
+const nonotifcationlight = "/No Notifications Bell Illustration.png";
+const nonotifcationdark = "/Dark 3D Notification Bell Illustration.png";
 
 const CATEGORY_LABELS = {
   EMPLOYEE_VISIT: "Employee Visit",
@@ -167,7 +171,7 @@ function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
         onContinue={() => doApprove(true)}
       />
 
-      <div className="vms-card rounded-md p-6 transition-all duration-500 hover:shadow-hover hover:shadow-card">
+      <div className="vms-card rounded-md p-6 transition-all duration-500 hover:shadow-hover hover:shadow-card" style={{border:'none !important'}}>
         {/* Top Row */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           {/* Left: avatar + details */}
@@ -304,6 +308,7 @@ function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function ApprovalInbox() {
   const { user }     = useAuth();
+  const { theme }    = useTheme();
   const isUnitAdmin  = user?.role_type === "unit_admin";
   const [items,      setItems]      = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -363,12 +368,12 @@ export default function ApprovalInbox() {
   }, []);
 
   return (
-    <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in">
+    <div className=" animate-fade-in">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-loud">
+            <h1 className="text-lg font-bold text-loud">
               Approval <em className="italic">Inbox</em>
             </h1>
             {!loading && totalCount > 0 && (
@@ -396,7 +401,7 @@ export default function ApprovalInbox() {
       {loading ? (
         <div className="space-y-4">
           {[1, 2, 3].map((n) => (
-            <div key={n} className="vms-card rounded-md p-6 animate-pulse">
+            <div key={n} className="vms-card rounded-md p-6 animate-pulse" >
               <div className="flex items-start gap-4">
                 <div className="w-11 h-11 rounded-full bg-border" />
                 <div className="flex-1 space-y-3">
@@ -409,9 +414,14 @@ export default function ApprovalInbox() {
           ))}
         </div>
       ) : items.length === 0 ? (
-        <div className="vms-card rounded-md py-20 flex flex-col items-center justify-center text-center gap-5">
-          <div className="w-16 h-16 rounded-full bg-mixed-bg flex items-center justify-center">
-            <CheckCircle2 strokeWidth={1.5} className="w-8 h-8 text-accent" />
+        <div className="vms-card rounded-md py-20 flex flex-col items-center justify-center text-center gap-5 border-none">
+          <div className="w-80 h-80 rounded-full  flex items-center justify-center">
+            
+            <img
+              className="w-full h-full object-contain"
+              src={theme === "dark" ? nonotifcationdark : nonotifcationlight}
+              alt="No notifications"
+            />
           </div>
           <div>
             <h2 className="text-2xl font-semibold text-loud mb-2">

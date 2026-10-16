@@ -90,7 +90,7 @@ export default function Sidebar({ isOpen, onClose }) {
 
   return (
     <aside
-      className={`sidebar-panel fixed left-0 top-0 h-screen flex flex-col z-50${isOpen ? ' is-open' : ''}`}
+      className={`sidebar-panel fixed  left-0 top-0 h-screen flex flex-col z-50${isOpen ? ' is-open' : ''}`}
       style={{
         width:       'var(--sidebar-width, 220px)',
         background:  'var(--sidebar-bg)',
@@ -107,7 +107,7 @@ export default function Sidebar({ isOpen, onClose }) {
           <img src="/logo.png" alt="VMS Logo" className="w-full h-full object-cover" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-white font-semibold text-[13px] leading-none tracking-tight">VMS</p>
+          <p className="text-color font-semibold text-[13px] leading-none tracking-tight">VMS</p>
           <p className="text-[10px] mt-0.5 truncate" style={{ color: 'var(--sidebar-text)' }}>
             {isSuperAdmin
               ? (activeUnit ? `Managing: ${activeUnit.name}` : 'Super Admin — Central')
@@ -264,7 +264,7 @@ export default function Sidebar({ isOpen, onClose }) {
           </button>
 
           <button onClick={() => navigate('/profile')} className="flex-1 min-w-0 text-left">
-            <p className="text-white text-[12px] font-medium truncate leading-tight">
+            <p className="text-color text-[12px] font-medium truncate leading-tight">
               {user?.full_name}
             </p>
             <p className="text-[10px] capitalize truncate mt-0.5" style={{ color: 'var(--sidebar-text)' }}>

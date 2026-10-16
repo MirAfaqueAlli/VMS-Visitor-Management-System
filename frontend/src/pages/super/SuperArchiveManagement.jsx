@@ -346,17 +346,13 @@ export default function SuperArchiveManagement() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="max-w-6xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in">
+    <div className=" animate-fade-in">
 
       {/* ── Header ── */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: 'var(--color-mixed-bg)' }}>
-              <Globe size={18} style={{ color: 'var(--color-accent)' }} />
-            </div>
-            <h1 className="text-2xl font-bold text-loud">
+            <h1 className="text-lg font-bold text-loud">
               Global FY <em className="italic">Archives</em>
             </h1>
           </div>
@@ -372,11 +368,11 @@ export default function SuperArchiveManagement() {
       </div>
 
       {/* ── Info banner ── */}
-      <div className="flex items-start gap-3 p-4 rounded-xl mb-6 text-sm"
-        style={{ background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.2)', color: 'var(--color-muted)' }}>
-        <Info size={16} className="shrink-0 mt-0.5" style={{ color: '#6366f1' }} />
+      <div className="flex items-start gap-3 p-4 rounded-md mb-6 text-sm"
+        style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', color: 'var(--color-muted)' }}>
+        <Info size={36} className="shrink-0 mt-1" style={{ color: 'var(--color-muted)' }} />
         <div className="leading-relaxed">
-          <strong style={{ color: '#6366f1' }}>How it works: </strong>
+          <strong style={{ color: 'var(--color-accent)' }}>How it works: </strong>
           Each FY row shows data from <strong>all units combined</strong>.{' '}
           <strong>Archive All</strong> — snapshots every unit for that year.{' '}
           <strong>Download All</strong> — one combined JSON with all units.{' '}
@@ -388,7 +384,6 @@ export default function SuperArchiveManagement() {
       {/* ── Current FY chip ── */}
       {data?.current_fy && (
         <div className="flex items-center gap-2 mb-6">
-          <Shield size={13} style={{ color: 'var(--color-accent)' }} />
           <span className="text-xs text-muted">
             Current financial year:{' '}
             <span className="font-semibold text-loud">FY {data.current_fy}</span>
@@ -441,17 +436,17 @@ export default function SuperArchiveManagement() {
         style={{ background: 'var(--color-mixed-bg)', border: '1px solid var(--color-border)' }}>
         {[
           {
-            Icon: PlayCircle, color: 'var(--color-accent)',
+            Icon: PlayCircle, color: 'var( --color-text-muted)',
             title: 'Step 1 — Archive All',
             desc: 'Click "Archive All" on any completed FY. Snapshots every unit\'s data simultaneously. No records are deleted.',
           },
           {
-            Icon: Download, color: '#22c55e',
+            Icon: Download, color: 'var( --color-text-muted)',
             title: 'Step 2 — Download',
             desc: '"Download All" gives a single combined JSON. Or expand a FY and download per-unit individually.',
           },
           {
-            Icon: Trash2, color: '#ef4444',
+            Icon: Trash2, color: 'var( --color-text-muted)',
             title: 'Step 3 — Purge',
             desc: 'Purge individual units after downloading to free live DB space. Each unit can be purged independently.',
           },
@@ -459,7 +454,7 @@ export default function SuperArchiveManagement() {
           <div key={title} className="flex gap-3">
             <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
               style={{ background: `${color}15` }}>
-              <Icon size={15} style={{ color }} />
+              <Icon size={25} style={{ color }} />
             </div>
             <div>
               <p className="text-sm font-semibold text-loud mb-1">{title}</p>

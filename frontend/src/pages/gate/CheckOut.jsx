@@ -601,7 +601,7 @@ export default function CheckOut() {
   const initiateQRCheckout = (visitor) => setQrModal(visitor);
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in">
+    <div className="max-w-7xl mx-auto  animate-fade-in">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-loud">Gate <em className="italic">Check-Out</em></h1>
       </div>

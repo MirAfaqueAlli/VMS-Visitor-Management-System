@@ -76,7 +76,7 @@ function NotificationPanel({ notifications, loading, onAction, onClose, navigate
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Bell size={14} strokeWidth={1.8} style={{ color: 'var(--color-accent)' }} />
+          <Bell size={16} strokeWidth={3} style={{ color: 'var(--color-text)' }} />
           <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text)' }}>
             Notifications
           </span>
@@ -513,10 +513,10 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
   return (
     <>
       <header
-        className="fixed top-0 right-0 h-14 flex items-center justify-between px-4 z-30 navbar-header"
+        className="fixed top-0 right-0 h-14 flex items-center justify-between py-[29px] px-4 z-30 navbar-header"
         style={{
-          background: 'var(--color-bg-secondary)',
-          borderBottom: '1px solid var(--color-border)',
+          background: 'var(--color-bg-primary)',
+          boxShadow: "0 2px 4px #2c2c2c2e"
         }}
       >
       {/* ── Left: hamburger (mobile) + page title ─────────────────────── */}

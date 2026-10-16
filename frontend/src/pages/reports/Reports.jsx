@@ -926,12 +926,12 @@ function OverviewCharts({ from, to, onFromChange, onToChange }) {
   useEffect(() => { load(); }, [load]);
 
   return (
-    <div className="vms-card rounded-xl mb-6 overflow-hidden">
+    <div className="vms-card rounded-md mb-6 overflow-hidden">
       <button onClick={() => setOpen(o => !o)}
         className="w-full flex items-center justify-between px-6 py-4 hover:bg-bg-primary/40 transition-colors">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
-            <BarChart2 className="w-4 h-4 text-accent" />
+          <div className="w-8 h-8   flex items-center justify-center">
+            <BarChart2 className="w-6 h-6 text-muted" />
           </div>
           <span className="font-semibold text-loud">Overview Charts</span>
         </div>
@@ -1047,13 +1047,10 @@ export default function Reports() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 animate-fade-in">
+    <div className="max-w-7xl mx-auto  animate-fade-in">
       {/* ── Page Header ─────────────────────────────────────────────────── */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-loud flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center">
-            <BarChart2 className="w-5 h-5 text-accent" />
-          </div>
+        <h1 className="text-lg font-bold text-loud flex items-center gap-3">
           Reports &amp; <em className="italic">Analytics</em>
         </h1>
       </div>

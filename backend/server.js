@@ -6,7 +6,6 @@ const http = require('http');
 const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
-const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
@@ -54,7 +53,6 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // ── Standard middleware ───────────────────────────────────────────────────────
-app.use(morgan('combined'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
