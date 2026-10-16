@@ -19,8 +19,10 @@ import toast from "react-hot-toast";
 import Pagination from "../../components/shared/Pagination";
 import useSocketEvent from "../../hooks/useSocketEvent";
 import useAuth from "../../hooks/useAuth";
-import nonotifcationlight from "../../../public/No Notifications Bell Illustration.png"
-import nonotifcationdark from "../../../public/Dark 3D Notification Bell Illustration.png"
+import useTheme from "../../context/ThemeContext";
+
+const nonotifcationlight = "/No Notifications Bell Illustration.png";
+const nonotifcationdark = "/Dark 3D Notification Bell Illustration.png";
 
 const CATEGORY_LABELS = {
   EMPLOYEE_VISIT: "Employee Visit",
@@ -306,6 +308,7 @@ function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function ApprovalInbox() {
   const { user }     = useAuth();
+  const { theme }    = useTheme();
   const isUnitAdmin  = user?.role_type === "unit_admin";
   const [items,      setItems]      = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -414,7 +417,11 @@ export default function ApprovalInbox() {
         <div className="vms-card rounded-md py-20 flex flex-col items-center justify-center text-center gap-5 border-none">
           <div className="w-80 h-80 rounded-full  flex items-center justify-center">
             
-            <img className="w-full h-full object-contain" src={nonotifcationlight} alt="" />
+            <img
+              className="w-full h-full object-contain"
+              src={theme === "dark" ? nonotifcationdark : nonotifcationlight}
+              alt="No notifications"
+            />
           </div>
           <div>
             <h2 className="text-2xl font-semibold text-loud mb-2">
