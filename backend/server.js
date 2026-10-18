@@ -31,7 +31,7 @@ const archiveRoutes = require('./routes/archive.routes');
 const publicAuthRoutes = require('./routes/publicAuth.routes');
 
 const app = express();
-
+app.set('trust proxy', 'loopback');
 // ── Security middleware ───────────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
