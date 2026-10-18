@@ -112,6 +112,18 @@ const server = http.createServer(app);
 
 initSocket(server);
 
-server.listen(PORT, () => {
-  console.log(`[Server] VMS backend running on port ${PORT}`);
-});
+// ── Run auto-migration, then start listening ──────────────────────────────────
+const { runAutoMigrate } = require('./services/autoMigrate');
+
+runAutoMigrate()
+  .then(() => {
+    server.listen(PORT, () => {
+      console.log(`[Server] VMS backend running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('[Server] Auto-migration failed, starting anyway:', err.message);
+    server.listen(PORT, () => {
+      console.log(`[Server] VMS backend running on port ${PORT} (migration had errors)`);
+    });
+  });
