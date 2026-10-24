@@ -21,6 +21,7 @@ import {
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
+import { getApiErrorMessage } from "../../utils/apiError";
 
 // â”€â”€ Category definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ALL_CATEGORIES = [
@@ -614,15 +615,8 @@ export default function NewRequest() {
         return;
       }
       console.error('[NewRequest] Submit error:', error.response?.data);
-      const zodErrors = error.response?.data?.errors;
-      if (Array.isArray(zodErrors) && zodErrors.length > 0) {
-        const details = zodErrors
-          .map((e) => `${e.path?.join('.') || 'field'}: ${e.message}`)
-          .join(' | ');
-        toast.error(`Validation failed  -  ${details}`, { duration: 8000 });
-      } else {
-        toast.error(data?.message || "Failed to create request");
-      }
+      // 409 conflict is handled above; all other errors use field-level extraction
+      toast.error(getApiErrorMessage(error, "Failed to create request."), { duration: 6000 });
     } finally {
       setLoading(false);
     }
@@ -639,7 +633,7 @@ export default function NewRequest() {
       toast.success("Visit request created (conflict overridden).");
       navigate("/requests");
     } catch (error) {
-      toast.error(error.response?.data?.message || "Failed to create request");
+      toast.error(getApiErrorMessage(error, "Failed to create request."));
     } finally {
       setLoading(false);
     }

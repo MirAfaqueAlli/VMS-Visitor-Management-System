@@ -937,48 +937,7 @@ GET /api/reports/employee-wise?from_date=2026-07-01&to_date=2026-07-31
 
 ---
 
-## 13. 📦 ARCHIVE — `/api/archive`
-
-### GET `/api/archive`
-> **Auth:** `unit_admin`, `super_admin` (+X-Unit-Id)
-
-Returns archive status per financial year.
-
----
-
-### POST `/api/archive/run`
-> **Auth:** `unit_admin`, `super_admin`
-```json
-{ "financial_year": "2025-26" }
-```
-
----
-
-### GET `/api/archive/:fy/download`
-```
-GET /api/archive/2025-26/download
-```
-
----
-
-### DELETE `/api/archive/:fy/purge`
-> **⚠️ Destructive — permanently deletes archived data**
-```
-DELETE /api/archive/2025-26/purge
-```
-
----
-
-### GET `/api/archive/global` *(super_admin only)*
-### POST `/api/archive/global/run` *(super_admin only)*
-### GET `/api/archive/global/:fy/download` *(super_admin only)*
-### DELETE `/api/archive/global/:fy/purge` *(super_admin only)*
-
----
-
----
-
-## 14. 📲 OTP — `/api/otp`
+## 13. 📲 OTP — `/api/otp`
 
 ### POST `/api/otp/send`
 > **Optional auth** (unit's DB resolved from token or unit_code)
@@ -1005,7 +964,7 @@ DELETE /api/archive/2025-26/purge
 
 ---
 
-## 15. 🖼️ STATIC FILES
+## 14. 🖼️ STATIC FILES
 
 ### GET `/uploads/:filename`
 > No auth required — visitor photos served as static files

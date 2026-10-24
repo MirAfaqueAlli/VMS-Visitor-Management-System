@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import useAuth from '../../hooks/useAuth';
 import apiClient from '../../api/axios';
+import { getApiErrorMessage } from '../../utils/apiError';
 
 /* -- Custom Unit Dropdown (avoids native select OS dark-mode popup) --------- */
 function UnitDropdown({ value, units, loading, onChange, inputStyle }) {
@@ -169,7 +170,7 @@ export default function Login() {
       setStep(2);
       setTimeout(() => otpRefs.current[0]?.focus(), 100);
     } catch (err) {
-      setError(err?.response?.data?.message || 'Invalid credentials. Please try again.');
+      setError(getApiErrorMessage(err, 'Invalid credentials. Please try again.'));
     } finally {
       setIsLoading(false);
     }
@@ -214,7 +215,7 @@ export default function Login() {
       await verifyLoginOtp(loginToken, code);
       navigate('/dashboard', { replace: true });
     } catch (err) {
-      setError(err?.response?.data?.message || 'Invalid OTP. Please try again.');
+      setError(getApiErrorMessage(err, 'Invalid OTP. Please try again.'));
       setOtp(['', '', '', '', '', '']);
       setTimeout(() => otpRefs.current[0]?.focus(), 50);
     } finally {
@@ -234,7 +235,7 @@ export default function Login() {
       setResendTimer(60);
       setTimeout(() => otpRefs.current[0]?.focus(), 50);
     } catch (err) {
-      setError(err?.response?.data?.message || 'Failed to resend OTP.');
+      setError(getApiErrorMessage(err, 'Failed to resend OTP.'));
     } finally {
       setIsLoading(false);
     }

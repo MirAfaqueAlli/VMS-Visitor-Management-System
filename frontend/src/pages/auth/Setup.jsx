@@ -10,6 +10,7 @@ import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
+import { getApiErrorMessage } from "../../utils/apiError";
 
 const inputCls = "w-full bg-white/5 border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-blue-400/60 transition-colors";
 const labelCls = "block text-[11px] font-semibold text-white/40 uppercase tracking-wider mb-1.5";
@@ -55,6 +56,9 @@ export default function Setup() {
     e.preventDefault();
     if (!form.admin_name.trim())     { toast.error("Admin full name is required."); return; }
     if (!form.admin_email.trim())    { toast.error("Admin email is required."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.admin_email.trim())) {
+      toast.error("Admin email is not a valid email address (e.g. admin@company.com)."); return;
+    }
     if (!form.admin_password.trim()) { toast.error("Password is required."); return; }
     const { valid: pwValid } = validatePassword(form.admin_password);
     if (!pwValid) { toast.error("Password does not meet the strength requirements."); return; }
@@ -78,7 +82,7 @@ export default function Setup() {
         navigate("/login");
       }
     } catch (err) {
-      toast.error(err?.response?.data?.message || "Setup failed. Please try again.");
+      toast.error(getApiErrorMessage(err, "Setup failed. Please try again."));
     } finally {
       setLoading(false);
     }

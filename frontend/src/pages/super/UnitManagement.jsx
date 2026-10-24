@@ -7,6 +7,7 @@ import useAuth from '../../hooks/useAuth';
 import PasswordStrength from '../../components/PasswordStrength';
 import { validatePassword } from '../../utils/passwordValidator';
 import Pagination from '../../components/shared/Pagination';
+import { getApiErrorMessage } from '../../utils/apiError';
 
 const EMPTY_UNIT = {
   name: '', code: '', city: '', state: '', phone: '', email: '',
@@ -76,18 +77,21 @@ export default function UnitManagement() {
   const close = () => setIsOpen(false);
 
   const handleSubmit = async () => {
-    if (!unitForm.name.trim() || !unitForm.code.trim()) {
-      return toast.error('Unit name and code are required.');
-    }
+    if (!unitForm.name.trim()) { return toast.error('Unit name is required.'); }
+    if (!unitForm.code.trim()) { return toast.error('Unit code is required.'); }
     if (includeAdmin) {
       const nameVal = adminForm.full_name.trim();
       const emailVal = adminForm.email.trim();
       const passVal = adminForm.password.trim();
       const codeVal = adminForm.employee_code.trim();
       if (nameVal || emailVal || passVal || codeVal) {
-        if (!nameVal || !emailVal || !passVal || !codeVal) {
-          return toast.error('All admin fields (Name, Email, Password, and Employee Code) are required.');
+        if (!nameVal)  { return toast.error('Admin full name is required.'); }
+        if (!emailVal) { return toast.error('Admin email address is required.'); }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) {
+          return toast.error('Admin email is not a valid email address.');
         }
+        if (!codeVal)  { return toast.error('Admin employee code is required.'); }
+        if (!passVal)  { return toast.error('Admin password is required.'); }
         const { valid: pwValid } = validatePassword(passVal);
         if (!pwValid) {
           return toast.error('Admin password does not meet the strength requirements.');
@@ -105,7 +109,7 @@ export default function UnitManagement() {
       close();
       fetchUnits();
     } catch (err) {
-      toast.error(err?.response?.data?.message || 'Failed to create unit.');
+      toast.error(getApiErrorMessage(err, 'Failed to create unit.'));
     } finally { setSaving(false); }
   };
 

@@ -9,6 +9,7 @@ import {
 import jsQR from "jsqr";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
+import { getApiErrorMessage } from "../../utils/apiError";
 import StatusBadge from "../../components/shared/StatusBadge";
 
 const CATEGORY_LABELS = {
@@ -114,16 +115,34 @@ export default function CheckIn() {
   const verifyPassString = useCallback((rawData) => {
     if (!rawData) return;
 
-    // The gate pass QR encodes a JSON object: { pass_number, visit_request_id, visit_date, visitor_name }
-    // Try to parse JSON first; fall back to treating rawData as a plain pass number string.
+    // ── Decode the signed QR token format ──────────────────────────────────
+    // Backend encodes: <base64url(JSON_payload)>.<base64url(HMAC_signature)>
+    // We only need pass_number from the payload — HMAC verification is done server-side.
     let passNumber = rawData.trim();
-    try {
-      const parsed = JSON.parse(rawData);
-      if (parsed?.pass_number) {
-        passNumber = parsed.pass_number;
+
+    // 1. Try signed token: split on last dot, base64url-decode the payload segment
+    const dotIdx = passNumber.lastIndexOf('.');
+    if (dotIdx > 0) {
+      try {
+        const encodedPayload = passNumber.slice(0, dotIdx);
+        const base64 = encodedPayload.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64 + '=='.slice(0, (4 - base64.length % 4) % 4);
+        const json = atob(padded);
+        const parsed = JSON.parse(json);
+        if (parsed?.pass_number) passNumber = parsed.pass_number;
+      } catch (_) {
+        // Not a signed token — try next format
       }
-    } catch (_) {
-      // rawData is a plain string — use it as-is
+    }
+
+    // 2. Try legacy plain-JSON QR (for backward compat)
+    if (passNumber === rawData.trim()) {
+      try {
+        const parsed = JSON.parse(rawData);
+        if (parsed?.pass_number) passNumber = parsed.pass_number;
+      } catch (_) {
+        // Plain string — use as-is
+      }
     }
 
     const entered  = passNumber.trim().toUpperCase();
@@ -330,7 +349,7 @@ export default function CheckIn() {
       toast.success("Check-in successful! Visitor is now inside.");
       navigate("/gate");
     } catch (err) {
-      toast.error(err.response?.data?.message || "Check-in failed.");
+      toast.error(getApiErrorMessage(err, "Check-in failed. Please try again."));
     } finally { setSubmitting(false); }
   };
 
