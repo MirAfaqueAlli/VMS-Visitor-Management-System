@@ -1,26 +1,21 @@
 // backend/middlewares/upload.middleware.js
 'use strict';
 
+/**
+ * Multer middleware using memoryStorage.
+ *
+ * Files are held in memory as Buffer objects (req.file.buffer).
+ * The caller is responsible for uploading to S3 via utils/s3.util.js.
+ * Nothing is written to local disk.
+ */
+
 const multer = require('multer');
-const path   = require('path');
-const fs     = require('fs');
 
-// ── Ensure upload directories exist on startup ───────────────────────────────
-const PHOTO_DIR    = path.join(__dirname, '..', 'uploads', 'visitor-photos');
-const ID_PROOF_DIR = path.join(__dirname, '..', 'uploads', 'id-proofs');
-const QR_DIR       = path.join(__dirname, '..', 'uploads', 'qrcodes');
+// ── Shared memory storage ─────────────────────────────────────────────────────
+// All upload handlers share one memoryStorage instance.
+const memoryStorage = multer.memoryStorage();
 
-[PHOTO_DIR, ID_PROOF_DIR, QR_DIR].forEach((dir) => {
-  fs.mkdirSync(dir, { recursive: true });
-});
-
-// ── Visitor Photo storage ─────────────────────────────────────────────────────
-const visitorPhotoStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, PHOTO_DIR),
-  filename:    (_req, file,  cb) =>
-    cb(null, `photo-${Date.now()}-${file.originalname}`),
-});
-
+// ── Visitor Photo upload ──────────────────────────────────────────────────────
 const visitorPhotoFilter = (_req, file, cb) => {
   const allowed = ['image/jpeg', 'image/png', 'image/webp'];
   if (allowed.includes(file.mimetype)) {
@@ -31,18 +26,12 @@ const visitorPhotoFilter = (_req, file, cb) => {
 };
 
 const uploadVisitorPhoto = multer({
-  storage:  visitorPhotoStorage,
+  storage:    memoryStorage,
   fileFilter: visitorPhotoFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
 }).single('photo');
 
-// ── ID Proof storage ──────────────────────────────────────────────────────────
-const idProofStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, ID_PROOF_DIR),
-  filename:    (_req, file,  cb) =>
-    cb(null, `id-${Date.now()}-${file.originalname}`),
-});
-
+// ── ID Proof upload ───────────────────────────────────────────────────────────
 const idProofFilter = (_req, file, cb) => {
   const allowed = ['image/jpeg', 'image/png', 'application/pdf'];
   if (allowed.includes(file.mimetype)) {
@@ -53,7 +42,7 @@ const idProofFilter = (_req, file, cb) => {
 };
 
 const uploadIdProof = multer({
-  storage:  idProofStorage,
+  storage:    memoryStorage,
   fileFilter: idProofFilter,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
 }).single('document');
