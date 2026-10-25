@@ -25,83 +25,11 @@
  */
 
 const jwt          = require('jsonwebtoken');
-const { auth: firebaseAuth } = require('../utils/firebaseAdmin');
-const { centralPool } = require('../services/dbManager');
-const emailService = require('../services/email.service');
+const { normalisePhone, sendEmailCode, checkEmailCode, checkFirebasePhone } = require('../services/contactVerification.service');
 const { sendSuccess, sendError } = require('../utils/response.util');
-const { hashOtp, generateOtp, MAX_OTP_ATTEMPTS } = require('../utils/crypto.util');
 
-const OTP_EXPIRY_MINUTES   = parseInt(process.env.OTP_EXPIRY_MINUTES, 10) || 10;
 const VISITOR_TOKEN_EXPIRY = '30m';
 const PHONE_TOKEN_EXPIRY   = '30m';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Mobile numbers are keyed and compared as their last 10 digits. */
-const normalisePhone = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
-
-/**
- * Stores the SHA-256 hash of the OTP (never the raw code).
- * Invalidates any prior unused OTPs for the same identifier+type.
- */
-async function storeOtp(identifier, identifierType, otpCode) {
-  const otpHash   = hashOtp(otpCode);   // hash before storing
-  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
-
-  // Invalidate existing unused OTPs for same identifier + type
-  await centralPool.query(
-    `UPDATE public_otp_logs SET is_used = TRUE
-     WHERE identifier = ? AND identifier_type = ? AND is_used = FALSE`,
-    [identifier, identifierType]
-  );
-  await centralPool.query(
-    `INSERT INTO public_otp_logs (identifier, identifier_type, otp_code, is_used, expires_at)
-     VALUES (?, ?, ?, FALSE, ?)`,
-    [identifier, identifierType, otpHash, expiresAt]
-  );
-  // Return the raw OTP so we can send it via SMS/email (never stored raw)
-  return otpCode;
-}
-
-/**
- * Validates a user-supplied OTP by comparing its hash to the stored hash.
- * Each OTP allows MAX_OTP_ATTEMPTS guesses; after that a new one must be requested.
- */
-async function validateOtp(identifier, identifierType, otp) {
-  const [rows] = await centralPool.query(
-    `SELECT id, otp_code FROM public_otp_logs
-     WHERE identifier = ? AND identifier_type = ? AND is_used = FALSE AND expires_at > NOW()
-     ORDER BY created_at DESC LIMIT 1`,
-    [identifier, identifierType]
-  );
-  if (!rows.length) return false;
-
-  // Count this attempt atomically *before* comparing, so parallel guesses
-  // can't get past MAX_OTP_ATTEMPTS
-  const [claim] = await centralPool.query(
-    `UPDATE public_otp_logs SET attempts = attempts + 1
-     WHERE id = ? AND is_used = FALSE AND attempts < ?`,
-    [rows[0].id, MAX_OTP_ATTEMPTS]
-  );
-  if (claim.affectedRows === 0 || rows[0].otp_code !== hashOtp(otp)) return false;
-
-  // Consume it (affectedRows guards against a parallel success)
-  const [consumed] = await centralPool.query(
-    'UPDATE public_otp_logs SET is_used = TRUE WHERE id = ? AND is_used = FALSE', [rows[0].id]
-  );
-  return consumed.affectedRows === 1;
-}
-
-/** Rejects a resend within 60 seconds of the last code for this identifier. */
-async function sentRecently(identifier, identifierType) {
-  const [rows] = await centralPool.query(
-    `SELECT id FROM public_otp_logs
-     WHERE identifier = ? AND identifier_type = ? AND created_at > NOW() - INTERVAL 60 SECOND
-     LIMIT 1`,
-    [identifier, identifierType]
-  );
-  return rows.length > 0;
-}
 
 // ── Send Phone OTP (Firebase sends the SMS itself from the browser) ───────────
 // Kept so the frontend flow has a "send" step that validates the number.
@@ -133,21 +61,10 @@ const verifyFirebasePhone = async (req, res) => {
     const { idToken } = req.body;
     if (phone.length !== 10 || !idToken) return sendError(res, 'phone and idToken are required.', 400);
 
-    let decoded;
-    try {
-      decoded = await firebaseAuth.verifyIdToken(idToken);
-    } catch (firebaseErr) {
-      console.error('[PublicAuth] Firebase token verification failed:', firebaseErr.message);
-      return sendError(res, 'Phone verification failed. Please try again.', 401);
-    }
-    if (normalisePhone(decoded.phone_number) !== phone) {
-      return sendError(res, 'Phone number mismatch. Please verify the correct number.', 400);
-    }
-
-    // We only need the proof, not a Firebase account: delete the user record Firebase
-    // created for this phone, so visitors' numbers don't accumulate at Google
-    firebaseAuth.deleteUser(decoded.uid)
-      .catch(err => console.warn('[PublicAuth] Could not delete Firebase user after verification:', err.message));
+    // 400 rather than 401: the frontend treats any 401 as an expired staff session
+    const check = await checkFirebasePhone(idToken, phone);
+    if (check === 'invalid')  return sendError(res, 'Phone verification failed. Please try again.', 400);
+    if (check === 'mismatch') return sendError(res, 'Phone number mismatch. Please verify the correct number.', 400);
 
     const phoneToken = jwt.sign(
       { purpose: 'PHONE_VERIFIED', phone },
@@ -169,26 +86,17 @@ const sendEmailOtp = async (req, res) => {
       return sendError(res, 'A valid email address is required.', 400);
     }
 
-    // Rate-limit: max 1 code per 60 seconds per email (stops email bombing)
-    if (await sentRecently(email, 'email')) {
+    const sent = await sendEmailCode(email);
+    if (sent.status === 'cooldown') {
       return sendError(res, 'A code was sent recently. Please wait 60 seconds before requesting another.', 429);
     }
-
-    const otp = await storeOtp(email, 'email', generateOtp());
-
-    const tmpl = emailService.otpTemplate(otp, 'email');
-    const result = await emailService.sendEmail({ to: email, subject: tmpl.subject, html: tmpl.html });
-
-    if (!result.success) {
-      console.error('[PublicAuth] Email OTP delivery failed:', result.error);
-
-      // ── Dev / test fallback ──────────────────────────────────────────────────
-      if (process.env.NODE_ENV === 'production') {
+    if (sent.status === 'failed') {
+      if (!sent.devOtp) {
         return sendError(res, 'Failed to send email OTP. Please check your email address or contact support.', 500);
       }
       // DEV / TEST MODE: expose OTP in response body
       return sendSuccess(res,
-        { dev_otp: otp, dev_note: 'OTP returned because email delivery failed (non-production mode only).' },
+        { dev_otp: sent.devOtp, dev_note: 'OTP returned because email delivery failed (non-production mode only).' },
         'OTP generated (dev mode — email delivery failed). Use the otp value from this response to verify.',
         200
       );
@@ -217,10 +125,10 @@ const verifyEmailOtp = async (req, res) => {
     try { phoneProof = jwt.verify(phone_token, process.env.JWT_SECRET); } catch { /* invalid/expired */ }
     const phone = normalisePhone(visitor_phone);
     if (!phoneProof || phoneProof.purpose !== 'PHONE_VERIFIED' || phoneProof.phone !== phone) {
-      return sendError(res, 'Please verify your mobile number first.', 401);
+      return sendError(res, 'Please verify your mobile number first.', 400);
     }
 
-    const valid = await validateOtp(email, 'email', otp);
+    const valid = await checkEmailCode(email, otp);
     if (!valid) return sendError(res, 'Invalid or expired OTP. Please try again.', 400);
 
     // Short-lived visitor session token: the identity the public request is created with

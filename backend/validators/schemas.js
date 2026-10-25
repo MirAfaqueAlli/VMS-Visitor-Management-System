@@ -44,6 +44,20 @@ const phoneFieldOpt = z.preprocess(
     })
 );
 
+/**
+ * Required Indian mobile number (verified by SMS OTP) — accepts a +91 or 0 prefix,
+ * spaces and dashes; yields the bare 10 digits.
+ */
+const indianMobileField = z.preprocess(
+  (v) => {
+    const d = String(v ?? '').replace(/\D/g, '');
+    if (d.length === 12 && d.startsWith('91')) return d.slice(2);
+    if (d.length === 11 && d.startsWith('0'))  return d.slice(1);
+    return d;
+  },
+  z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number.')
+);
+
 /** Required name — 2-100 chars */
 const nameField = z.string({ required_error: 'Name is required.' })
   .trim().min(2, 'Name must be at least 2 characters.')
@@ -189,9 +203,27 @@ const setupInitSchema = z.object({
   org_email:           emailFieldOpt.optional(),
   admin_name:          nameField,
   admin_email:         emailField,
-  admin_phone:         phoneFieldOpt.optional(),
+  admin_phone:         indianMobileField,
   admin_password:      passwordField,
   admin_employee_code: z.string().trim().min(1).optional().default('SA-001'),
+  // Proofs from the email / mobile OTP checks below (checked in setup.controller)
+  email_token:         z.string().optional(),
+  phone_token:         z.string().optional(),
+});
+
+// The super administrator's email and mobile are confirmed by OTP before setup runs
+const setupSendEmailOtpSchema = z.object({
+  email: emailField,
+});
+
+const setupVerifyEmailOtpSchema = z.object({
+  email: emailField,
+  otp:   z.string({ error: 'Enter the 6-digit code.' }).regex(/^\d{6}$/, 'Enter the 6-digit code.'),
+});
+
+const setupVerifyPhoneSchema = z.object({
+  phone:   indianMobileField,
+  idToken: z.string({ error: 'Firebase idToken is required.' }).min(1, 'Firebase idToken is required.'),
 });
 
 // ── Gate Schemas ──────────────────────────────────────────────────────────────
@@ -279,6 +311,9 @@ module.exports = {
   updateDesignationSchema,
   // Setup
   setupInitSchema,
+  setupSendEmailOtpSchema,
+  setupVerifyEmailOtpSchema,
+  setupVerifyPhoneSchema,
   // Gate
   checkinSchema,
   checkoutSchema,

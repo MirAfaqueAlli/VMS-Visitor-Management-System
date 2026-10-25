@@ -4,23 +4,13 @@
 const express   = require('express');
 const router    = express.Router();
 const { z }     = require('zod');
-const rateLimit = require('express-rate-limit');
 
-const authController = require('../controllers/auth.controller');
-const { protect }    = require('../middlewares/auth.middleware');
-const { validate }   = require('../middlewares/validate.middleware');
+const authController  = require('../controllers/auth.controller');
+const { protect }     = require('../middlewares/auth.middleware');
+const { validate }    = require('../middlewares/validate.middleware');
+const { authLimiter } = require('../middlewares/rateLimit.middleware');
 
 // ── Per-IP brute-force limits (per-account lockout is in auth.controller) ─────
-// Relaxed outside production, like the global limiter in server.js.
-const isProd = process.env.NODE_ENV === 'production';
-const authLimiter = (limit, message, countSuccessful = false) => rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: isProd ? limit : limit * 10,
-  skipSuccessfulRequests: !countSuccessful,   // usually only failed attempts count
-  standardHeaders: 'draft-8',
-  legacyHeaders: false,
-  message: { success: false, message },
-});
 
 const loginLimiter  = authLimiter(20, 'Too many failed sign-in attempts from this network. Please try again in 15 minutes.');
 const otpLimiter    = authLimiter(30, 'Too many incorrect codes from this network. Please try again in 15 minutes.');

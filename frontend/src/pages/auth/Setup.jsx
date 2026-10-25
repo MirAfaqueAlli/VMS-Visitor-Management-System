@@ -16,6 +16,8 @@ import { authStyles, NAVY } from "../../utils/authTheme";
 import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
 import { getApiErrorMessage } from "../../utils/apiError";
+import useSetupVerification from "../../hooks/useSetupVerification";
+import SetupVerifyDialog from "./SetupVerifyDialog";
 
 const INITIAL = {
   org_name:               "",
@@ -47,6 +49,14 @@ const maxLength     = (max) => (v) => (v.trim().length > max ? `Must be at most 
 const optionalPhone = (v) => (v.trim() && !/^\d{10,15}$/.test(phoneDigits(v)) ? "Enter 10–15 digits (spaces, + and - are fine)." : "");
 const optionalEmail = (v) => (v.trim() && !EMAIL_RE.test(v.trim()) ? "Enter a valid email address." : maxLength(100)(v));
 
+/** Indian mobile as 10 digits — accepts a +91 or 0 prefix, spaces and dashes (same as the API). */
+const toMobile10 = (v) => {
+  const d = v.replace(/\D/g, "");
+  if (d.length === 12 && d.startsWith("91")) return d.slice(2);
+  if (d.length === 11 && d.startsWith("0"))  return d.slice(1);
+  return d;
+};
+
 const RULES = {
   org_name:  lengthRule("Organisation name", 2, 100),
   org_code:  (v) => (!v ? "Short code is required."
@@ -58,7 +68,9 @@ const RULES = {
   admin_name:  lengthRule("Full name", 2, 100),
   admin_email: (v) => (!v.trim() ? "Email is required."
     : !EMAIL_RE.test(v.trim()) ? "Enter a valid email address (e.g. admin@ohpc.co.in)." : maxLength(100)(v)),
-  admin_phone:         optionalPhone,
+  // Verified by SMS code (Firebase, +91 numbers)
+  admin_phone: (v) => (!v.trim() ? "Mobile number is required."
+    : /^[6-9]\d{9}$/.test(toMobile10(v)) ? "" : "Enter a valid 10-digit Indian mobile number."),
   admin_employee_code: lengthRule("Employee code", 1, 50),
   admin_password: (v) => (!v ? "Password is required."
     : validatePassword(v).valid ? "" : "Password does not meet all the requirements yet."),
@@ -158,6 +170,8 @@ export default function Setup() {
   const [loading, setLoading] = useState(false);
   const [showPwd,        setShowPwd]        = useState(false);
   const [showConfirmPwd, setShowConfirmPwd] = useState(false);
+  const [verifyOpen,     setVerifyOpen]     = useState(false);
+  const verification = useSetupVerification();
 
   // One-time page: ask the API whether the organisation already exists
   useEffect(() => { loadSetupStatus(setStatus); }, []);
@@ -192,16 +206,30 @@ export default function Setup() {
     if (checkStep(1)) setStep(2);
   };
 
-  const handleSubmit = async (e) => {
+  const adminEmail  = form.admin_email.trim().toLowerCase();
+  const adminMobile = toMobile10(form.admin_phone);
+
+  // "Complete setup": check the form, then confirm the admin's email and mobile
+  // by OTP in a pop-up (codes are sent from here, not from an effect)
+  const handleSubmit = (e) => {
     e.preventDefault();
     if (!STEP_FIELDS[1].every((k) => !errors[k])) { setStep(1); return; }
     if (!checkStep(2)) return;
+    verification.start(adminEmail, adminMobile);
+    setVerifyOpen(true);
+  };
 
+  // Called by the pop-up once both details are verified
+  const completeSetup = async ({ emailToken, phoneToken }) => {
     setLoading(true);
     try {
       const payload = Object.fromEntries(
         Object.entries(form).filter(([k]) => k !== "admin_confirm_password").map(([k, v]) => [k, k === "admin_password" ? v : v.trim()])
       );
+      payload.admin_email = adminEmail;
+      payload.admin_phone = adminMobile;
+      payload.email_token = emailToken;
+      payload.phone_token = phoneToken;
       const response = await apiClient.post("/setup", payload);
       const { token, user } = response.data?.data ?? {};
 
@@ -217,10 +245,14 @@ export default function Setup() {
     } catch (err) {
       if (err?.response?.status === 409) {
         // Someone completed setup in the meantime
+        setVerifyOpen(false);
         setStatus("done");
         return;
       }
       toast.error(getApiErrorMessage(err, "Setup failed. Please try again."));
+      const reverify = err?.response?.data?.reverify;   // "email" | "phone": its proof expired
+      if (reverify) verification.resend(reverify);
+      else setVerifyOpen(false);                         // something in the form needs fixing
     } finally {
       setLoading(false);
     }
@@ -331,10 +363,12 @@ export default function Setup() {
           <TextField {...field("admin_name")} label="Full name" icon={User} required autoFocus
             autoComplete="name" placeholder="e.g. Rajesh Kumar Mohanty" />
           <TextField {...field("admin_email")} label="Email" icon={Mail} type="email" required
-            autoComplete="email" placeholder="e.g. superadmin@ohpc.co.in" />
+            autoComplete="email" placeholder="e.g. superadmin@ohpc.co.in"
+            hint="A verification code will be sent to this address." />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
-            <TextField {...field("admin_phone")} label="Mobile number" icon={Phone} type="tel"
-              autoComplete="tel" placeholder="e.g. 98765 43210" />
+            <TextField {...field("admin_phone")} label="Mobile number" icon={Phone} type="tel" required
+              autoComplete="tel" placeholder="e.g. 98765 43210"
+              hint="Verified by SMS code." />
             <TextField {...field("admin_employee_code")} label="Employee code" icon={Hash} required mono placeholder="SA-001" />
           </div>
 
@@ -370,6 +404,17 @@ export default function Setup() {
             </button>
           </div>
         </form>
+      )}
+
+      {verifyOpen && (
+        <SetupVerifyDialog
+          email={adminEmail}
+          mobile={adminMobile}
+          verification={verification}
+          submitting={loading}
+          onComplete={completeSetup}
+          onClose={() => setVerifyOpen(false)}
+        />
       )}
     </AuthLayout>
   );

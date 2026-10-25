@@ -1,5 +1,5 @@
 // frontend/src/pages/requests/PublicRequest.jsx
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Shield, Building2, User, FileText, CheckCircle2, ChevronDown,
   Briefcase, UserCircle, Lock, Phone, Mail, MapPin,
@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
 import { auth } from "../../utils/firebase";
+import useCountdown from "../../hooks/useCountdown";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 
@@ -29,8 +30,6 @@ const VISIT_TYPES = [
   { id: "INDIVIDUAL", label: "Individual", desc: "Personal / private visit", icon: UserCircle },
   { id: "BUSINESS",   label: "Business",   desc: "Official / company visit", icon: Briefcase  },
 ];
-
-const OTP_COOLDOWN = 60; // seconds
 
 /* ── Masking helpers ────────────────────────────────────────── */
 function maskPhone(phone) {
@@ -58,26 +57,6 @@ function OtpInput({ value, onChange, disabled }) {
       className={`${inputCls} text-center text-xl tracking-[0.5em] font-bold`}
     />
   );
-}
-
-/* ── Countdown hook ────────────────────────────────────────────────────────── */
-function useCountdown(initial = 0) {
-  const [count, setCount] = useState(initial);
-  const ref = useRef(null);
-
-  const start = useCallback((from = OTP_COOLDOWN) => {
-    clearInterval(ref.current);
-    setCount(from);
-    ref.current = setInterval(() => {
-      setCount(c => {
-        if (c <= 1) { clearInterval(ref.current); return 0; }
-        return c - 1;
-      });
-    }, 1000);
-  }, []);
-
-  useEffect(() => () => clearInterval(ref.current), []);
-  return { count, start };
 }
 
 /* ── Step indicator ────────────────────────────────────────────────────────── */
