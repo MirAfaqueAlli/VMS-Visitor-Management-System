@@ -121,6 +121,13 @@ function Shell({ step, children }) {
   return (
     <div className="min-h-screen bg-bg-primary py-12 px-4 sm:px-6">
       <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 80% 60% at 50% -10%, rgba(59,130,246,0.07) 0%, transparent 70%)" }} />
+      {/*
+        recaptcha-container MUST always be in the DOM while this page is mounted.
+        Firebase's RecaptchaVerifier anchors to this element when size='invisible'.
+        Keeping it here (outside the conditional step renders) means it survives
+        all step transitions without causing a "element not found" error.
+      */}
+      <div id="recaptcha-container" style={{ position: 'absolute', bottom: 0, left: 0 }} />
       <div className="max-w-xl mx-auto relative z-10">
         {/* Logo */}
         <div className="text-center mb-8">
@@ -138,6 +145,7 @@ function Shell({ step, children }) {
     </div>
   );
 }
+
 
 /* ── Locked field ───────────────────────────────────────────────────────────── */
 function LockedField({ label, value }) {
@@ -191,6 +199,16 @@ export default function PublicRequest() {
 
   // ── reCAPTCHA ref — keeps the verifier instance between renders ───────────
   const recaptchaVerifierRef = useRef(null);
+
+  // Cleanup reCAPTCHA verifier when the component unmounts (e.g. user navigates away)
+  useEffect(() => {
+    return () => {
+      if (recaptchaVerifierRef.current) {
+        try { recaptchaVerifierRef.current.clear(); } catch (_) {}
+        recaptchaVerifierRef.current = null;
+      }
+    };
+  }, []);
 
   // ── Step 3 ─ Request form ──────────────────────────────────────────────────
   const [formData, setFormData] = useState({
