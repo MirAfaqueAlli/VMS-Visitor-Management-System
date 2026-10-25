@@ -706,7 +706,7 @@ export default function NewRequest() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Date */}
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-loud flex items-center gap-2">
+              <label className="text-sm font-medium text-loud flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-accent" />
                 Visit Date *
               </label>
@@ -723,7 +723,7 @@ export default function NewRequest() {
             {/* Time */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-loud flex items-center gap-2">
+                <label className="text-sm font-medium text-loud flex items-center gap-2">
                   <Clock className="w-4 h-4 text-accent" />
                   Start Time
                 </label>
@@ -798,7 +798,7 @@ export default function NewRequest() {
 
                 {/* Unit picker */}
                 <div className="space-y-2">
-                  <label className="block text-sm font-medium text-loud flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-loud flex items-center gap-1.5">
                     <Building className="w-4 h-4 text-accent" />
                     {visitMode === "visiting" ? "Select Unit to Visit *" : "Select Visitor's Unit *"}
                   </label>
@@ -820,7 +820,7 @@ export default function NewRequest() {
                 {/* Department picker  -  mandatory */}
                 {selectedUnitId && empDepartments.length > 0 && (
                   <div className="space-y-2">
-                    <label className="block text-sm font-medium text-loud flex items-center gap-1.5">
+                    <label className="text-sm font-medium text-loud flex items-center gap-1.5">
                       <Building className="w-4 h-4 text-accent" />
                       Select Department *
                     </label>
@@ -841,7 +841,7 @@ export default function NewRequest() {
                 {/* Employee picker  -  disabled until department is selected if departments exist */}
                 {selectedUnitId && (
                   <div className="space-y-2">
-                    <label className="block text-sm font-medium text-loud flex items-center gap-1.5">
+                    <label className="text-sm font-medium text-loud flex items-center gap-1.5">
                       <User className="w-4 h-4 text-accent" />
                       {visitMode === "visiting" ? "Select Host Employee *" : "Select Visitor (Employee) *"}
                       {employees.length > 0 && (
@@ -1027,7 +1027,7 @@ export default function NewRequest() {
                   {/* Visitor Section */}
                   {showVisitorFields ? (
                     <div className="space-y-4 md:col-span-2">
-                      <label className="block text-sm font-medium text-loud flex items-center gap-2">
+                      <label className="text-sm font-medium text-loud flex items-center gap-2">
                         <Phone className="w-4 h-4 text-accent" />
                         Visitor *
                       </label>
@@ -1116,7 +1116,7 @@ export default function NewRequest() {
                   {/* Department Section */}
                   {showHostPicker && (
                     <div className="space-y-2 md:col-span-2">
-                      <label className="block text-sm font-medium text-loud flex items-center gap-2">
+                      <label className="text-sm font-medium text-loud flex items-center gap-2">
                         <Building className="w-4 h-4 text-accent" />
                         Select Department *
                       </label>
@@ -1140,7 +1140,7 @@ export default function NewRequest() {
                   {/* Host Section */}
                   {showHostPicker ? (
                     <div className="space-y-2 md:col-span-2">
-                      <label className="block text-sm font-medium text-loud flex items-center gap-2">
+                      <label className="text-sm font-medium text-loud flex items-center gap-2">
                         <Building className="w-4 h-4 text-accent" />
                         Select Host (Employee) *
                       </label>
@@ -1164,7 +1164,7 @@ export default function NewRequest() {
                     </div>
                   ) : !isEmpVisit ? (
                     <div className="space-y-2 md:col-span-2">
-                      <label className="block text-sm font-medium text-loud flex items-center gap-2">
+                      <label className="text-sm font-medium text-loud flex items-center gap-2">
                         <Building className="w-4 h-4 text-accent" />
                         Host (You)
                       </label>
@@ -1230,7 +1230,7 @@ export default function NewRequest() {
 
               {/* Contact Phone with Lookup  -  full width */}
               <div className="space-y-2 md:col-span-2">
-                <label className="block text-sm font-medium text-loud flex items-center gap-2">
+                <label className="text-sm font-medium text-loud flex items-center gap-2">
                   <Phone className="w-4 h-4 text-accent" />
                   Contact Phone *
                 </label>
