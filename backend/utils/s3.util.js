@@ -23,8 +23,8 @@
 
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
-const REGION = process.env.AWS_REGION     || 'ap-south-1';
-const BUCKET = process.env.AWS_S3_BUCKET  || 'ohpcvms';
+const REGION = process.env.AWS_REGION ;
+const BUCKET = process.env.AWS_S3_BUCKET ;
 
 const s3 = new S3Client({ region: REGION });
 

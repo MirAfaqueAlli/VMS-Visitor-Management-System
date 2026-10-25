@@ -284,6 +284,7 @@ CREATE TABLE IF NOT EXISTS host_phone_blacklist (
     is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_host_phone (host_user_id, visitor_phone),
+    INDEX idx_phone      (visitor_phone)
 );
 
 SET FOREIGN_KEY_CHECKS = 1;
