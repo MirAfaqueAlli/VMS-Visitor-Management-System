@@ -31,6 +31,9 @@ const publicAuthRoutes = require('./routes/publicAuth.routes');
 
 const app = express();
 
+// Trust reverse proxy (needed for accurate client IP behind reverse proxy / load balancer in production)
+app.set('trust proxy', 1);
+
 // ── Security middleware ───────────────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
@@ -43,11 +46,16 @@ app.use(cors({
   credentials: true,
 }));
 
-// Rate limiting — strict in production, relaxed for local dev
+// Global API rate limiting — base defense layer
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: process.env.NODE_ENV === 'production' ? 100 : 10000,
-  message: 'Too many requests from this IP, please try again later.',
+  message: {
+    success: false,
+    message: 'Too many requests from this IP, please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use('/api/', limiter);
 
@@ -57,6 +65,66 @@ app.use(express.urlencoded({ extended: true }));
 
 // ── Static assets (uploaded photos & QR codes) ───────────────────────────────
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// ── Strict Rate Limiters for Authentication & OTP (P0 Security) ──────────────
+// 1. Auth Login: Max 5 failed attempts per IP per 15 min (credential stuffing protection)
+const authLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 5 : 20,
+  message: {
+    success: false,
+    message: 'Too many failed login attempts from this IP. Please wait 15 minutes before trying again.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Only failed attempts (4xx/5xx) consume the quota
+});
+app.use('/api/auth/login', authLoginLimiter);
+
+// 2. Login OTP Send: Max 3 successful OTP sends per IP per 10 min (prevents spamming user inboxes)
+const loginOtpSendLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 3 : 10,
+  message: {
+    success: false,
+    message: 'Too many login OTP requests from this IP. Please wait 10 minutes before trying again.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipFailedRequests: true, // Only successful credential validations that trigger OTP count
+});
+app.use('/api/auth/login', loginOtpSendLimiter);
+
+// 3. Public OTP Send: Max 3 OTP sends per IP per 10 min (SMS & Email flood protection)
+const publicOtpSendLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 3 : 15,
+  message: {
+    success: false,
+    message: 'Too many OTP requests from this IP. Please wait 10 minutes before requesting another OTP.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/public-auth/send-phone-otp', publicOtpSendLimiter);
+app.use('/api/public-auth/send-email-otp', publicOtpSendLimiter);
+app.use('/api/otp/send', publicOtpSendLimiter);
+
+// 4. OTP Verification: Max 10 attempts per IP per 10 min (brute-force defense against 6-digit codes)
+const otpVerifyLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 10 : 30,
+  message: {
+    success: false,
+    message: 'Too many OTP verification attempts. Please wait 10 minutes before trying again.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/auth/verify-login-otp', otpVerifyLimiter);
+app.use('/api/public-auth/verify-email-otp', otpVerifyLimiter);
+app.use('/api/public-auth/verify-firebase-phone', otpVerifyLimiter);
+app.use('/api/otp/verify', otpVerifyLimiter);
 
 // ── API routes ────────────────────────────────────────────────────────────────
 app.use('/api/setup', setupRoutes);
