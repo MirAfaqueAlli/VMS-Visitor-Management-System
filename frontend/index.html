@@ -36,6 +36,8 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Firebase reCAPTCHA container: must stay in DOM at all times (never unmount) -->
+    <div id="recaptcha-container" style="position:fixed;bottom:0;right:0;z-index:-1;"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

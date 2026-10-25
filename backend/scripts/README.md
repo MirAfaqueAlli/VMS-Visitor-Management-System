@@ -1,56 +1,36 @@
-# Backend Scripts
+# Backend Scripts & Auto-Migrations
 
-Utility scripts for database management. Run from the `backend/` directory.
-
----
-
-## `reset.js` — Full DB Reset
-
-Drops all `vms_unit_*` databases and truncates the central DB tables.  
-Use this to wipe all data and start fresh (first-time setup).
-
-```bash
-node reset.js
-```
-
-> ⚠️ **Destructive — all unit and central data is permanently deleted.**
+> **Note:** Manual execution of patches and seeders is **no longer required**!  
+> The backend server automatically connects, checks schemas, runs pending migrations, and verifies all seed data on startup (`server.js`).
 
 ---
 
-## `scripts/reset_db.js` — Advanced Reset
+## 🚀 Automated Startup Migrations
 
-Extended reset with additional options. Check the file header for flags.
+When you run `npm run dev` or `node server.js`, the server automatically:
+1. Creates `vms_central` if it does not exist.
+2. Applies `vms_central_schema.sql` and verifies the 7 system roles and 7 visitor types are seeded.
+3. Discovers all existing unit databases (`vms_unit_*`).
+4. Applies any pending table/column migrations:
+   - `host_phone_blacklist` table
+   - `service_type` & `work_order_ref` columns
+   - `request_source` with `PUBLIC` ENUM
+   - `checkout_method`, `qr_expires_at`, `updated_at` columns
+   - Drops cross-database FK constraints on `requester_user_id` and `acted_by_user_id`
+5. Automatically runs migrations whenever a new unit is provisioned via the UI.
 
+---
+
+## 🛠️ Optional Maintenance Scripts
+
+### `reset.js` / `scripts/reset_db.js` — Full DB Reset
+Drops all unit databases and recreates a clean `vms_central` database (only use if you explicitly want to wipe all data):
 ```bash
 node scripts/reset_db.js
 ```
 
----
-
-## `scripts/seed_unit.js` — Seed a Unit
-
-Seeds a unit database with sample data for testing.
-
+### `scripts/seed_unit.js` — Seed Demo Unit
+Optional dev utility to seed a demo branch unit with a mock user.
 ```bash
-node scripts/seed_unit.js
-```
-
----
-
-## `scripts/patch_gate_passes.js` — Gate Pass Migration
-
-One-time patch to backfill gate pass records. Run only if migrating from an older schema version.
-
-```bash
-node scripts/patch_gate_passes.js
-```
-
----
-
-## `scripts/patch_request_source.js` — Request Source Migration
-
-One-time patch to backfill `request_source` on existing visit_requests rows.
-
-```bash
-node scripts/patch_request_source.js
+node scripts/seed_unit.js --code=BR01 --name="Branch Office" --city="Delhi"
 ```

@@ -36,10 +36,8 @@ const GatePass               = lazy(() => import("./pages/gate/GatePass"));
 const ApprovalInbox          = lazy(() => import("./pages/approvals/ApprovalInbox"));
 const UserManagement         = lazy(() => import("./pages/admin/UserManagement"));
 const DepartmentManagement   = lazy(() => import("./pages/admin/DepartmentManagement"));
-const ArchiveManagement      = lazy(() => import("./pages/admin/ArchiveManagement"));
 const UnitManagement         = lazy(() => import("./pages/super/UnitManagement"));
 const GlobalUserManagement   = lazy(() => import("./pages/super/GlobalUserManagement"));
-const SuperArchiveManagement = lazy(() => import("./pages/super/SuperArchiveManagement"));
 const Reports                = lazy(() => import("./pages/reports/Reports"));
 const AuditLog               = lazy(() => import("./pages/audit/AuditLog"));
 const Profile                = lazy(() => import("./pages/profile/Profile"));
@@ -76,25 +74,6 @@ function S({ children }) {
   return <Suspense fallback={<PageLoader />}>{children}</Suspense>;
 }
 
-// ── Role-switching archive wrapper ────────────────────────────────────────────
-// Super admin without an active unit context → global archive view.
-// Everyone else (unit_admin, super_admin managing a unit) → per-unit archive view.
-function ArchiveRouter() {
-  const { user, activeUnit } = useAuth();
-  if (user?.role_type === "super_admin" && !activeUnit) {
-    return (
-      <S>
-        <SuperArchiveManagement />
-      </S>
-    );
-  }
-  return (
-    <S>
-      <ArchiveManagement />
-    </S>
-  );
-}
-
 // ── Role groups ───────────────────────────────────────────────────────────────
 const ADMIN_ROLES    = ["super_admin", "unit_admin"];
 const GATE_ROLES     = ["security", "receptionist", "unit_admin", "super_admin"];
@@ -119,7 +98,6 @@ const router = createBrowserRouter([
           { index: true,            element: <Navigate to="/dashboard" replace /> },
           { path: "dashboard",      element: <S><Dashboard /></S> },
           { path: "unit-dashboard", element: <S><UnitDashboard /></S> },
-          { path: "unit-archive",   element: <S><ArchiveManagement /></S> },
           { path: "profile",        element: <S><Profile /></S> },
 
           // Visitors
@@ -163,7 +141,7 @@ const router = createBrowserRouter([
             children: [{ index: true, element: <S><AuditLog /></S> }],
           },
 
-          // Admin — user + dept + archive management
+          // Admin — user + dept management
           {
             path: "admin",
             element: <ProtectedRoute roles={ADMIN_ROLES} />,
@@ -173,11 +151,6 @@ const router = createBrowserRouter([
                 path: "departments",
                 element: <ProtectedRoute roles={["super_admin", "unit_admin"]} />,
                 children: [{ index: true, element: <S><DepartmentManagement /></S> }],
-              },
-              {
-                path: "archive",
-                element: <ProtectedRoute roles={["super_admin", "unit_admin"]} />,
-                children: [{ index: true, element: <ArchiveRouter /> }],
               },
             ],
           },

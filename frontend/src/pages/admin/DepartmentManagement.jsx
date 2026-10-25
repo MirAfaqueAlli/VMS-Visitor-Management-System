@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Plus, X, Trash2, Tag } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
+import { getApiErrorMessage } from '../../utils/apiError';
 import useAuth from '../../hooks/useAuth';
 import Pagination from '../../components/shared/Pagination';
 
@@ -90,7 +91,7 @@ export default function DepartmentManagement() {
       close();
       fetchDepts();
     } catch (err) {
-      toast.error(err?.response?.data?.message || 'Failed to save.');
+      toast.error(getApiErrorMessage(err, 'Failed to save department.'));
     } finally { setSaving(false); }
   };
 

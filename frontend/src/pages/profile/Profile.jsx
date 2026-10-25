@@ -6,6 +6,7 @@ import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
 import PasswordStrength from '../../components/PasswordStrength';
 import { validatePassword } from '../../utils/passwordValidator';
+import { getApiErrorMessage } from '../../utils/apiError';
 
 const ROLE_COLORS = {
   admin:        { bg: '#fef2f2', color: '#b91c1c' },
@@ -87,7 +88,7 @@ export default function Profile() {
       toast.success('Password updated successfully.');
       setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
     } catch (err) {
-      toast.error(err?.response?.data?.message || 'Failed to update password.');
+      toast.error(getApiErrorMessage(err, 'Failed to update password.'));
     } finally {
       setPwLoading(false);
     }

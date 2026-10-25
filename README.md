@@ -1,4 +1,4 @@
-﻿# 🚪 Visitor Management System (VMS)
+# 🚪 Visitor Management System (VMS)
 
 A secure, multi-tenant **Visitor Management System** built for government offices, PSUs, and secured premises. It digitises the complete visitor lifecycle — registration → approval → gate pass → check-in/check-out — with role-based access control, QR-code gate passes, real-time web-push notifications, SMS/email alerts, and financial-year archiving.
 
@@ -15,7 +15,6 @@ A secure, multi-tenant **Visitor Management System** built for government office
 | **Role-Based Access** | 7 roles — Super Admin through Auditor |
 | **Multi-Unit / Multi-Tenant** | Each unit has its own isolated MySQL database |
 | **SMS & Email Alerts** | Visitor notified on approval / rejection |
-| **Financial Year Archive** | Backup + purge old records per Indian FY (Apr–Mar) |
 | **Audit Logs** | Full immutable trail of all actions |
 | **Reports & Analytics** | Overview charts, department breakdowns, host activity |
 | **Visitor Blacklist** | Unit-level and host-level phone blacklisting |
@@ -95,33 +94,17 @@ EMAIL_FROM="VMS System" <your@gmail.com>
 
 > 💡 Email and SMS are optional — the system works fully without them.
 
-### Step 3 — Initialise the database
-
-```bash
-npm run reset-db
-```
-
-Expected output:
-
-```
-✅  Connected to MySQL at localhost:3306
-[ 1 / 3 ]  Dropping unit databases…   → none found
-[ 2 / 3 ]  Recreating central database: vms_central
-[ 3 / 3 ]  Verifying clean state…
-✅  Clean reset complete!
-```
-
-> ⚠️ Do **not** manually run any `.sql` files — the reset script handles everything.
-
-### Step 4 — Start the backend
+### Step 3 — Start the backend
 
 ```bash
 npm run dev
 ```
 
-API server starts at **`http://localhost:5000`**
+> 💡 **Automated Database Setup:** The backend automatically verifies MySQL connection, creates `vms_central`, sets up all schemas, seeds system roles and visitor types, and applies all migrations upon startup. No manual SQL or seed commands required!
 
-### Step 5 — Configure & start the frontend
+API server starts at **`http://localhost:5001`**
+
+### Step 4 — Configure & start the frontend
 
 Open a new terminal:
 
@@ -213,7 +196,7 @@ VMS/
 │       ├── context/          # AuthContext, SocketContext, ThemeContext
 │       ├── hooks/            # useAuth, useSocketEvent, useWebNotification
 │       └── pages/
-│           ├── admin/        # User management, Departments, FY Archive
+│           ├── admin/        # User management, Departments
 │           ├── approvals/    # Approval inbox
 │           ├── audit/        # Audit log viewer
 │           ├── auth/         # Login page, Setup wizard
