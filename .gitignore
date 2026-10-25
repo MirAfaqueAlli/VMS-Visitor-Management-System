@@ -73,3 +73,9 @@ backend/uploads/visitor-photos/*
 # ============================================================
 backend/config/firebase-service-account.json
 *firebase-adminsdk*.json
+
+# ============================================================
+# Yearly backups / FY archives (scripts/fy_archive.js) — NEVER commit
+# ============================================================
+backend/archives/
+*.gz.enc

@@ -29,12 +29,12 @@ const superAdminCentralItems = [
   { label: 'Audit Logs',      icon: ShieldAlert,     path: '/audit-logs' },
 ];
 
-// Unit-level links shown to super admin when they are managing a unit
+// Unit-level links shown to super admin when they are managing a unit.
+// No Gate Security: gate operations are unit staff only (segregation of duties).
 const superAdminUnitItems = [
   { label: 'Dashboard',       icon: LayoutDashboard, path: '/unit-dashboard' },
   { label: 'Visitors',        icon: Users,           path: '/visitors' },
   { label: 'Visit Requests',  icon: ClipboardList,   path: '/requests' },
-  { label: 'Gate Security',   icon: Shield,          path: '/gate' },
   { label: 'User Management', icon: Settings,        path: '/admin', end: true },
 ];
 

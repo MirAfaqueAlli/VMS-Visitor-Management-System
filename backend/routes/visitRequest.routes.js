@@ -4,7 +4,7 @@
 const express = require('express');
 const router  = express.Router();
 const ctrl    = require('../controllers/visitRequest.controller');
-const { protect, optionalProtect } = require('../middlewares/auth.middleware');
+const { protect } = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
 const { z }         = require('zod');
 const { sendError } = require('../utils/response.util');
@@ -66,8 +66,13 @@ const validateRequest = (req, res, next) => {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-// Public phone lookup — uses req.db if authenticated, or requires unit_code if not
-router.get('/lookup-visitor', optionalProtect, ctrl.lookupVisitorByPhone);
+// Phone lookup — staff only (returns visitor PII, so never exposed publicly)
+router.get(
+  '/lookup-visitor',
+  protect,
+  authorize('super_admin', 'unit_admin', 'employee', 'security', 'receptionist'),
+  ctrl.lookupVisitorByPhone
+);
 
 // Public visitor self-registration — requires unit_code in body
 router.post('/public', ctrl.createPublicRequest);
@@ -80,11 +85,11 @@ router.get('/my-visitors', protect, ctrl.getMyVisitors);
 // /my must come BEFORE /:id
 router.get('/my', protect, ctrl.getMyRequests);
 
-// Create authenticated visit request
+// Create authenticated visit request (unit staff only — super_admin is read-only inside units)
 router.post(
   '/',
   protect,
-  authorize('super_admin', 'unit_admin', 'employee', 'security', 'receptionist'),
+  authorize('unit_admin', 'employee', 'security', 'receptionist'),
   validateRequest,
   ctrl.createRequest
 );
@@ -97,26 +102,32 @@ router.get(
   ctrl.listRequests
 );
 
-// Get single request
-router.get('/:id', protect, ctrl.getRequest);
-
-// Cancel request
-router.put('/:id/cancel', protect, ctrl.cancelRequest);
-
 // ── Host-level visitor blocking (host blocks by phone from a visit request) ──
 // my-blocked-visitors must come BEFORE /:id to avoid param collision
 router.get(
   '/my-blocked-visitors',
   protect,
-  authorize('super_admin', 'unit_admin', 'employee'),
+  authorize('unit_admin', 'employee'),
   ctrl.getHostBlacklist
+);
+
+// Get single request (?unit_id= opens a cross-unit EMPLOYEE_VISIT the caller raised)
+router.get('/:id', protect, ctrl.getRequest);
+
+// Cancel request (?unit_id= for a cross-unit EMPLOYEE_VISIT) — unit staff only;
+// auditors and super_admin are read-only inside units
+router.put(
+  '/:id/cancel',
+  protect,
+  authorize('unit_admin', 'employee', 'security', 'receptionist'),
+  ctrl.cancelRequest
 );
 
 // Unblock a visitor from the host's personal blacklist
 router.delete(
   '/blocked-visitors/:blockId',
   protect,
-  authorize('super_admin', 'unit_admin', 'employee'),
+  authorize('unit_admin', 'employee'),
   ctrl.unblockVisitor
 );
 
@@ -124,7 +135,7 @@ router.delete(
 router.post(
   '/:id/blacklist-visitor',
   protect,
-  authorize('super_admin', 'unit_admin', 'employee'),
+  authorize('unit_admin', 'employee'),
   ctrl.blacklistVisitorFromRequest
 );
 

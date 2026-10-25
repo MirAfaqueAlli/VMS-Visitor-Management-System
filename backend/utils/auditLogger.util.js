@@ -88,4 +88,27 @@ const logAudit = async ({
   }
 };
 
-module.exports = { logAudit };
+/**
+ * auditActor(req) → the { db, userId, isSuperAdminAction, sourceUnit } part of a
+ * logAudit() call for the user making this request.
+ *
+ * Central users (super_admin / global_auditor) have ids from vms_central.users.
+ * Writing those ids into a unit's audit_logs.user_id would point at an unrelated
+ * unit user with the same id, so their actions go to the central
+ * global_audit_logs instead, tagged with the unit they were managing.
+ *
+ * Usage: logAudit({ ...auditActor(req), action, module, recordType, ... })
+ */
+const auditActor = (req) => {
+  if (req.user?.unit_db === 'central') {
+    return {
+      db:                 null,
+      isSuperAdminAction: true,
+      sourceUnit:         req.unitDbName || 'central',
+      userId:             req.user.id,
+    };
+  }
+  return { db: req.db, userId: req.user?.id ?? null };
+};
+
+module.exports = { logAudit, auditActor };

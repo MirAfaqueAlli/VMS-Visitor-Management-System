@@ -39,11 +39,11 @@ router.get(
   ctrl.listVisitors
 );
 
-// Manually register a visitor (gate/reception/employee)
+// Manually register a visitor (gate/reception/employee — super_admin is read-only inside units)
 router.post(
   '/',
   protect,
-  authorize('super_admin', 'unit_admin', 'security', 'receptionist', 'employee'),
+  authorize('unit_admin', 'security', 'receptionist', 'employee'),
   uploadVisitorPhoto,
   validateVisitor,
   ctrl.createVisitor
@@ -55,18 +55,18 @@ router.get('/lookup', protect, ctrl.lookupVisitorByPhone);
 // Get single visitor
 router.get('/:id', protect, ctrl.getVisitor);
 
-// Blacklist management — admin only
+// Blacklist management — unit admin only
 router.post(
   '/:id/blacklist',
   protect,
-  authorize('super_admin', 'unit_admin'),
+  authorize('unit_admin'),
   ctrl.addToBlacklist
 );
 
 router.put(
   '/:id/blacklist/lift',
   protect,
-  authorize('super_admin', 'unit_admin'),
+  authorize('unit_admin'),
   ctrl.liftBlacklist
 );
 

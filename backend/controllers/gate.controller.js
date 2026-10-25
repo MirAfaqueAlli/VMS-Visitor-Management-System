@@ -3,21 +3,29 @@
 
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
-const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { isSuperAdmin, isUnitAdmin, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
 const { verifyQRToken }          = require('../utils/qrToken.util');
 const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
-const { uploadToS3 }             = require('../utils/s3.util');
+const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
+
+// IST calendar date as YYYY-MM-DD (mirrors approval/visitRequest controllers)
+const getISTDateString = (d = new Date()) =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
 
 
 // ── getDashboard ──────────────────────────────────────────────────────────────
 const getDashboard = async (req, res) => {
   try {
-    const isEmployee = req.user.role_type === 'employee';
-    const hostFilter = isEmployee ? ` AND vr.host_user_id = ${parseInt(req.user.id, 10)} ` : '';
-    const deptFilter = (isSuperAdmin(req.user) || isUnitAdmin(req.user) || ['security', 'receptionist', 'unit_auditor'].includes(req.user.role_type))
-      ? ''
-      : ` AND vr.department_id = ${parseInt(req.user.department_id, 10)} `;
+    // Employees see only visits they host; every other role allowed on this route
+    // (admins, gate staff, auditors) sees the whole unit. Parameterised — previously
+    // department_id was pasted into the SQL and became NaN (crash) for users without one.
+    const isEmployee  = req.user.role_type === 'employee';
+    const scopeSql    = isEmployee ? ' AND vr.host_user_id = ? ' : '';
+    const scopeParams = isEmployee ? [req.user.id] : [];
 
     const [
       [yetToCome],
@@ -39,10 +47,9 @@ const getDashboard = async (req, res) => {
          JOIN departments d  ON d.id  = vr.department_id
          LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
          WHERE vr.visit_date = CURDATE() AND vr.status = 'APPROVED'
-           ${hostFilter}
-           ${deptFilter}
+           ${scopeSql}
            AND (gp.status IS NULL OR gp.status = 'ISSUED')
-         ORDER BY vr.visit_start_time ASC`
+         ORDER BY vr.visit_start_time ASC`, scopeParams
       ),
 
       // Active (Currently Inside)
@@ -62,9 +69,8 @@ const getDashboard = async (req, res) => {
          JOIN departments     d  ON d.id  = vr.department_id
          LEFT JOIN visitors   v  ON v.id  = vr.visitor_id
          WHERE vl.status = 'ACTIVE'
-           ${hostFilter}
-           ${deptFilter}
-         ORDER BY vl.check_in_at DESC`
+           ${scopeSql}
+         ORDER BY vl.check_in_at DESC`, scopeParams
       ),
 
       // Completed Today
@@ -81,9 +87,8 @@ const getDashboard = async (req, res) => {
          JOIN users           h  ON h.id  = vr.host_user_id
          JOIN departments     d  ON d.id  = vr.department_id
          WHERE vl.status = 'COMPLETED' AND DATE(vl.check_out_at) = CURDATE()
-           ${hostFilter}
-           ${deptFilter}
-         ORDER BY vl.check_out_at DESC`
+           ${scopeSql}
+         ORDER BY vl.check_out_at DESC`, scopeParams
       ),
 
       // Pending Approvals for Today
@@ -93,9 +98,8 @@ const getDashboard = async (req, res) => {
          FROM visit_requests vr
          JOIN users h ON h.id = vr.host_user_id
          WHERE vr.visit_date = CURDATE() AND vr.status = 'PENDING'
-           ${hostFilter}
-           ${deptFilter}
-         ORDER BY vr.created_at ASC`
+           ${scopeSql}
+         ORDER BY vr.created_at ASC`, scopeParams
       ),
     ]);
 
@@ -191,19 +195,11 @@ const checkIn = async (req, res) => {
       return sendError(res, 'Gate pass number mismatch. Verification failed.', 403);
     }
 
-    // Verify visit date is strictly today
+    // Verify visit date is strictly today — compared as IST calendar dates, so it
+    // doesn't depend on the server's timezone (EC2 defaults to UTC)
     if (request.visit_date) {
-      const vDate = new Date(request.visit_date);
-      const yyyy = vDate.getFullYear();
-      const mm = String(vDate.getMonth() + 1).padStart(2, '0');
-      const dd = String(vDate.getDate()).padStart(2, '0');
-      const visitDateStr = `${yyyy}-${mm}-${dd}`;
-
-      const today = new Date();
-      const tYyyy = today.getFullYear();
-      const tMm = String(today.getMonth() + 1).padStart(2, '0');
-      const tDd = String(today.getDate()).padStart(2, '0');
-      const todayStr = `${tYyyy}-${tMm}-${tDd}`;
+      const visitDateStr = getISTDateString(new Date(request.visit_date));
+      const todayStr     = getISTDateString();
 
       if (visitDateStr !== todayStr) {
         conn.release();
@@ -262,17 +258,18 @@ const checkIn = async (req, res) => {
           `UPDATE visitors SET
              full_name    = COALESCE(?, full_name),
              email        = COALESCE(?, email),
+             address      = COALESCE(?, address),
              visitor_type = ?,
              updated_at   = NOW()
            WHERE id = ?`,
-          [request.visitor_name || null, request.visitor_email || null, visitorType, visitorId]
+          [request.visitor_name || null, request.visitor_email || null, request.visitor_address || null, visitorType, visitorId]
         );
       } else {
         // Create new visitor record
         const [insertVis] = await req.db.query(
-          `INSERT INTO visitors (full_name, phone, email, visitor_type, created_at, updated_at)
-           VALUES (?, ?, ?, ?, NOW(), NOW())`,
-          [request.visitor_name || 'Unknown', request.visitor_phone, request.visitor_email || null, visitorType]
+          `INSERT INTO visitors (full_name, phone, email, address, visitor_type, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+          [request.visitor_name || 'Unknown', request.visitor_phone, request.visitor_email || null, request.visitor_address || null, visitorType]
         );
         visitorId = insertVis.insertId;
       }
@@ -303,6 +300,19 @@ const checkIn = async (req, res) => {
     // ── 5. Transaction: update visit_request.visitor_id + insert visit_log + update gate pass ──
     await conn.beginTransaction();
 
+    // Mark the gate pass USED first, and only if it is still ISSUED — so two
+    // simultaneous scans of the same pass can't both check the visitor in.
+    // Also starts the 24-hour QR validity window.
+    const [passClaim] = await conn.query(
+      "UPDATE gate_passes SET status = 'USED', qr_expires_at = DATE_ADD(NOW(), INTERVAL 24 HOUR) WHERE id = ? AND status = 'ISSUED'",
+      [request.gate_pass_id]
+    );
+    if (passClaim.affectedRows === 0) {
+      await conn.rollback();
+      conn.release();
+      return sendError(res, 'Gate pass has already been used or cancelled.', 409);
+    }
+
     // Link visitor to visit request if we just resolved/created one
     if (visitorId && !request.visitor_id) {
       await conn.query(
@@ -328,12 +338,6 @@ const checkIn = async (req, res) => {
       ]
     );
     const visitLogId = logInsert.insertId;
-
-    // Mark gate pass as USED and start the 24-hour QR validity window
-    await conn.query(
-      "UPDATE gate_passes SET status = 'USED', qr_expires_at = DATE_ADD(NOW(), INTERVAL 24 HOUR) WHERE id = ?",
-      [request.gate_pass_id]
-    );
 
     await conn.commit();
     conn.release();
@@ -453,10 +457,18 @@ const checkIn = async (req, res) => {
       [visitLogId]
     );
 
-    return sendSuccess(res, logRows[0], 'Visitor checked in successfully.');
+    // Private bucket — return a short-lived signed link for the photo
+    const visitLog = logRows[0] && { ...logRows[0], visitor_photo_path: await getSignedFileUrl(logRows[0].visitor_photo_path) };
+    return sendSuccess(res, visitLog, 'Visitor checked in successfully.');
   } catch (err) {
-    try { await conn.rollback(); } catch (_) {}
-    if (!conn._released) conn.release();
+    // Only touch the connection if it hasn't been returned to the pool yet —
+    // once released it may already be serving another request, and a ROLLBACK
+    // here would undo that request's transaction. (`_released` lives on the
+    // underlying mysql2 PoolConnection, not on the promise wrapper.)
+    if (!conn.connection?._released) {
+      try { await conn.rollback(); } catch (_) {}
+      conn.release();
+    }
     console.error('[GateController] checkIn error:', err.message);
     return sendError(res, 'Check-in failed due to a server error.', 500);
   }
@@ -584,24 +596,46 @@ const rejectAtGate = async (req, res) => {
       return sendError(res, 'rejection_reason is required.', 400);
     }
 
-    // Insert into gate_rejections
-    const [insertResult] = await req.db.query(
-      `INSERT INTO gate_rejections (visit_request_id, visitor_id, rejection_reason, rejected_by, rejected_at)
-       VALUES (?, ?, ?, ?, NOW())`,
-      [
-        visit_request_id || null,
-        visitor_id       || null,
-        rejection_reason.trim(),
-        req.user.id,
-      ]
-    );
+    let insertResult;
+    const conn = await req.db.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    // If a visit request was given, mark it REJECTED
-    if (visit_request_id) {
-      await req.db.query(
-        "UPDATE visit_requests SET status = 'REJECTED', updated_at = NOW() WHERE id = ?",
-        [visit_request_id]
+      // A visit can only be refused before entry (PENDING / APPROVED) — never one
+      // that is already checked in, completed, rejected or cancelled
+      if (visit_request_id) {
+        const [updated] = await conn.query(
+          `UPDATE visit_requests SET status = 'REJECTED', updated_at = NOW()
+           WHERE id = ? AND status IN ('PENDING', 'APPROVED')`,
+          [visit_request_id]
+        );
+        if (updated.affectedRows === 0) {
+          await conn.rollback();
+          return sendError(res, 'This visit can no longer be refused at the gate (already checked in, completed, rejected or cancelled).', 409);
+        }
+        // The refused visitor's unused pass must not work later
+        await conn.query(
+          "UPDATE gate_passes SET status = 'CANCELLED' WHERE visit_request_id = ? AND status = 'ISSUED'",
+          [visit_request_id]
+        );
+      }
+
+      [insertResult] = await conn.query(
+        `INSERT INTO gate_rejections (visit_request_id, visitor_id, rejection_reason, rejected_by, rejected_at)
+         VALUES (?, ?, ?, ?, NOW())`,
+        [
+          visit_request_id || null,
+          visitor_id       || null,
+          rejection_reason.trim(),
+          req.user.id,
+        ]
       );
+      await conn.commit();
+    } catch (txErr) {
+      try { await conn.rollback(); } catch (_) {}
+      throw txErr;
+    } finally {
+      conn.release();
     }
 
     logAudit({
@@ -625,10 +659,9 @@ const rejectAtGate = async (req, res) => {
 // ── getActiveVisitors ─────────────────────────────────────────────────────────
 const getActiveVisitors = async (req, res) => {
   try {
-    const deptFilter = (isSuperAdmin(req.user) || isUnitAdmin(req.user) || ['security', 'receptionist', 'unit_auditor'].includes(req.user.role_type))
-      ? ''
-      : ` AND vr.department_id = ${parseInt(req.user.department_id, 10)} `;
-
+    // Every role allowed on this route (admins, gate staff, auditors) sees the whole
+    // unit. The old department filter only ever applied to global_auditor, whose
+    // department_id is NULL — it produced "department_id = NaN" and crashed.
     const [rows] = await req.db.query(
       `SELECT vl.id AS visit_log_id, vl.check_in_at,
               vl.id_verified_type, vl.id_verified_number,
@@ -646,11 +679,15 @@ const getActiveVisitors = async (req, res) => {
        JOIN departments     d  ON d.id  = vr.department_id
        LEFT JOIN visitors   v  ON v.id  = vr.visitor_id
        WHERE vl.status = 'ACTIVE'
-         ${deptFilter}
        ORDER BY vl.check_in_at DESC`
     );
 
-    return sendSuccess(res, decryptRows(rows, ['id_verified_number']), 'Active visitors retrieved successfully.');
+    // Auditors can read this list too — they get masked ID numbers
+    return sendSuccess(
+      res,
+      decryptRows(rows, ['id_verified_number'], { mask: !canViewFullIdNumbers(req.user) }),
+      'Active visitors retrieved successfully.'
+    );
   } catch (err) {
     console.error('[GateController] getActiveVisitors error:', err.message);
     return sendError(res, 'Failed to retrieve active visitors.', 500);

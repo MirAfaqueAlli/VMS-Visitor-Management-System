@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS users (
     email         VARCHAR(100) UNIQUE NOT NULL,
     phone         VARCHAR(20)  UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
+    password_changed_at DATETIME NULL,
     employee_code VARCHAR(50)  UNIQUE NOT NULL,
     is_active     BOOLEAN      DEFAULT TRUE,
     last_login_at TIMESTAMP    NULL,
@@ -103,9 +104,66 @@ CREATE TABLE IF NOT EXISTS public_otp_logs (
     identifier_type  ENUM('phone','email')     NOT NULL,
     otp_code         VARCHAR(64)               NOT NULL,
     is_used          BOOLEAN                   NOT NULL DEFAULT FALSE,
+    attempts         INT                       NOT NULL DEFAULT 0,
     expires_at       DATETIME                  NOT NULL,
     created_at       DATETIME                  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_pub_otp (identifier, identifier_type, is_used)
+);
+
+-- Pending staff login OTPs (step 2 of sign-in). Kept in the DB rather than in
+-- process memory so they survive pm2 reloads and work across cluster workers.
+-- Only SHA-256 hashes of the login token and the OTP are stored.
+CREATE TABLE IF NOT EXISTS login_otp_sessions (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    token_hash  CHAR(64)     NOT NULL UNIQUE,
+    user_id     INT          NOT NULL,
+    unit_db     VARCHAR(100) NOT NULL,
+    email       VARCHAR(100) NOT NULL,
+    otp_hash    CHAR(64)     NOT NULL,
+    attempts    INT          NOT NULL DEFAULT 0,
+    is_used     BOOLEAN      NOT NULL DEFAULT FALSE,
+    expires_at  DATETIME     NOT NULL,
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_login_otp_email  (email, created_at),
+    INDEX idx_login_otp_user   (user_id, unit_db, is_used),
+    INDEX idx_login_otp_expiry (expires_at)
+);
+
+-- Password reset links (forgot password). Only the SHA-256 hash of the link
+-- token is stored; each link is single-use and short-lived.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    token_hash  CHAR(64)     NOT NULL UNIQUE,
+    user_id     INT          NOT NULL,
+    unit_db     VARCHAR(100) NOT NULL,
+    email       VARCHAR(100) NOT NULL,
+    is_used     BOOLEAN      NOT NULL DEFAULT FALSE,
+    expires_at  DATETIME     NOT NULL,
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_pwd_reset_email  (email, created_at),
+    INDEX idx_pwd_reset_user   (user_id, unit_db, is_used),
+    INDEX idx_pwd_reset_expiry (expires_at)
+);
+
+-- Failed sign-in counter per account identifier (unit scope + email/phone) for
+-- account lockout. Keyed the same whether or not the account exists, so a lockout
+-- never reveals which emails are registered.
+CREATE TABLE IF NOT EXISTS login_failures (
+    identifier      VARCHAR(255) NOT NULL PRIMARY KEY,
+    failed_count    INT          NOT NULL DEFAULT 0,
+    first_failed_at DATETIME     NOT NULL,
+    locked_until    DATETIME     NULL
+);
+
+-- Once-a-day background jobs (e.g. reminders). The primary key lets exactly one
+-- server process claim a given day's run, even with several pm2 workers.
+CREATE TABLE IF NOT EXISTS scheduled_job_runs (
+    job_name    VARCHAR(50)  NOT NULL,
+    run_date    DATE         NOT NULL,
+    started_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at DATETIME     NULL,
+    summary     VARCHAR(255) NULL,
+    PRIMARY KEY (job_name, run_date)
 );
 
 SET FOREIGN_KEY_CHECKS = 1;

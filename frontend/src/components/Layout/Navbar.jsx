@@ -10,6 +10,10 @@ import useTheme from '../../context/ThemeContext';
 import useWebNotification from '../../hooks/useWebNotification';
 
 
+// Roles that have an approvals inbox (same as the /approvals route guard in App.jsx).
+// The bell only shows that inbox, so other roles don't get a bell at all.
+const APPROVER_ROLES = ['unit_admin', 'employee'];
+
 const PAGE_NAMES = {
   '/dashboard':    'Dashboard',
   '/visitors':     'Visitors',
@@ -308,16 +312,15 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
   const [panelOpen,      setPanelOpen]      = useState(false);
   const [panelLoading,   setPanelLoading]   = useState(false);
 
+  const canApprove = APPROVER_ROLES.includes(user?.role_type || user?.role);
+
   const prevCountRef  = useRef(0);
   const bellRef       = useRef(null);
   const panelRef      = useRef(null);
 
   /* ── Fetch inbox ─────────────────────────────────────────────────────── */
   const fetchInbox = useCallback(async (showLoading = false) => {
-    if (!user) return;
-    const allowedRoles = ['unit_admin', 'employee'];
-    const userRole = user.role_type || user.role;
-    if (!allowedRoles.includes(userRole)) return;
+    if (!canApprove) return;
 
     if (showLoading) setPanelLoading(true);
     try {
@@ -332,7 +335,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
       setNotifications(items);
     } catch { /* silent */ }
     finally { if (showLoading) setPanelLoading(false); }
-  }, [user]);
+  }, [canApprove]);
 
   /* Initial load only — socket keeps it live after that */
   useEffect(() => {
@@ -582,6 +585,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
         </button>
 
         {/* Bell button + dropdown wrapper — position:relative so the panel stays within viewport */}
+        {canApprove && (
         <div style={{ position: 'relative' }}>
           <button
             ref={bellRef}
@@ -628,6 +632,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
             </div>
           )}
         </div>
+        )}
 
         {/* Divider */}
         <div className="w-px h-4 mx-1" style={{ background: 'var(--color-border)' }} />

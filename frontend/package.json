@@ -24,7 +24,7 @@
     "recharts": "^3.8.1",
     "socket.io-client": "^4.8.3",
     "uipro-cli": "^2.2.3",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -39,5 +39,8 @@
     "postcss": "^8.5.14",
     "tailwindcss": "^3.4.17",
     "vite": "^8.0.12"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.0"
   }
 }

@@ -484,8 +484,8 @@ const getUnitAuditLogs = async (req, res) => {
     const db = req.db;
     if (!db) return sendError(res, 'Unit DB not available.', 400);
 
-    const page   = Math.max(1, parseInt(req.query.page  || '1'));
-    const limit  = Math.min(100, parseInt(req.query.limit || '20'));
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const offset = (page - 1) * limit;
     const search = req.query.search?.trim();
     const module = req.query.module?.trim();
@@ -539,8 +539,8 @@ const getGlobalAuditLogs = async (req, res) => {
   try {
     const { centralPool, getPool } = require('../services/dbManager');
 
-    const page       = Math.max(1, parseInt(req.query.page   || '1'));
-    const limit      = Math.min(100, parseInt(req.query.limit || '20'));
+    const page       = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit      = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const offset     = (page - 1) * limit;
     const search     = req.query.search?.trim();
     const moduleFilter = req.query.module?.trim();
@@ -601,8 +601,6 @@ const getGlobalAuditLogs = async (req, res) => {
           const { where, params } = buildWhere('al');
           const [rows] = await pool.query(
             `SELECT al.id, al.user_id,
-                    '${unit.db_name}' AS unit_db,
-                    '${unit.unit_name.replace(/'/g, "''")}' AS unit_name,
                     al.action, al.module, al.record_type, al.record_id,
                     al.old_values, al.new_values,
                     al.ip_address, al.user_agent, al.created_at,
@@ -615,7 +613,8 @@ const getGlobalAuditLogs = async (req, res) => {
              LIMIT 2000`,
             params
           );
-          return rows;
+          // Unit identity added here rather than spliced into the SQL text
+          return rows.map(r => ({ ...r, unit_db: unit.db_name, unit_name: unit.unit_name }));
         } catch (unitErr) {
           console.warn(`[GlobalAuditLog] Skipping unit ${unit.db_name}:`, unitErr.message);
           return [];
@@ -717,7 +716,7 @@ const getGlobalSummary = async (req, res) => {
 const getGlobalRecentVisits = async (req, res) => {
   try {
     const { centralPool, getPool } = require('../services/dbManager');
-    const limit = Math.min(50, parseInt(req.query.limit || '15', 10));
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 15));
 
     const [units] = await centralPool.query(
       `SELECT db_name, name AS unit_name FROM units WHERE db_status = 'ACTIVE' AND is_active = 1`
@@ -766,10 +765,12 @@ const buildDateWhere = (conditions, params, from, to, alias = 'vr') => {
   if (to)   { conditions.push(`${alias}.visit_date <= ?`); params.push(to); }
 };
 
-// Helper: get pool + unit name for a specific unit_db
+// Helper: get pool + unit name for a specific unit_db (from ?unit_db=).
+// Returns null unless unit_db is an active registered unit — callers respond 404.
 const getScopedUnit = async (unit_db) => {
-  const { getPool, centralPool } = require('../services/dbManager');
-  const pool = getPool(unit_db);
+  const { getActiveUnitPoolByDbName, centralPool } = require('../services/dbManager');
+  const pool = await getActiveUnitPoolByDbName(unit_db);
+  if (!pool) return null;
   const [[unitRow]] = await centralPool.query('SELECT name FROM units WHERE db_name = ?', [unit_db]);
   return { pool, unitName: unitRow?.name ?? unit_db };
 };
@@ -798,8 +799,9 @@ const getMetaDepartments = async (req, res) => {
 
     let db = req.db;
     if (isCentral && unit_db) {
-      const { getPool } = require('../services/dbManager');
-      db = getPool(unit_db);
+      const { getActiveUnitPoolByDbName } = require('../services/dbManager');
+      db = await getActiveUnitPoolByDbName(unit_db);
+      if (!db) return sendError(res, 'Unit not found.', 404);
     } else if (isCentral && !unit_db) {
       return sendSuccess(res, []); // no unit selected yet
     }
@@ -822,8 +824,9 @@ const getMetaEmployees = async (req, res) => {
 
     let db = req.db;
     if (isCentral && unit_db) {
-      const { getPool } = require('../services/dbManager');
-      db = getPool(unit_db);
+      const { getActiveUnitPoolByDbName } = require('../services/dbManager');
+      db = await getActiveUnitPoolByDbName(unit_db);
+      if (!db) return sendError(res, 'Unit not found.', 404);
     } else if (isCentral && !unit_db) {
       return sendSuccess(res, []);
     }
@@ -890,7 +893,9 @@ const getEmployeeWiseReport = async (req, res) => {
       const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
       if (unit_db) {
-        const { pool, unitName } = await getScopedUnit(unit_db);
+        const scoped = await getScopedUnit(unit_db);
+        if (!scoped) return sendError(res, 'Unit not found.', 404);
+        const { pool, unitName } = scoped;
         const [[{ total }]] = await pool.query(
           `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN departments d ON d.id = vr.department_id ${where}`, params
         );
@@ -958,7 +963,9 @@ const getDepartmentWiseReport = async (req, res) => {
       const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
       if (unit_db) {
-        const { pool, unitName } = await getScopedUnit(unit_db);
+        const scoped = await getScopedUnit(unit_db);
+        if (!scoped) return sendError(res, 'Unit not found.', 404);
+        const { pool, unitName } = scoped;
         const [[{ total }]] = await pool.query(
           `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
         );
@@ -988,7 +995,8 @@ const getDepartmentWiseReport = async (req, res) => {
 // â”€â”€ GET /api/reports/unit-wise â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const getUnitWiseReport = async (req, res) => {
   try {
-    const { from, to, visitor_type, unit_db } = req.query;
+    // office_type: UNIT | CORPORATE | TRAINING_CENTRE | OTHER (tender 1.1.3: "Units / Corporate / Training Centre wise")
+    const { from, to, visitor_type, unit_db, office_type } = req.query;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConds = () => {
@@ -1006,11 +1014,15 @@ const getUnitWiseReport = async (req, res) => {
 
     if (isCentral) {
       const { queryAllUnits, centralPool } = require('../services/dbManager');
-      const [allUnits] = await centralPool.query(`SELECT id, name, db_name, db_status FROM units WHERE is_active = 1`);
+      const [allUnits] = await centralPool.query(`SELECT id, name, type, db_name, db_status FROM units WHERE is_active = 1`);
+      const typeByDb  = Object.fromEntries(allUnits.map(u => [u.db_name, u.type || 'UNIT']));
+      const unitsMeta = allUnits.map(u => ({ id: u.id, name: u.name, db_name: u.db_name, status: u.db_status, office_type: u.type || 'UNIT' }));
 
       if (unit_db) {
         // Single unit: per-dept breakdown
-        const { pool, unitName } = await getScopedUnit(unit_db);
+        const scoped = await getScopedUnit(unit_db);
+        if (!scoped) return sendError(res, 'Unit not found.', 404);
+        const { pool, unitName } = scoped;
         const { conditions, params } = buildCondsAliased();
         const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
         const [rows] = await pool.query(
@@ -1020,23 +1032,27 @@ const getUnitWiseReport = async (req, res) => {
           params
         );
         return sendSuccess(res, {
-          rows: [{ unit_name: unitName, unit_db, breakdown: rows, total: rows.reduce((s, r) => s + Number(r.count), 0) }],
-          units: allUnits.map(u => ({ id: u.id, name: u.name, db_name: u.db_name, status: u.db_status })),
+          rows: [{ unit_name: unitName, unit_db, office_type: typeByDb[unit_db] || 'UNIT', breakdown: rows, total: rows.reduce((s, r) => s + Number(r.count), 0) }],
+          units: unitsMeta,
         });
       }
 
-      // Fan-out: one card per unit
+      // Fan-out: one card per unit (optionally only one office type)
       const { conditions, params } = buildConds();
       const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
       const fanned = await queryAllUnits(
         `SELECT visit_category, status, COUNT(*) AS count FROM visit_requests ${where} GROUP BY visit_category, status`, params
       );
-      const rows = fanned.map(r => ({
-        unit_name: r.unit_name, unit_db: r.unit_db,
-        breakdown: r.rows,
-        total: r.rows.reduce((s, row) => s + Number(row.count), 0),
-      })).sort((a, b) => b.total - a.total);
-      return sendSuccess(res, { rows, units: allUnits.map(u => ({ id: u.id, name: u.name, db_name: u.db_name, status: u.db_status })) });
+      const rows = fanned
+        .map(r => ({
+          unit_name: r.unit_name, unit_db: r.unit_db,
+          office_type: typeByDb[r.unit_db] || 'UNIT',
+          breakdown: r.rows,
+          total: r.rows.reduce((s, row) => s + Number(row.count), 0),
+        }))
+        .filter(r => !office_type || r.office_type === office_type)
+        .sort((a, b) => b.total - a.total);
+      return sendSuccess(res, { rows, units: unitsMeta });
     }
 
     // Unit-level: dept breakdown (no unit filter)
@@ -1059,9 +1075,13 @@ const getUnitWiseReport = async (req, res) => {
 };
 
 // â”€â”€ GET /api/reports/rejected â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// A request refused by security at the gate has a gate_rejections row; it is shown
+// as status NOT_ALLOWED (vs REJECTED = declined by the host/admin).
+const GATE_REJECTED_SQL = 'EXISTS (SELECT 1 FROM gate_rejections gr WHERE gr.visit_request_id = vr.id)';
+
 const getRejectedReport = async (req, res) => {
   try {
-    const { from, to, visitor_type, department_id, unit_db, search, page = 1, limit = 50 } = req.query;
+    const { from, to, visitor_type, department_id, unit_db, search, status, page = 1, limit = 50 } = req.query;
     const parsedLimit  = Math.min(200, parseInt(limit, 10) || 50);
     const parsedOffset = (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
@@ -1069,6 +1089,10 @@ const getRejectedReport = async (req, res) => {
     const buildConditions = () => {
       const conditions = ["vr.status IN ('REJECTED','CANCELLED')"];
       const params     = [];
+      // ?status= REJECTED (by host/admin) | NOT_ALLOWED (refused at the gate) | CANCELLED
+      if (status === 'NOT_ALLOWED')  conditions.push(GATE_REJECTED_SQL);
+      else if (status === 'REJECTED')  conditions.push(`vr.status = 'REJECTED' AND NOT ${GATE_REJECTED_SQL}`);
+      else if (status === 'CANCELLED') conditions.push("vr.status = 'CANCELLED'");
       buildDateWhere(conditions, params, from, to);
       if (visitor_type)  { conditions.push('vr.visit_category = ?'); params.push(visitor_type); }
       if (department_id) { conditions.push('vr.department_id = ?');  params.push(department_id); }
@@ -1079,10 +1103,19 @@ const getRejectedReport = async (req, res) => {
       return { conditions, params };
     };
 
+    // status: NOT_ALLOWED when refused at the gate; rejection_reason: the gate's
+    // reason, else the host/admin's rejection remarks
     const SELECT = `
       SELECT
         vr.id, vr.visitor_name, vr.visitor_phone, vr.visitor_email,
-        vr.visit_date, vr.visit_category, vr.purpose, vr.status,
+        vr.visit_date, vr.visit_category, vr.purpose,
+        CASE WHEN ${GATE_REJECTED_SQL} THEN 'NOT_ALLOWED' ELSE vr.status END AS status,
+        COALESCE(
+          (SELECT gr.rejection_reason FROM gate_rejections gr
+            WHERE gr.visit_request_id = vr.id ORDER BY gr.rejected_at DESC LIMIT 1),
+          (SELECT ah.remarks FROM approval_history ah
+            WHERE ah.visit_request_id = vr.id AND ah.action = 'REJECTED' ORDER BY ah.created_at DESC LIMIT 1)
+        ) AS rejection_reason,
         d.name AS department_name,
         h.full_name AS host_name,
         vr.created_at
@@ -1096,7 +1129,9 @@ const getRejectedReport = async (req, res) => {
       const where = `WHERE ${conditions.join(' AND ')}`;
 
       if (unit_db) {
-        const { pool, unitName } = await getScopedUnit(unit_db);
+        const scoped = await getScopedUnit(unit_db);
+        if (!scoped) return sendError(res, 'Unit not found.', 404);
+        const { pool, unitName } = scoped;
         const [[{ total }]] = await pool.query(
           `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
         );
@@ -1120,6 +1155,69 @@ const getRejectedReport = async (req, res) => {
   } catch (err) {
     console.error('[ReportController] getRejectedReport error:', err.message);
     return sendError(res, 'Failed to fetch rejected report.', 500);
+  }
+};
+
+// ── GET /api/reports/debarred ─────────────────────────────────────────────────
+/**
+ * Debarred (blacklisted) visitors — tender 1.1.3 "Debarred Visitors".
+ * Filters: from/to (date debarred), status ACTIVE | LIFTED, search (name/phone/reason).
+ * Central users: ?unit_db= for one unit, otherwise fans out across all units.
+ */
+const getDebarredReport = async (req, res) => {
+  try {
+    const { from, to, unit_db, search, status, page = 1, limit = 50 } = req.query;
+    const parsedLimit  = Math.min(200, parseInt(limit, 10) || 50);
+    const parsedOffset = (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
+
+    const conditions = [];
+    const params     = [];
+    if (from) { conditions.push('DATE(bv.blacklisted_at) >= ?'); params.push(from); }
+    if (to)   { conditions.push('DATE(bv.blacklisted_at) <= ?'); params.push(to); }
+    if (status === 'ACTIVE') conditions.push('bv.is_active = TRUE');
+    if (status === 'LIFTED') conditions.push('bv.is_active = FALSE');
+    if (search) {
+      conditions.push('(v.full_name LIKE ? OR v.phone LIKE ? OR bv.reason LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const FROM = `
+      FROM blacklisted_visitors bv
+      JOIN visitors v        ON v.id  = bv.visitor_id
+      LEFT JOIN users ub     ON ub.id = bv.blacklisted_by
+      LEFT JOIN users ul     ON ul.id = bv.lifted_by`;
+    const SELECT = `
+      SELECT bv.id, bv.visitor_id, v.full_name AS visitor_name, v.phone AS visitor_phone, v.email AS visitor_email,
+             bv.reason, bv.blacklisted_at, ub.full_name AS debarred_by_name,
+             CASE WHEN bv.is_active THEN 'ACTIVE' ELSE 'LIFTED' END AS status,
+             bv.lifted_at, bv.lift_reason, ul.full_name AS lifted_by_name
+      ${FROM}`;
+
+    if (isCentral) {
+      const { queryAllUnits } = require('../services/dbManager');
+      if (unit_db) {
+        const scoped = await getScopedUnit(unit_db);
+        if (!scoped) return sendError(res, 'Unit not found.', 404);
+        const { pool, unitName } = scoped;
+        const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${FROM} ${where}`, params);
+        const [rows] = await pool.query(`${SELECT} ${where} ORDER BY bv.blacklisted_at DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+      }
+      const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY bv.blacklisted_at DESC`, params);
+      let rows = [];
+      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name })));
+      rows.sort((a, b) => new Date(b.blacklisted_at) - new Date(a.blacklisted_at));
+      return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
+    }
+
+    const [[{ total }]] = await req.db.query(`SELECT COUNT(*) AS total ${FROM} ${where}`, params);
+    const [rows] = await req.db.query(`${SELECT} ${where} ORDER BY bv.blacklisted_at DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
+    return sendSuccess(res, { rows, total: Number(total), page: parseInt(page), limit: parsedLimit });
+  } catch (err) {
+    console.error('[ReportController] getDebarredReport error:', err.message);
+    return sendError(res, 'Failed to fetch debarred visitors report.', 500);
   }
 };
 
@@ -1151,7 +1249,9 @@ const getActiveExpectedReport = async (req, res) => {
       const { c: eC, p: eP } = mkExpected();
 
       if (unit_db) {
-        const { pool, unitName } = await getScopedUnit(unit_db);
+        const scoped = await getScopedUnit(unit_db);
+        if (!scoped) return sendError(res, 'Unit not found.', 404);
+        const { pool, unitName } = scoped;
         const [expected] = await pool.query(`${ESEL} WHERE ${eC.join(' AND ')} ORDER BY vr.visit_start_time ASC`, eP);
         return sendSuccess(res, {
           active:   [],
@@ -1213,7 +1313,9 @@ const getDetailedVisitHistory = async (req, res) => {
       const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
       if (unit_db) {
-        const { pool, unitName } = await getScopedUnit(unit_db);
+        const scoped = await getScopedUnit(unit_db);
+        if (!scoped) return sendError(res, 'Unit not found.', 404);
+        const { pool, unitName } = scoped;
         const [[{ total }]] = await pool.query(
       `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN visit_logs vl ON vl.visit_request_id = vr.id AND vl.status = 'ACTIVE' ${where}`, params
         );
@@ -1249,6 +1351,6 @@ module.exports = {
   getMetaUnits, getMetaDepartments, getMetaEmployees,
   // Tabbed data report endpoints
   getEmployeeWiseReport, getDepartmentWiseReport, getUnitWiseReport,
-  getRejectedReport, getActiveExpectedReport, getDetailedVisitHistory,
+  getRejectedReport, getDebarredReport, getActiveExpectedReport, getDetailedVisitHistory,
 };
 

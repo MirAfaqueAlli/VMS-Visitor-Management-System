@@ -33,8 +33,10 @@ export default function RequestList() {
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
 
-  // Only security/admin/receptionist can view the gate pass
-  const canViewPass = ['security', 'unit_admin', 'super_admin', 'receptionist'].includes(user?.role_type);
+  // Only unit gate staff can view the gate pass / create requests
+  // (super_admin is read-only inside a unit — the API enforces the same)
+  const canViewPass = ['security', 'unit_admin', 'receptionist'].includes(user?.role_type);
+  const canCreate   = ['unit_admin', 'employee', 'security', 'receptionist'].includes(user?.role_type);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState("");
@@ -89,13 +91,15 @@ export default function RequestList() {
             Visit Requests
           </h1>
         </div>
-        <Link
-          to="/requests/new"
-          className="btn-primary px-4 py-2 text-xs"
-        >
-          <Plus className="w-4 h-4" />
-          New Request
-        </Link>
+        {canCreate && (
+          <Link
+            to="/requests/new"
+            className="btn-primary px-4 py-2 text-xs"
+          >
+            <Plus className="w-4 h-4" />
+            New Request
+          </Link>
+        )}
       </div>
 
       <div className="vms-card rounded-md p-6 mb-8 ">
@@ -188,7 +192,7 @@ export default function RequestList() {
               ) : (
                 requests.map((request) => (
                   <tr
-                    key={request.id}
+                    key={`${request._cross_unit_id ?? "own"}-${request.id}`}
                     className="border-b border-subtle hover:bg-bg-primary/50 transition-colors duration-300"
                   >
                     <td className="py-4 px-4">
@@ -253,7 +257,12 @@ export default function RequestList() {
                             </button>
                           )}
                         <button
-                          onClick={() => navigate(`/requests/${request.id}`)}
+                          onClick={() => navigate(
+                            // Cross-unit rows live in another unit's DB — tell the detail page which one
+                            request._cross_unit_id
+                              ? `/requests/${request.id}?unit_id=${request._cross_unit_id}`
+                              : `/requests/${request.id}`
+                          )}
                           className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300"
                           title="View Details"
                         >

@@ -3,7 +3,7 @@ import {
   BarChart2, Users, Building2, Building, ShieldOff, Activity,
   Clock, Download, Filter, Search, ChevronLeft, ChevronRight,
   RefreshCw, FileSpreadsheet, FileText, ChevronDown, Loader2,
-  TrendingUp, Eye,
+  TrendingUp, Eye, UserX,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -15,6 +15,7 @@ import autoTable from 'jspdf-autotable';
 import apiClient from '../../api/axios';
 import toast from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
+import { OFFICE_TYPES, officeTypeLabel } from '../../utils/officeTypes';
 
 const getISTDateString = (d = new Date()) => {
   return new Intl.DateTimeFormat('en-CA', {
@@ -43,6 +44,8 @@ const STATUS_BADGE = {
   NOT_ALLOWED: { bg: 'var(--color-error-bg)',   color: 'var(--color-error)'   },
   ACTIVE:      { bg: 'var(--color-success-bg)', color: 'var(--color-success)' },
   EXPECTED:    { bg: 'var(--color-info-bg)',    color: 'var(--color-info)'    },
+  DEBARRED:    { bg: 'var(--color-error-bg)',   color: 'var(--color-error)'   },
+  LIFTED:      { bg: 'var(--color-muted-bg)',   color: 'var(--color-muted)'   },
 };
 
 const CHART_COLORS = ['#6366f1', '#22d3ee', '#f59e0b', '#10b981', '#f43f5e', '#a78bfa', '#34d399'];
@@ -64,6 +67,21 @@ const VISIT_STATUSES = [
   { value: 'COMPLETED',   label: 'Completed' },
   { value: 'CANCELLED',   label: 'Cancelled' },
   { value: 'NOT_ALLOWED', label: 'Not Allowed' },
+];
+
+// Rejected tab: REJECTED = declined by host/admin, NOT_ALLOWED = refused at the gate
+const REJECTION_STATUSES = [
+  { value: '',            label: 'All' },
+  { value: 'REJECTED',    label: 'Rejected by Host' },
+  { value: 'NOT_ALLOWED', label: 'Not Allowed (Gate)' },
+  { value: 'CANCELLED',   label: 'Cancelled' },
+];
+
+// Debarred tab: ACTIVE = currently debarred, LIFTED = debarment lifted
+const DEBAR_STATUSES = [
+  { value: '',       label: 'All' },
+  { value: 'ACTIVE', label: 'Currently Debarred' },
+  { value: 'LIFTED', label: 'Lifted' },
 ];
 
 // ─────────────────────────── helpers ─────────────────────────────────────────
@@ -313,7 +331,8 @@ function ReportTable({ cols, rows, loading, page, setPage, totalPages, emptyMsg 
 
 // ─────────────────────────── common filter bar ───────────────────────────────
 function FilterBar({ from, setFrom, to, setTo, visitorType, setVisitorType, search, setSearch,
-  status, setStatus, showStatus = false, onApply, loading,
+  status, setStatus, showStatus = false, statusOptions = VISIT_STATUSES, showVisitorType = true,
+  onApply, loading,
   cascadeFilters, isCentral, showDept = false, showEmp = false,
   onExcelExport, onPdfExport }) {
   return (
@@ -328,19 +347,21 @@ function FilterBar({ from, setFrom, to, setTo, visitorType, setVisitorType, sear
         <input type="date" value={to} onChange={e => setTo(e.target.value)}
           className="flex-1 min-w-[130px] px-3 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50" />
 
-        <div className="relative flex-1 min-w-[140px]">
-          <select value={visitorType} onChange={e => setVisitorType(e.target.value)}
-            className="block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer">
-            {VISITOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
-        </div>
+        {showVisitorType && (
+          <div className="relative flex-1 min-w-[140px]">
+            <select value={visitorType} onChange={e => setVisitorType(e.target.value)}
+              className="block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer">
+              {VISITOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
+          </div>
+        )}
 
         {showStatus && (
           <div className="relative flex-1 min-w-[140px]">
             <select value={status} onChange={e => setStatus(e.target.value)}
               className="block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer">
-              {VISIT_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              {statusOptions.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
             <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
           </div>
@@ -534,6 +555,7 @@ function UnitReport({ isCentral }) {
   const [from, setFrom]   = useState('');
   const [to,   setTo]     = useState('');
   const [visitorType, setVisitorType] = useState('');
+  const [officeType, setOfficeType]   = useState('');   // Unit / Corporate / Training Centre
   const [search, setSearch] = useState('');
   const [data,    setData]    = useState(null);   // { rows: [], units: [] }
   const [loading, setLoading] = useState(false);
@@ -545,6 +567,7 @@ function UnitReport({ isCentral }) {
       if (from) params.from = from;
       if (to)   params.to   = to;
       if (visitorType) params.visitor_type = visitorType;
+      if (officeType)  params.office_type  = officeType;
       if (cf.selUnit)  params.unit_db = cf.selUnit;
       const r = await apiClient.get('/reports/unit-wise', { params });
       setData(r.data?.data);
@@ -553,7 +576,7 @@ function UnitReport({ isCentral }) {
     } finally {
       setLoading(false);
     }
-  }, [from, to, visitorType, cf.selUnit]);
+  }, [from, to, visitorType, officeType, cf.selUnit]);
 
   useEffect(() => { fetch(); }, [fetch]);
 
@@ -593,12 +616,22 @@ function UnitReport({ isCentral }) {
   // Global: unit cards
   const unitRows = data?.rows ?? [];
   const expCols = [
-    { header: 'Unit',  accessor: r => r.unit_name },
-    { header: 'Total', accessor: r => r.total },
+    { header: 'Unit',        accessor: r => r.unit_name },
+    { header: 'Office Type', accessor: r => officeTypeLabel(r.office_type) },
+    { header: 'Total',       accessor: r => r.total },
   ];
 
   return (
     <div>
+      {/* Office type (tender 1.1.3: Units / Corporate / Training Centre wise) */}
+      <div className="relative mb-3 max-w-xs">
+        <select value={officeType} onChange={e => setOfficeType(e.target.value)}
+          className="block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer">
+          <option value="">All Office Types</option>
+          {OFFICE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
+      </div>
       <FilterBar
         from={from} setFrom={setFrom} to={to} setTo={setTo}
         visitorType={visitorType} setVisitorType={setVisitorType}
@@ -617,7 +650,10 @@ function UnitReport({ isCentral }) {
           {unitRows.map((u, i) => (
             <div key={u.unit_name} className="vms-card rounded-lg p-5">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="font-semibold text-loud text-sm">{u.unit_name}</h4>
+                <div>
+                  <h4 className="font-semibold text-loud text-sm">{u.unit_name}</h4>
+                  <p className="text-[11px] text-faint">{officeTypeLabel(u.office_type)}</p>
+                </div>
                 <span className="text-2xl font-bold text-accent">{u.total}</span>
               </div>
               <div className="space-y-1.5">
@@ -645,6 +681,7 @@ function RejectedReport({ isCentral }) {
   const [from, setFrom]   = useState('');
   const [to,   setTo]     = useState('');
   const [visitorType, setVisitorType] = useState('');
+  const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(false);
@@ -659,6 +696,7 @@ function RejectedReport({ isCentral }) {
       if (from) params.from = from;
       if (to)   params.to   = to;
       if (visitorType) params.visitor_type  = visitorType;
+      if (status)      params.status        = status;
       if (search)      params.search        = search;
       if (cf.selUnit)  params.unit_db       = cf.selUnit;
       if (cf.selDept)  params.department_id = cf.selDept;
@@ -670,7 +708,7 @@ function RejectedReport({ isCentral }) {
     } finally {
       setLoading(false);
     }
-  }, [page, from, to, visitorType, search, cf.selUnit, cf.selDept]);
+  }, [page, from, to, visitorType, status, search, cf.selUnit, cf.selDept]);
 
   useEffect(() => { fetch(); }, [fetch]);
 
@@ -682,7 +720,7 @@ function RejectedReport({ isCentral }) {
     { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
     { key: 'visit_date',      label: 'Date',       render: r => fmt(r.visit_date) },
     { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
-    { key: 'rejection_reason', label: 'Reason',    render: r => <span className="text-xs text-muted max-w-[200px] line-clamp-2">{r.purpose || '—'}</span> },
+    { key: 'rejection_reason', label: 'Reason',    render: r => <span className="text-xs text-muted max-w-[200px] line-clamp-2">{r.rejection_reason || '—'}</span> },
   ].filter(Boolean);
 
   const expCols = [
@@ -693,8 +731,9 @@ function RejectedReport({ isCentral }) {
     { header: 'Host',             accessor: r => r.host_name },
     { header: 'Type',             accessor: r => CATEGORY_LABELS[r.visit_category] ?? r.visit_category },
     { header: 'Date',             accessor: r => fmt(r.visit_date) },
-    { header: 'Status',           accessor: r => r.status },
-    { header: 'Purpose',            accessor: r => r.purpose },
+    { header: 'Status',           accessor: r => r.status?.replace(/_/g, ' ') },
+    { header: 'Reason',           accessor: r => r.rejection_reason },
+    { header: 'Purpose',          accessor: r => r.purpose },
   ].filter(Boolean);
 
   return (
@@ -702,6 +741,7 @@ function RejectedReport({ isCentral }) {
       <FilterBar
         from={from} setFrom={setFrom} to={to} setTo={setTo}
         visitorType={visitorType} setVisitorType={setVisitorType}
+        status={status} setStatus={setStatus} showStatus statusOptions={REJECTION_STATUSES}
         search={search} setSearch={setSearch}
         onApply={() => { setPage(1); fetch(); }} loading={loading}
         cascadeFilters={cf} isCentral={isCentral} showDept
@@ -711,6 +751,82 @@ function RejectedReport({ isCentral }) {
       <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
         page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} />
+    </div>
+  );
+}
+
+// ─── Debarred Visitors Report ─────────────────────────────────────────────────
+function DebarredReport({ isCentral }) {
+  const cf = useCascadeFilters(isCentral);
+  const [from, setFrom]     = useState('');
+  const [to,   setTo]       = useState('');
+  const [status, setStatus] = useState('ACTIVE');
+  const [search, setSearch] = useState('');
+  const [rows,    setRows]    = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage]   = useState(1);
+  const [total, setTotal] = useState(0);
+  const limit = 50;
+
+  const fetch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = { page, limit };
+      if (from)       params.from    = from;
+      if (to)         params.to      = to;
+      if (status)     params.status  = status;
+      if (search)     params.search  = search;
+      if (cf.selUnit) params.unit_db = cf.selUnit;
+      const r = await apiClient.get('/reports/debarred', { params });
+      setRows(r.data?.data?.rows ?? []);
+      setTotal(r.data?.data?.total ?? 0);
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Failed to load debarred visitors.');
+    } finally {
+      setLoading(false);
+    }
+  }, [page, from, to, status, search, cf.selUnit]);
+
+  useEffect(() => { fetch(); }, [fetch]);
+
+  const cols = [
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted text-xs">{r.unit_name}</span> },
+    { key: 'visitor_name',     label: 'Visitor',     render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
+    { key: 'reason',           label: 'Reason',      render: r => <span className="text-xs text-muted max-w-[220px] line-clamp-2">{r.reason || '—'}</span> },
+    { key: 'blacklisted_at',   label: 'Debarred On', render: r => fmt(r.blacklisted_at) },
+    { key: 'debarred_by_name', label: 'Debarred By', render: r => r.debarred_by_name || '—' },
+    { key: 'status',           label: 'Status',      render: r => <SBadge status={r.status === 'ACTIVE' ? 'DEBARRED' : 'LIFTED'} /> },
+    { key: 'lifted_at',        label: 'Lifted',      render: r => r.lifted_at ? <div><div>{fmt(r.lifted_at)}</div><div className="text-xs text-faint line-clamp-1">{r.lift_reason || ''}</div></div> : '—' },
+  ].filter(Boolean);
+
+  const expCols = [
+    isCentral && { header: 'Unit', accessor: r => r.unit_name },
+    { header: 'Visitor Name',  accessor: r => r.visitor_name },
+    { header: 'Visitor Phone', accessor: r => r.visitor_phone },
+    { header: 'Reason',        accessor: r => r.reason },
+    { header: 'Debarred On',   accessor: r => fmt(r.blacklisted_at) },
+    { header: 'Debarred By',   accessor: r => r.debarred_by_name },
+    { header: 'Status',        accessor: r => (r.status === 'ACTIVE' ? 'Debarred' : 'Lifted') },
+    { header: 'Lifted On',     accessor: r => (r.lifted_at ? fmt(r.lifted_at) : '') },
+    { header: 'Lift Reason',   accessor: r => r.lift_reason },
+  ].filter(Boolean);
+
+  return (
+    <div>
+      <FilterBar
+        from={from} setFrom={setFrom} to={to} setTo={setTo}
+        showVisitorType={false}
+        status={status} setStatus={setStatus} showStatus statusOptions={DEBAR_STATUSES}
+        search={search} setSearch={setSearch}
+        onApply={() => { setPage(1); fetch(); }} loading={loading}
+        cascadeFilters={cf} isCentral={isCentral}
+        onExcelExport={() => exportExcel(rows, expCols, 'debarred_visitors_report')}
+        onPdfExport={() => exportPDF(rows, expCols, 'Debarred Visitors', 'debarred_visitors_report')}
+      />
+      <p className="text-xs text-muted mb-3">{total} records total</p>
+      <ReportTable cols={cols} rows={rows} loading={loading}
+        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)}
+        emptyMsg="No debarred visitors." />
     </div>
   );
 }
@@ -1022,6 +1138,7 @@ const TABS = [
   { id: 'dept',     label: 'Dept-wise',     icon: Building2 },
   { id: 'unit',     label: 'Unit/Office',   icon: Building },
   { id: 'rejected', label: 'Rejected',      icon: ShieldOff },
+  { id: 'debarred', label: 'Debarred',      icon: UserX },
   { id: 'active',   label: 'Expected Visitors', icon: Activity },
   { id: 'history',  label: 'Visit History', icon: Clock },
 ];
@@ -1088,6 +1205,7 @@ export default function Reports() {
           {activeTab === 'dept'     && <DepartmentReport isCentral={isCentral} />}
           {activeTab === 'unit'     && <UnitReport       isCentral={isCentral} />}
           {activeTab === 'rejected' && <RejectedReport   isCentral={isCentral} />}
+          {activeTab === 'debarred' && <DebarredReport   isCentral={isCentral} />}
           {activeTab === 'active'   && <ActiveExpectedReport isCentral={isCentral} />}
           {activeTab === 'history'  && <VisitHistoryReport   isCentral={isCentral} />}
         </div>

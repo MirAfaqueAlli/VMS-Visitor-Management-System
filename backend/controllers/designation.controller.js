@@ -2,7 +2,7 @@
 'use strict';
 
 const { sendSuccess, sendError } = require('../utils/response.util');
-const { logAudit }               = require('../utils/auditLogger.util');
+const { logAudit, auditActor } = require('../utils/auditLogger.util');
 
 // ── List Designations for a Department ────────────────────────────────────────
 /**
@@ -75,8 +75,7 @@ const bulkCreateDesignations = async (req, res) => {
     }
 
     await logAudit({
-      db:        req.db,
-      userId:    req.user.id,
+      ...auditActor(req), // central users → global audit log (see auditActor)
       action:    'BULK_CREATE_DESIGNATIONS',
       module:    'ADMIN',
       recordType: 'DESIGNATION',

@@ -84,7 +84,10 @@ export default function Profile() {
     }
     setPwLoading(true);
     try {
-      await apiClient.put('/auth/change-password', { currentPassword, newPassword });
+      const res = await apiClient.put('/auth/change-password', { currentPassword, newPassword });
+      // Changing the password signs out all older sessions — keep this one on the fresh token
+      const freshToken = res.data?.data?.token;
+      if (freshToken) localStorage.setItem('vms_token', freshToken);
       toast.success('Password updated successfully.');
       setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
     } catch (err) {

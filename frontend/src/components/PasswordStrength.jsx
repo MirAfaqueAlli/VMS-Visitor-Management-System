@@ -10,11 +10,20 @@ const STRENGTH_LABELS = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
  * Props:
  *   - password: string
  *   - show: boolean (optional, default true) — whether to show the checklist
+ *   - hideWhenValid: boolean (optional) — once every rule passes, replace the
+ *     bar + checklist with a single "all requirements met" line
  */
-export default function PasswordStrength({ password, show = true }) {
+export default function PasswordStrength({ password, show = true, hideWhenValid = false }) {
   if (!password || !show) return null;
 
-  const { results } = validatePassword(password);
+  const { valid, results } = validatePassword(password);
+  if (hideWhenValid && valid) {
+    return (
+      <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold animate-fade-in" style={{ color: '#16a34a' }}>
+        <span style={{ fontSize: '10px' }}>✓</span> Strong password — all requirements met
+      </p>
+    );
+  }
   const strength    = getPasswordStrength(password);
   const barColor    = STRENGTH_COLORS[Math.max(strength - 1, 0)];
   const label       = STRENGTH_LABELS[Math.max(strength - 1, 0)];

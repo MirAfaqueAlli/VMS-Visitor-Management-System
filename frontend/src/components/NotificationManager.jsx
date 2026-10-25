@@ -20,6 +20,12 @@ import useSocketEvent from '../hooks/useSocketEvent';
 import useWebNotification from '../hooks/useWebNotification';
 import useAuth from '../hooks/useAuth';
 
+// Request detail link; cross_unit_id = the request lives in another unit's DB
+const requestLink = (data) => {
+  const base = `/requests/${data.visit_request_id ?? ''}`;
+  return data.cross_unit_id ? `${base}?unit_id=${data.cross_unit_id}` : base;
+};
+
 export default function NotificationManager() {
   const { notify } = useWebNotification();
   const { isSecurity, isReceptionist } = useAuth();
@@ -55,7 +61,7 @@ export default function NotificationManager() {
     const body   = isSpot
       ? `The spot visit you initiated has been approved${data.approved_by ? ` by ${data.approved_by}` : ''}.`
       : `Your visit on ${data.visit_date ?? ''} has been approved${data.approved_by ? ` by ${data.approved_by}` : ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`;
-    notify(title, body, makeOpts('visit-approved', `/requests/${data.visit_request_id ?? ''}`));
+    notify(title, body, makeOpts('visit-approved', requestLink(data)));
   }, [notify]), [notify]);
 
   // ── Request rejected ────────────────────────────────────────────────────
@@ -67,7 +73,7 @@ export default function NotificationManager() {
       ? `The spot visit you initiated was rejected${data.remarks ? `: "${data.remarks}"` : '.'}`
       : `Your visit request was rejected${data.remarks ? `: "${data.remarks}"` : '.'}`;
     notify(title, body, {
-      ...makeOpts('visit-rejected', `/requests/${data.visit_request_id ?? ''}`),
+      ...makeOpts('visit-rejected', requestLink(data)),
       requireInteraction: true,
     });
   }, [notify]), [notify]);

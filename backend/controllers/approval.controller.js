@@ -8,6 +8,8 @@ const { logAudit } = require('../utils/auditLogger.util');
 const { generateGatePass } = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
+const { getSignedFileUrl } = require('../utils/s3.util');
+const { centralPool, getPool } = require('../services/dbManager');
 // ── Inline schedule conflict check for the approval flow ─────────────────────
 // Checks if the host already has another APPROVED visit overlapping the given time.
 const checkApprovalConflict = async (db, hostUserId, visitDate, startTime, endTime, excludeRequestId) => {
@@ -44,6 +46,61 @@ const getISTDateString = (d = new Date()) => {
   }).format(d);
 };
 
+/**
+ * Cross-unit EMPLOYEE_VISIT: the requester is an employee of another unit, stored
+ * as cross_unit_requester_id + requester_unit_id (not requester_user_id). Tell them
+ * the outcome in THEIR unit: dashboard + live socket event, and email unless they
+ * already got the visitor email (same address). Never throws.
+ */
+async function notifyCrossUnitRequester(request, { approved, actorName, remarks = null, passResult = null }) {
+  if (!request.cross_unit_requester_id || !request.requester_unit_id) return;
+  try {
+    const [units] = await centralPool.query(
+      "SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = 'ACTIVE' LIMIT 1",
+      [request.requester_unit_id]
+    );
+    if (!units.length) return;
+    const requesterDbName = units[0].db_name;
+    const requesterDb     = getPool(requesterDbName);
+    const [[requester]] = await requesterDb.query(
+      'SELECT id, full_name, email FROM users WHERE id = ? AND is_active = 1 AND deleted_at IS NULL',
+      [request.cross_unit_requester_id]
+    );
+    if (!requester) return;
+
+    const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
+    const message = approved
+      ? `Your visit request on ${request.visit_date}${timeStr} has been APPROVED by ${actorName}.${passResult?.pass_number ? ` Gate pass: ${passResult.pass_number}` : ''}`
+      : `Your visit request on ${request.visit_date}${timeStr} has been REJECTED by ${actorName}. Reason: ${remarks}`;
+
+    // visit_request_id stays NULL: the request lives in the other unit's DB
+    await sendNotification({ db: requesterDb, recipientUserId: requester.id, type: 'DASHBOARD', message });
+    emitToUser(requester.id, requesterDbName, approved ? 'visit:approved' : 'visit:rejected', {
+      visit_request_id: request.id,
+      visit_date:       request.visit_date,
+      visit_category:   request.visit_category,
+      cross_unit_id:    request.unit_id,
+      ...(approved ? { approved_by: actorName, pass_number: passResult?.pass_number || null } : { rejected_by: actorName, remarks }),
+    });
+
+    if (requester.email && requester.email !== request.visitor_email) {
+      if (approved) {
+        const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
+        const tmpl = emailService.visitApprovedTemplate(
+          requester.full_name, actorName, request.visit_date, '', passResult?.pass_number || null,
+          qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null, request.visit_start_time || null
+        );
+        await sendNotification({ db: requesterDb, recipientUserId: requester.id, recipientEmail: requester.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
+      } else {
+        const tmpl = emailService.visitRejectedTemplate(requester.full_name, actorName, request.visit_date, remarks, request.visit_start_time || null);
+        await sendNotification({ db: requesterDb, recipientUserId: requester.id, recipientEmail: requester.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
+      }
+    }
+  } catch (err) {
+    console.error('[ApprovalController] Cross-unit requester notification failed:', err.message);
+  }
+}
+
 
 // ── getInbox ──────────────────────────────────────────────────────────────────
 /**
@@ -68,8 +125,8 @@ const getInbox = async (req, res) => {
     }
 
     // Pagination params
-    const page = Math.max(1, parseInt(req.query.page || '1', 10));
-    const limit = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const offset = (page - 1) * limit;
 
     const conditions = ["vr.status = 'PENDING'"];
@@ -177,14 +234,21 @@ const approveRequest = async (req, res) => {
     }
 
     await conn.beginTransaction();
+    // Conditional update first: only one of two simultaneous approve/reject
+    // clicks can move the request out of PENDING
+    const [updated] = await conn.query(
+      "UPDATE visit_requests SET status = 'APPROVED', approved_by = ?, approved_at = NOW(), updated_at = NOW() WHERE id = ? AND status = 'PENDING'",
+      [user.id, id]
+    );
+    if (updated.affectedRows === 0) {
+      await conn.rollback();
+      conn.release();
+      return sendError(res, 'This request has already been actioned.', 409);
+    }
     await conn.query(
       `INSERT INTO approval_history (visit_request_id, acted_by_user_id, action, remarks, created_at)
        VALUES (?, ?, 'APPROVED', ?, NOW())`,
       [id, user.id, remarks || null]
-    );
-    await conn.query(
-      "UPDATE visit_requests SET status = 'APPROVED', approved_by = ?, approved_at = NOW(), updated_at = NOW() WHERE id = ?",
-      [user.id, id]
     );
     await conn.commit();
     conn.release();
@@ -203,7 +267,9 @@ const approveRequest = async (req, res) => {
     }
 
     // ── Respond immediately — don't make the client wait for emails/SMS ───────
-    sendSuccess(res, { gate_pass: passResult }, 'Request approved successfully.');
+    // Private bucket — the browser gets a short-lived signed link for the QR
+    const gatePass = passResult && { ...passResult, qr_code_path: await getSignedFileUrl(passResult.qr_code_path) };
+    sendSuccess(res, { gate_pass: gatePass }, 'Request approved successfully.');
 
     // ── Socket.IO: push real-time updates ────────────────────────────────────
     const today = getISTDateString();
@@ -270,23 +336,23 @@ const approveRequest = async (req, res) => {
 
     // ── Fire notifications + audit in background (fire-and-forget) ────────────
     const notify = (opts) => sendNotification({ db: req.db, ...opts });
-    const visitorName = request.visitor_name || null;
-    const visitorEmail = request.visitor_email || null;
+    // VENDOR here = a public "Business" request (staff-created vendor visits are
+    // approved and emailed at creation), so fall back to the company/vendor fields
+    const visitorName = request.visitor_name || request.company_name || null;
+    const visitorEmail = request.visitor_email || request.vendor_email || null;
     const visitorPhone = request.visitor_phone || null;
     const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
-    const baseUrl = `${req.protocol}://${req.get('host')}`; // kept for any other local URL needs
-    // qr_code_path is now a full S3 URL — use it directly
-    const qrCodeUrl = passResult?.qr_code_path || null;
-
     Promise.allSettled([
-      // Email visitor
-      ...(visitorEmail && ['EMPLOYEE_VISIT', 'SPOT', 'PERSONAL_VISIT'].includes(request.visitor_type_code)
-        ? [(() => {
+      // Email visitor — QR attached inline (cid:) since the S3 bucket is private
+      ...(visitorEmail && ['EMPLOYEE_VISIT', 'SPOT', 'PERSONAL_VISIT', 'VENDOR'].includes(request.visitor_type_code)
+        ? [(async () => {
+          const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
+          const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
           const tmpl = emailService.visitApprovedTemplate(
             visitorName || 'Visitor', user.full_name, request.visit_date, '',
-            passResult?.pass_number || null, qrCodeUrl, request.visit_start_time || null
+            passResult?.pass_number || null, qrCodeSrc, request.visit_start_time || null
           );
-          return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
+          return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
         })()]
         : []),
       // SMS visitor
@@ -302,6 +368,8 @@ const approveRequest = async (req, res) => {
         : []),
       // Dashboard — generic
       notify({ visitRequestId: request.id, type: 'DASHBOARD', message: `Visit request #${request.id} has been APPROVED by ${user.full_name}.` }),
+      // Cross-unit requester (lives in another unit's DB)
+      notifyCrossUnitRequester(request, { approved: true, actorName: user.full_name, passResult }),
       // Audit log
       logAudit({ db: req.db, userId: user.id, action: 'APPROVE_REQUEST', module: 'APPROVAL', recordType: 'VISIT_REQUEST', recordId: request.id, ipAddress: req.ip, userAgent: req.headers['user-agent'] || null }),
     ]).catch(err => console.error('[ApprovalController] Background task error:', err.message));
@@ -349,14 +417,20 @@ const rejectRequest = async (req, res) => {
     }
 
     await conn.beginTransaction();
+    // Conditional update first (see approveRequest)
+    const [updated] = await conn.query(
+      "UPDATE visit_requests SET status = 'REJECTED', updated_at = NOW() WHERE id = ? AND status = 'PENDING'",
+      [id]
+    );
+    if (updated.affectedRows === 0) {
+      await conn.rollback();
+      conn.release();
+      return sendError(res, 'This request has already been actioned.', 409);
+    }
     await conn.query(
       `INSERT INTO approval_history (visit_request_id, acted_by_user_id, action, remarks, created_at)
        VALUES (?, ?, 'REJECTED', ?, NOW())`,
       [id, user.id, remarks.trim()]
-    );
-    await conn.query(
-      "UPDATE visit_requests SET status = 'REJECTED', updated_at = NOW() WHERE id = ?",
-      [id]
     );
     await conn.commit();
     conn.release();
@@ -436,6 +510,9 @@ const rejectRequest = async (req, res) => {
 
       // 6. Dashboard — generic
       notify({ visitRequestId: request.id, type: 'DASHBOARD', message: `Visit request #${request.id} has been REJECTED by ${user.full_name}.` }),
+
+      // 6b. Cross-unit requester (lives in another unit's DB)
+      notifyCrossUnitRequester(request, { approved: false, actorName: user.full_name, remarks: remarks.trim() }),
 
       // 7. Audit log
       logAudit({ db: req.db, userId: user.id, action: 'REJECT_REQUEST', module: 'APPROVAL', recordType: 'VISIT_REQUEST', recordId: request.id, ipAddress: req.ip, userAgent: req.headers['user-agent'] || null }),

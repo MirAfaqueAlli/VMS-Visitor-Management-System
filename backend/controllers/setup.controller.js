@@ -42,9 +42,11 @@ const getStatus = async (req, res) => {
  *   admin_password,
  *   admin_employee_code?,
  * }
- * Guards: fails if org or super_admin already exists.
+ * Guards: fails if org or super_admin already exists. Runs under a MySQL named
+ * lock (see initialize below) so two simultaneous first-run requests can't both
+ * pass that check.
  */
-const initialize = async (req, res) => {
+const initializeLocked = async (req, res) => {
   try {
     // Guard — already initialized?
     const [[{ orgCount }]] = await centralPool.query(
@@ -111,7 +113,7 @@ const initialize = async (req, res) => {
 
     // ── Issue session token so the frontend can auto-login immediately ──────────
     const token = jwt.sign(
-      { userId: adminId, role: 'super_admin', unit_db: 'central' },
+      { userId: adminId, role: 'super_admin', unit_db: 'central', auth_time: Math.floor(Date.now() / 1000) },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
@@ -148,6 +150,18 @@ const initialize = async (req, res) => {
       return sendError(res, 'Organization code or admin email already exists.', 409);
     }
     return sendError(res, 'Initialization failed. Please check system configuration and try again.', 500);
+  }
+};
+
+const initialize = async (req, res) => {
+  const lockConn = await centralPool.getConnection();
+  try {
+    const [[{ locked }]] = await lockConn.query("SELECT GET_LOCK('vms_setup_init', 10) AS locked");
+    if (locked !== 1) return sendError(res, 'Setup is already in progress. Please try again.', 409);
+    return await initializeLocked(req, res);
+  } finally {
+    try { await lockConn.query("SELECT RELEASE_LOCK('vms_setup_init')"); } catch (_) { /* lock ends with the session anyway */ }
+    lockConn.release();
   }
 };
 

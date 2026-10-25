@@ -59,6 +59,9 @@ const isUnitAuditor   = (user) => user?.role_type === 'unit_auditor';
 const isAnyAuditor    = (user) => isGlobalAuditor(user) || isUnitAuditor(user);
 const isAnyAdmin      = (user) => isSuperAdmin(user) || isUnitAdmin(user);
 
+// Full (unmasked) government ID numbers — only roles that verify visitors at the gate
+const canViewFullIdNumbers = (user) => isAnyAdmin(user) || isSecurity(user) || isReceptionist(user);
+
 // Keep old helpers for backward compat during migration
 const isOrgAdmin = isSuperAdmin; // temporary alias
 
@@ -75,5 +78,6 @@ module.exports = {
   isUnitAuditor,
   isAnyAuditor,
   isAnyAdmin,
+  canViewFullIdNumbers,
   isOrgAdmin, // backward compat alias
 };

@@ -1,78 +1,207 @@
 // frontend/src/pages/auth/Setup.jsx
-import { useState } from "react";
+// First-time setup: registers the organisation and its super administrator.
+// One-time only — once the organisation exists this page redirects to sign-in
+// (and the API refuses a second setup regardless).
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Building2, User, Lock, Mail, Phone, MapPin,
-  Hash, ChevronRight, CheckCircle2, Eye, EyeOff,
-  Sun, Moon,
+  Building2, User, Lock, Mail, Phone, MapPin, Hash, ChevronRight,
+  CheckCircle2, Eye, EyeOff, AlertCircle, ArrowLeft, UserCog, ShieldCheck, Loader2,
 } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
-import useTheme from "../../context/ThemeContext";
+import AuthLayout from "../../components/AuthLayout";
+import { authStyles, NAVY } from "../../utils/authTheme";
 import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
 import { getApiErrorMessage } from "../../utils/apiError";
 
-const inputCls = "w-full bg-bg-secondary border border-subtle rounded-lg px-3.5 py-2.5 text-sm text-loud placeholder:text-faint focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all";
-const labelCls = "block text-[11px] font-semibold text-loud uppercase tracking-wider mb-1.5";
-
 const INITIAL = {
-  org_name:            "",
-  org_code:            "",
-  org_city:            "",
-  org_state:           "",
-  org_phone:           "",
-  org_email:           "",
-  admin_name:          "",
-  admin_email:         "",
-  admin_phone:         "",
-  admin_password:      "",
+  org_name:               "",
+  org_code:               "",
+  org_city:               "",
+  org_state:              "",
+  org_phone:              "",
+  org_email:              "",
+  admin_name:             "",
+  admin_email:            "",
+  admin_phone:            "",
+  admin_password:         "",
   admin_confirm_password: "",
-  admin_employee_code: "SA-001",
+  admin_employee_code:    "SA-001",
+};
+
+// ── Validation — mirrors the API's setupInitSchema and the column sizes ──────
+const EMAIL_RE    = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const phoneDigits = (v) => v.replace(/[\s\-+()]/g, "");
+
+const lengthRule = (label, min, max) => (v) => {
+  const t = v.trim();
+  if (!t)              return `${label} is required.`;
+  if (t.length < min)  return `${label} must be at least ${min} characters.`;
+  if (t.length > max)  return `${label} must be at most ${max} characters.`;
+  return "";
+};
+const maxLength     = (max) => (v) => (v.trim().length > max ? `Must be at most ${max} characters.` : "");
+const optionalPhone = (v) => (v.trim() && !/^\d{10,15}$/.test(phoneDigits(v)) ? "Enter 10–15 digits (spaces, + and - are fine)." : "");
+const optionalEmail = (v) => (v.trim() && !EMAIL_RE.test(v.trim()) ? "Enter a valid email address." : maxLength(100)(v));
+
+const RULES = {
+  org_name:  lengthRule("Organisation name", 2, 100),
+  org_code:  (v) => (!v ? "Short code is required."
+    : /^[A-Z0-9_-]{2,20}$/.test(v) ? "" : "Use 2–20 characters: capital letters, digits, - or _."),
+  org_phone: optionalPhone,
+  org_email: optionalEmail,
+  org_city:  maxLength(50),
+  org_state: maxLength(50),
+  admin_name:  lengthRule("Full name", 2, 100),
+  admin_email: (v) => (!v.trim() ? "Email is required."
+    : !EMAIL_RE.test(v.trim()) ? "Enter a valid email address (e.g. admin@ohpc.co.in)." : maxLength(100)(v)),
+  admin_phone:         optionalPhone,
+  admin_employee_code: lengthRule("Employee code", 1, 50),
+  admin_password: (v) => (!v ? "Password is required."
+    : validatePassword(v).valid ? "" : "Password does not meet all the requirements yet."),
+  admin_confirm_password: (v, form) => (!v ? "Please re-enter the password."
+    : v !== form.admin_password ? "Passwords do not match." : ""),
+};
+
+const STEP_FIELDS = {
+  1: ["org_name", "org_code", "org_phone", "org_email", "org_city", "org_state"],
+  2: ["admin_name", "admin_email", "admin_phone", "admin_employee_code", "admin_password", "admin_confirm_password"],
+};
+
+const validateAll = (form) => Object.fromEntries(Object.keys(RULES).map((k) => [k, RULES[k](form[k], form)]));
+
+/** GET /setup/status → "open" (not set up yet), "done", or "error" (couldn't tell). */
+const loadSetupStatus = (setStatus) =>
+  apiClient.get("/setup/status")
+    .then((res) => setStatus(res.data?.initialized ? "done" : "open"))
+    .catch(() => setStatus("error"));
+
+// ── Form field with live validation state ─────────────────────────────────────
+function TextField({
+  name, label, icon: Icon, required, value, onChange, onBlur, error, touched,
+  type = "text", placeholder, autoComplete, autoFocus, hint, hintSuccess, mono, trailing, hideErrorText,
+}) {
+  const invalid = touched && !!error;
+  const valid   = !error && value.trim() !== "";
+  const errId   = `${name}-error`;
+  return (
+    <div style={{ marginBottom: "16px" }}>
+      <label htmlFor={name} style={authStyles.label}>
+        {label}{required && <span style={{ color: "#dc2626" }}> *</span>}
+      </label>
+      <div style={{ position: "relative" }}>
+        <Icon size={14} strokeWidth={1.8} style={authStyles.icon} />
+        <input
+          id={name} name={name} type={type} value={value}
+          onChange={onChange} onBlur={onBlur}
+          placeholder={placeholder} autoComplete={autoComplete} autoFocus={autoFocus}
+          aria-invalid={invalid} aria-describedby={invalid && !hideErrorText ? errId : undefined}
+          className="focus:!border-blue-500 focus:!bg-white focus:ring-2 focus:ring-blue-500/15"
+          style={{
+            ...authStyles.input,
+            paddingRight: "38px",
+            ...(mono ? { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", letterSpacing: "0.05em" } : {}),
+            borderColor: invalid ? "#f87171" : "#e2e8f0",
+            background:  invalid ? "#fef2f2" : "#f8fafc",
+          }}
+        />
+        {trailing ?? (valid && (
+          <CheckCircle2 size={15} aria-hidden="true"
+            style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", color: "#16a34a" }} />
+        ))}
+      </div>
+      {invalid && !hideErrorText ? (
+        <p id={errId} role="alert" style={{ display: "flex", alignItems: "center", gap: "5px", marginTop: "6px", fontSize: "11.5px", color: "#dc2626" }}>
+          <AlertCircle size={12} style={{ flexShrink: 0 }} /> {error}
+        </p>
+      ) : hint ? (
+        <p style={{ marginTop: "6px", fontSize: "11px", color: hintSuccess ? "#16a34a" : "#94a3b8", fontWeight: hintSuccess ? 600 : 400 }}>{hint}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function RevealButton({ shown, onToggle }) {
+  return (
+    <button
+      type="button" tabIndex={-1} onClick={onToggle}
+      aria-label={shown ? "Hide password" : "Show password"}
+      style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+    >
+      {shown ? <EyeOff size={14} strokeWidth={1.8} /> : <Eye size={14} strokeWidth={1.8} />}
+    </button>
+  );
+}
+
+const SETUP_PANEL = {
+  eyebrow:     "First-time setup",
+  description: "Register the organisation and create the super administrator account. This page is available only once  before the system is set up.",
+  features: [
+    [Building2,   "Register the organisation"],
+    [UserCog,     "Create the super administrator"],
+    [ShieldCheck, "Then add units, departments and staff"],
+  ],
+  helpText: "This page closes permanently once setup is complete.",
 };
 
 export default function Setup() {
   const navigate = useNavigate();
   const { loginDirect } = useAuth();
-  const { theme, toggleTheme } = useTheme();
-  const [form, setForm]         = useState(INITIAL);
-  const [loading, setLoading]   = useState(false);
-  const [showPwd, setShowPwd]         = useState(false);
+
+  const [status,  setStatus]  = useState("checking"); // checking | open | done | error
+  const [form,    setForm]    = useState(INITIAL);
+  const [touched, setTouched] = useState({});
+  const [step,    setStep]    = useState(1);          // 1 = organisation, 2 = super admin
+  const [loading, setLoading] = useState(false);
+  const [showPwd,        setShowPwd]        = useState(false);
   const [showConfirmPwd, setShowConfirmPwd] = useState(false);
-  const [step, setStep]                 = useState(1); // 1 = org, 2 = admin
+
+  // One-time page: ask the API whether the organisation already exists
+  useEffect(() => { loadSetupStatus(setStatus); }, []);
+
+  useEffect(() => {
+    if (status === "done") {
+      toast("Setup has already been completed. Please sign in.", { icon: "🔒" });
+      navigate("/login", { replace: true });
+    }
+  }, [status, navigate]);
+
+  const errors = validateAll(form);
 
   const set = (k) => (e) => {
     let v = e.target.value;
-    if (k === "org_code") v = v.toUpperCase().replace(/[^A-Z0-9_]/g, "");
-    setForm(f => ({ ...f, [k]: v }));
+    if (k === "org_code") v = v.toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+    setForm((f) => ({ ...f, [k]: v }));
+  };
+  // Errors appear once a field has been left, then update live while typing
+  const touch = (k) => () => setTouched((t) => (t[k] ? t : { ...t, [k]: true }));
+
+  /** Marks the step's fields as touched; returns true if they are all valid. */
+  const checkStep = (n) => {
+    setTouched((t) => ({ ...t, ...Object.fromEntries(STEP_FIELDS[n].map((k) => [k, true])) }));
+    const firstInvalid = STEP_FIELDS[n].find((k) => errors[k]);
+    if (firstInvalid) document.getElementById(firstInvalid)?.focus();
+    return !firstInvalid;
   };
 
   const goNext = (e) => {
     e.preventDefault();
-    if (!form.org_name.trim()) { toast.error("Organization name is required."); return; }
-    if (!form.org_code.trim()) { toast.error("Organization code is required."); return; }
-    setStep(2);
+    if (checkStep(1)) setStep(2);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.admin_name.trim())     { toast.error("Admin full name is required."); return; }
-    if (!form.admin_email.trim())    { toast.error("Admin email is required."); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.admin_email.trim())) {
-      toast.error("Admin email is not a valid email address (e.g. admin@company.com)."); return;
-    }
-    if (!form.admin_password.trim()) { toast.error("Password is required."); return; }
-    const { valid: pwValid } = validatePassword(form.admin_password);
-    if (!pwValid) { toast.error("Password does not meet the strength requirements."); return; }
-    if (form.admin_password !== form.admin_confirm_password) {
-      toast.error("Passwords do not match."); return;
-    }
+    if (!STEP_FIELDS[1].every((k) => !errors[k])) { setStep(1); return; }
+    if (!checkStep(2)) return;
 
     setLoading(true);
     try {
-      const payload = { ...form };
-      delete payload.admin_confirm_password;
+      const payload = Object.fromEntries(
+        Object.entries(form).filter(([k]) => k !== "admin_confirm_password").map(([k, v]) => [k, k === "admin_password" ? v : v.trim()])
+      );
       const response = await apiClient.post("/setup", payload);
       const { token, user } = response.data?.data ?? {};
 
@@ -80,351 +209,168 @@ export default function Setup() {
         // Store session and sync context — same as regular login
         loginDirect(token, user);
         toast.success(`Welcome, ${user.full_name}! System initialized.`);
-        navigate("/dashboard");
+        navigate("/dashboard", { replace: true });
       } else {
         toast.success("System initialized! Please sign in.");
-        navigate("/login");
+        navigate("/login", { replace: true });
       }
     } catch (err) {
+      if (err?.response?.status === 409) {
+        // Someone completed setup in the meantime
+        setStatus("done");
+        return;
+      }
       toast.error(getApiErrorMessage(err, "Setup failed. Please try again."));
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden bg-bg-primary">
-      {/* Theme toggle in top corner */}
-      <button
-        type="button"
-        onClick={toggleTheme}
-        className="fixed top-5 right-5 p-2 rounded-lg border border-subtle bg-bg-secondary text-muted hover:text-loud hover:bg-surface-hover transition-colors shadow-sm z-50"
-        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-      >
-        {theme === "dark" ? <Sun size={18} className="text-warning" /> : <Moon size={18} />}
-      </button>
+  const field = (name) => ({
+    name, value: form[name], onChange: set(name), onBlur: touch(name),
+    error: errors[name], touched: !!touched[name],
+  });
 
-      <div className="w-full max-w-lg relative z-10 py-8">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4 bg-mixed-bg border border-subtle">
-            <Building2 size={26} className="text-accent" />
-          </div>
-          <h1 className="text-2xl font-bold text-loud tracking-tight">
-            First-Time Setup
-          </h1>
-          <p className="text-sm text-muted mt-1.5">
-            Configure your organization and super admin account
-          </p>
+  // ── Status screens ────────────────────────────────────────────────────────
+  if (status === "checking" || status === "done") {
+    return (
+      <AuthLayout {...SETUP_PANEL}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", color: "#64748b", fontSize: "13px", padding: "40px 0" }}>
+          <Loader2 size={16} className="animate-spin" /> Checking system status…
         </div>
+      </AuthLayout>
+    );
+  }
 
-        {/* Step indicator */}
-        <div className="flex items-center gap-3 mb-6 px-2">
-          {[
-            { n: 1, label: "Organization" },
-            { n: 2, label: "Super Admin"  },
-          ].map(({ n, label }, i, arr) => (
-            <div key={n} className="flex-1 flex items-center">
-              <div
-                className="flex items-center gap-2 cursor-pointer"
-                onClick={() => n < step && setStep(n)}
+  if (status === "error") {
+    return (
+      <AuthLayout {...SETUP_PANEL}>
+        <div style={{ textAlign: "center", padding: "24px 0" }}>
+          <AlertCircle size={28} style={{ color: "#dc2626", margin: "0 auto 12px" }} />
+          <h2 style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a", margin: 0 }}>Can't reach the server</h2>
+          <p style={{ fontSize: "13px", color: "#64748b", margin: "8px 0 20px", lineHeight: 1.6 }}>
+            Setup can't continue until the system status is confirmed.
+          </p>
+          <button type="button" style={{ ...authStyles.primaryButton, cursor: "pointer" }}
+            onClick={() => { setStatus("checking"); loadSetupStatus(setStatus); }}>
+            Try again
+          </button>
+        </div>
+      </AuthLayout>
+    );
+  }
+
+  // ── Setup form ────────────────────────────────────────────────────────────
+  const steps = [{ n: 1, label: "Organisation" }, { n: 2, label: "Super administrator" }];
+  const confirmMatches = form.admin_confirm_password && form.admin_confirm_password === form.admin_password;
+
+  return (
+    <AuthLayout {...SETUP_PANEL} maxWidth={520}>
+      {/* Heading */}
+      
+
+      {/* Stepper */}
+      <ol style={{ display: "flex", alignItems: "center", listStyle: "none", padding: 0, margin: "0 0 24px" }}>
+        {steps.map(({ n, label }, i) => {
+          const done = step > n;
+          const current = step === n;
+          return (
+            <li key={n} style={{ display: "flex", alignItems: "center", flex: i < steps.length - 1 ? 1 : "0 0 auto" }}>
+              <button
+                type="button"
+                onClick={() => done && setStep(n)}
+                disabled={!done}
+                style={{ display: "flex", alignItems: "center", gap: "8px", background: "none", border: "none", padding: 0, cursor: done ? "pointer" : "default" }}
               >
-                <div
-                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300 ${
-                    step === n
-                      ? "bg-accent text-white shadow-sm"
-                      : step > n
-                      ? "bg-success-bg text-success border border-success/30"
-                      : "bg-bg-secondary text-faint border border-subtle"
-                  }`}
-                >
-                  {step > n ? <CheckCircle2 size={14} /> : n}
-                </div>
-                <span
-                  className={`text-xs font-medium transition-colors ${
-                    step >= n ? "text-loud font-semibold" : "text-faint"
-                  }`}
-                >
+                <span style={{
+                  width: "26px", height: "26px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: "12px", fontWeight: 700,
+                  background: current ? NAVY : done ? "#dcfce7" : "#f1f5f9",
+                  color:      current ? "#ffffff" : done ? "#15803d" : "#94a3b8",
+                  border:     done ? "1px solid #86efac" : "none",
+                }}>
+                  {done ? <CheckCircle2 size={14} /> : n}
+                </span>
+                <span style={{ fontSize: "12.5px", fontWeight: current || done ? 700 : 500, color: current || done ? "#0f172a" : "#94a3b8" }}>
                   {label}
                 </span>
-              </div>
-              {i < arr.length - 1 && (
-                <div className={`flex-1 h-px mx-3 transition-colors ${step > n ? "bg-accent" : "bg-border"}`} />
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Card */}
-        <div className="vms-card rounded-2xl p-7 shadow-card">
-          {/* ── Step 1: Organization ─────────────────────────────────────── */}
-          {step === 1 && (
-            <form onSubmit={goNext} className="space-y-5">
-              {/* Organization Name — full width */}
-              <div className="space-y-1.5">
-                <label className={labelCls}>
-                  <Building2 className="inline w-3 h-3 mr-1" />
-                  Organization Name *
-                </label>
-                <input
-                  autoFocus
-                  type="text"
-                  required
-                  value={form.org_name}
-                  onChange={set("org_name")}
-                  placeholder="e.g. Acme Corporation"
-                  className={inputCls}
-                />
-              </div>
-
-              {/* Short Code + Phone — side by side */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <Hash className="inline w-3 h-3 mr-1" />
-                    Short Code *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={20}
-                    value={form.org_code}
-                    onChange={set("org_code")}
-                    placeholder="e.g. ACME"
-                    className={`${inputCls} font-mono tracking-wider`}
-                  />
-                  <p className="text-[11px] text-faint mt-0.5">Uppercase &amp; numbers only</p>
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <Phone className="inline w-3 h-3 mr-1" />
-                    Phone
-                  </label>
-                  <input
-                    type="tel"
-                    value={form.org_phone}
-                    onChange={set("org_phone")}
-                    placeholder="+91 22 1234 5678"
-                    className={inputCls}
-                  />
-                </div>
-              </div>
-
-              {/* Email — full width */}
-              <div className="space-y-1.5">
-                <label className={labelCls}>
-                  <Mail className="inline w-3 h-3 mr-1" />
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={form.org_email}
-                  onChange={set("org_email")}
-                  placeholder="info@company.com"
-                  className={inputCls}
-                />
-              </div>
-
-              {/* City + State — side by side */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <MapPin className="inline w-3 h-3 mr-1" />
-                    City
-                  </label>
-                  <input
-                    type="text"
-                    value={form.org_city}
-                    onChange={set("org_city")}
-                    placeholder="e.g. Mumbai"
-                    className={inputCls}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelCls}>State</label>
-                  <input
-                    type="text"
-                    value={form.org_state}
-                    onChange={set("org_state")}
-                    placeholder="e.g. Maharashtra"
-                    className={inputCls}
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="btn-primary w-full py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all shadow-sm"
-              >
-                Next — Super Admin
-                <ChevronRight size={16} />
               </button>
-            </form>
-          )}
+              {i < steps.length - 1 && (
+                <span aria-hidden="true" style={{ flex: 1, height: "2px", margin: "0 12px", borderRadius: "2px", background: done ? NAVY : "#e2e8f0" }} />
+              )}
+            </li>
+          );
+        })}
+      </ol>
 
-          {/* ── Step 2: Super Admin ──────────────────────────────────────── */}
-          {step === 2 && (
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div>
-                <p className="text-muted text-xs mb-5 leading-relaxed">
-                  Create the super admin account. This account will have full system access across all units.
-                </p>
-              </div>
+      {/* ── Step 1: Organisation ─────────────────────────────────────────── */}
+      {step === 1 && (
+        <form onSubmit={goNext} noValidate>
+          <TextField {...field("org_name")} label="Organisation name" icon={Building2} required autoFocus
+            placeholder="e.g. Odisha Hydro Power Corporation Ltd." />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+            <TextField {...field("org_code")} label="Short code" icon={Hash} required mono
+              placeholder="e.g. OHPC" hint="2–20 capital letters, digits, - or _" />
+            <TextField {...field("org_phone")} label="Phone" icon={Phone} type="tel" placeholder="e.g. 0674 2542983" />
+          </div>
+          <TextField {...field("org_email")} label="Email" icon={Mail} type="email" placeholder="e.g. info@ohpc.co.in" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+            <TextField {...field("org_city")}  label="City"  icon={MapPin} placeholder="e.g. Bhubaneswar" />
+            <TextField {...field("org_state")} label="State" icon={MapPin} placeholder="e.g. Odisha" />
+          </div>
 
-              <div className="space-y-4">
-                {/* Full Name — full width */}
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <User className="inline w-3 h-3 mr-1" />
-                    Full Name *
-                  </label>
-                  <input
-                    autoFocus
-                    type="text"
-                    required
-                    value={form.admin_name}
-                    onChange={set("admin_name")}
-                    placeholder="e.g. John Smith"
-                    className={inputCls}
-                  />
-                </div>
+          <button type="submit" style={{ ...authStyles.primaryButton, cursor: "pointer", marginTop: "8px" }}>
+            Continue <ChevronRight size={16} />
+          </button>
+        </form>
+      )}
 
-                {/* Email — full width */}
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <Mail className="inline w-3 h-3 mr-1" />
-                    Email *
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={form.admin_email}
-                    onChange={set("admin_email")}
-                    placeholder="superadmin@company.com"
-                    className={inputCls}
-                  />
-                </div>
+      {/* ── Step 2: Super administrator ──────────────────────────────────── */}
+      {step === 2 && (
+        <form onSubmit={handleSubmit} noValidate>
+          <TextField {...field("admin_name")} label="Full name" icon={User} required autoFocus
+            autoComplete="name" placeholder="e.g. Rajesh Kumar Mohanty" />
+          <TextField {...field("admin_email")} label="Email" icon={Mail} type="email" required
+            autoComplete="email" placeholder="e.g. superadmin@ohpc.co.in" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+            <TextField {...field("admin_phone")} label="Mobile number" icon={Phone} type="tel"
+              autoComplete="tel" placeholder="e.g. 98765 43210" />
+            <TextField {...field("admin_employee_code")} label="Employee code" icon={Hash} required mono placeholder="SA-001" />
+          </div>
 
-                {/* Phone + Employee Code — side by side */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className={labelCls}>
-                      <Phone className="inline w-3 h-3 mr-1" />
-                      Phone
-                    </label>
-                    <input
-                      type="tel"
-                      value={form.admin_phone}
-                      onChange={set("admin_phone")}
-                      placeholder="+91 9000000000"
-                      className={inputCls}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className={labelCls}>
-                      <Hash className="inline w-3 h-3 mr-1" />
-                      Employee Code
-                    </label>
-                    <input
-                      type="text"
-                      value={form.admin_employee_code}
-                      onChange={set("admin_employee_code")}
-                      placeholder="SA-001"
-                      className={`${inputCls} font-mono`}
-                    />
-                  </div>
-                </div>
+          <TextField {...field("admin_password")} label="Password" icon={Lock} required
+            type={showPwd ? "text" : "password"} autoComplete="new-password"
+            placeholder="Create a strong password"
+            hideErrorText={!!form.admin_password}   // the checklist below explains what's missing
+            trailing={<RevealButton shown={showPwd} onToggle={() => setShowPwd((v) => !v)} />} />
+          <div style={{ marginTop: "-8px", marginBottom: "16px" }}>
+            <PasswordStrength password={form.admin_password} hideWhenValid />
+          </div>
 
-                {/* Password — full width */}
-                <div className="space-y-1.5">
-                  <label className={labelCls}>
-                    <Lock className="inline w-3 h-3 mr-1" />
-                    Password *
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showPwd ? "text" : "password"}
-                      required
-                      value={form.admin_password}
-                      onChange={set("admin_password")}
-                      placeholder="Uppercase, number & symbol required"
-                      className={inputCls}
-                      autoComplete="new-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPwd(v => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-loud transition-colors"
-                    >
-                      {showPwd ? <EyeOff size={15} /> : <Eye size={15} />}
-                    </button>
-                  </div>
-                  {/* Password strength indicator */}
-                  <PasswordStrength password={form.admin_password} />
-                </div>
+          <TextField {...field("admin_confirm_password")} label="Confirm password" icon={Lock} required
+            type={showConfirmPwd ? "text" : "password"} autoComplete="new-password"
+            placeholder="Re-enter the password"
+            touched={!!touched.admin_confirm_password || (form.admin_confirm_password.length > 0 && !confirmMatches && form.admin_confirm_password.length >= form.admin_password.length)}
+            hint={confirmMatches ? "✓ Passwords match" : undefined} hintSuccess
+            trailing={<RevealButton shown={showConfirmPwd} onToggle={() => setShowConfirmPwd((v) => !v)} />} />
 
-                {/* Confirm Password — full width */}
-                <div className="space-y-1.5">
-                  <label className={labelCls}>Confirm Password *</label>
-                  <div className="relative">
-                    <input
-                      type={showConfirmPwd ? "text" : "password"}
-                      required
-                      value={form.admin_confirm_password}
-                      onChange={set("admin_confirm_password")}
-                      placeholder="Re-enter password"
-                      className={`${inputCls} ${
-                        form.admin_confirm_password && form.admin_password !== form.admin_confirm_password
-                          ? "!border-error ring-1 ring-error/30"
-                          : form.admin_confirm_password && form.admin_password === form.admin_password
-                          ? "!border-success ring-1 ring-success/30"
-                          : ""
-                      }`}
-                      autoComplete="new-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmPwd(v => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-loud transition-colors"
-                    >
-                      {showConfirmPwd ? <EyeOff size={15} /> : <Eye size={15} />}
-                    </button>
-                  </div>
-                  {form.admin_confirm_password && form.admin_password !== form.admin_confirm_password && (
-                    <p className="text-[11px] text-error mt-1">Passwords do not match</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setStep(1)}
-                  className="btn-secondary px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-                >
-                  ← Back
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading || !validatePassword(form.admin_password).valid}
-                  className="btn-primary flex-1 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                >
-                  {loading ? (
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <CheckCircle2 size={16} />
-                  )}
-                  {loading ? "Setting up…" : "Complete Setup"}
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-
-        <p className="text-center text-faint text-[11px] mt-5">
-          This page is only available when the system is uninitialized.
-        </p>
-      </div>
-    </div>
+          <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
+            <button
+              type="button" onClick={() => setStep(1)}
+              style={{
+                display: "flex", alignItems: "center", gap: "6px", padding: "12px 16px", borderRadius: "10px",
+                border: "1.5px solid #e2e8f0", background: "#ffffff", color: "#334155", fontSize: "14px", fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              <ArrowLeft size={15} /> Back
+            </button>
+            <button type="submit" disabled={loading}
+              style={{ ...authStyles.primaryButton, flex: 1, width: "auto", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1 }}>
+              {loading ? <><Loader2 size={16} className="animate-spin" /> Setting up…</> : <><CheckCircle2 size={16} /> Complete setup</>}
+            </button>
+          </div>
+        </form>
+      )}
+    </AuthLayout>
   );
 }

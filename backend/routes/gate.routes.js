@@ -38,7 +38,8 @@ router.get(
 router.post(
   '/checkin/:requestId',
   protect,
-  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  // Gate operations are unit staff only — super_admin is read-only inside units
+  authorize('unit_admin', 'security', 'receptionist'),
   (req, res, next) => {
     uploadVisitorPhoto(req, res, (err) => {
       if (err) return sendError(res, err.message, 400);
@@ -53,7 +54,7 @@ router.post(
 router.post(
   '/checkout',
   protect,
-  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  authorize('unit_admin', 'security', 'receptionist'),
   validate(checkoutSchema),
   gateController.checkOut
 );
@@ -62,7 +63,7 @@ router.post(
 router.post(
   '/checkout/qr',
   protect,
-  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  authorize('unit_admin', 'security', 'receptionist'),
   validate(checkoutQRSchema),
   gateController.checkOutByQR
 );
@@ -70,7 +71,7 @@ router.post(
 router.post(
   '/checkout/:visitLogId',
   protect,
-  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  authorize('unit_admin', 'security', 'receptionist'),
   validate(checkoutSchema),
   gateController.checkOut
 );
@@ -79,7 +80,7 @@ router.post(
 router.post(
   '/reject',
   protect,
-  authorize('super_admin', 'unit_admin', 'security'),
+  authorize('unit_admin', 'security'),
   validate(rejectAtGateSchema),
   gateController.rejectAtGate
 );

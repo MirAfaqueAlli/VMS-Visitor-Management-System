@@ -761,7 +761,9 @@ function EmployeeDashboard() {
 /* ─── Sub-Component C: Admin Dashboard ─────────────────────────────────── */
 function AdminDashboard({ unitName: unitNameProp } = {}) {
   const navigate = useNavigate();
-  const { activeUnit } = useAuth();
+  const { activeUnit, isSuperAdmin } = useAuth();
+  // Super admins oversee a unit here but approvals are for unit staff (API enforces this too)
+  const canApprove = !isSuperAdmin;
   // Auto-detect unit context: explicit prop OR super admin's active managed unit
   const unitName = unitNameProp ?? activeUnit?.name ?? null;
   const [dashData, setDashData] = useState(null);
@@ -984,20 +986,24 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
                         {fmtDate(row.visit_date)}
                       </td>
                       <td className="px-6 py-3">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => openApprove(row.visit_request_id ?? row.id)}
-                            className="inline-flex items-center gap-1 text-xs btn-primary text-white hover:bg-accent transition-colors font-semibold uppercase"
-                          >
-                            <Check strokeWidth={1.5} size={11} /> OK
-                          </button>
-                          <button
-                            onClick={() => openReject(row.visit_request_id ?? row.id)}
-                            className="inline-flex items-center gap-1 text-xs btn-secondary text-warning hover:bg-accent hover:text-white transition-colors font-semibold uppercase"
-                          >
-                            <X strokeWidth={1.5} size={11} /> No
-                          </button>
-                        </div>
+                        {canApprove ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => openApprove(row.visit_request_id ?? row.id)}
+                              className="inline-flex items-center gap-1 text-xs btn-primary text-white hover:bg-accent transition-colors font-semibold uppercase"
+                            >
+                              <Check strokeWidth={1.5} size={11} /> OK
+                            </button>
+                            <button
+                              onClick={() => openReject(row.visit_request_id ?? row.id)}
+                              className="inline-flex items-center gap-1 text-xs btn-secondary text-warning hover:bg-accent hover:text-white transition-colors font-semibold uppercase"
+                            >
+                              <X strokeWidth={1.5} size={11} /> No
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-faint">Unit staff</span>
+                        )}
                       </td>
                     </tr>
                   ))}

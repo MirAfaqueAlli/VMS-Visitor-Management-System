@@ -1,25 +1,74 @@
 // backend/controllers/auth.controller.js
 'use strict';
 
+const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { validatePassword } = require('../utils/passwordValidator.util');
 const jwt    = require('jsonwebtoken');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
-const { sendEmail, otpTemplate } = require('../services/email.service');
+const { sendEmail, otpTemplate, passwordResetTemplate } = require('../services/email.service');
+const { hashOtp, generateOtp, MAX_OTP_ATTEMPTS } = require('../utils/crypto.util');
 
-// ── In-Memory Login OTP Store ─────────────────────────────────────────────────
-// Map<loginToken, { otp, email, expiresAt, userId, unitDb, unitName, lastSent }>
-const loginOtpStore = new Map();
+// ── Login OTP sessions (vms_central.login_otp_sessions) ───────────────────────
+// Kept in the DB rather than process memory, so pending logins survive pm2
+// reloads and work across cluster workers. Only SHA-256 hashes are stored.
+const LOGIN_OTP_TTL_MINUTES = 10;
 
-// Clean up expired entries every 15 minutes
+const hashToken = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
+
+// Compared against when the email/phone matches no account (same cost factor as real hashes)
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 12);
+
+// Purge old sessions and stale failure counters every 15 minutes
 setInterval(() => {
-  const now = Date.now();
-  for (const [key, val] of loginOtpStore.entries()) {
-    if (val.expiresAt < now) loginOtpStore.delete(key);
-  }
-}, 15 * 60 * 1000);
+  centralPool.query('DELETE FROM login_otp_sessions WHERE expires_at < NOW() - INTERVAL 1 DAY')
+    .catch(err => console.error('[AuthController] login OTP cleanup failed:', err.message));
+  centralPool.query(
+    `DELETE FROM login_failures
+     WHERE first_failed_at < NOW() - INTERVAL 1 DAY AND (locked_until IS NULL OR locked_until < NOW())`
+  ).catch(err => console.error('[AuthController] login failure cleanup failed:', err.message));
+}, 15 * 60 * 1000).unref();
+
+// ── Account lockout (vms_central.login_failures) ──────────────────────────────
+// MAX_FAILED_LOGINS wrong passwords within LOGIN_LOCK_MINUTES lock the account for
+// LOGIN_LOCK_MINUTES. Counted per identifier (unit scope + email), whether or not
+// the account exists, so the lock message can't be used to find real accounts.
+// (Per-IP limits live in routes/auth.routes.js.)
+const MAX_FAILED_LOGINS  = 5;
+const LOGIN_LOCK_MINUTES = 15;
+
+const lockKey = (scope, email) => `${scope}|${String(email).trim().toLowerCase()}`;
+
+/** Minutes left on an active lock, or 0 when not locked. */
+async function lockMinutesLeft(key) {
+  const [rows] = await centralPool.query(
+    `SELECT CEIL(TIMESTAMPDIFF(SECOND, NOW(), locked_until) / 60) AS mins
+     FROM login_failures WHERE identifier = ? AND locked_until > NOW()`,
+    [key]
+  );
+  return rows.length ? Math.max(1, Number(rows[0].mins)) : 0;
+}
+
+/** Counts a failed attempt. Returns true when this attempt triggered the lock. */
+async function recordLoginFailure(key) {
+  // Assignments run left to right: failed_count uses the old first_failed_at (window
+  // check), locked_until sees the new failed_count
+  await centralPool.query(
+    `INSERT INTO login_failures (identifier, failed_count, first_failed_at) VALUES (?, 1, NOW())
+     ON DUPLICATE KEY UPDATE
+       failed_count    = IF(first_failed_at < NOW() - INTERVAL ? MINUTE, 1, failed_count + 1),
+       first_failed_at = IF(first_failed_at < NOW() - INTERVAL ? MINUTE, NOW(), first_failed_at),
+       locked_until    = IF(failed_count >= ?, NOW() + INTERVAL ? MINUTE, locked_until)`,
+    [key, LOGIN_LOCK_MINUTES, LOGIN_LOCK_MINUTES, MAX_FAILED_LOGINS, LOGIN_LOCK_MINUTES]
+  );
+  const [[row]] = await centralPool.query('SELECT failed_count FROM login_failures WHERE identifier = ?', [key]);
+  return Number(row?.failed_count) === MAX_FAILED_LOGINS;
+}
+
+const clearLoginFailures = (key) =>
+  centralPool.query('DELETE FROM login_failures WHERE identifier = ?', [key]);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -69,7 +118,6 @@ const login = async (req, res) => {
 
     let user        = null;
     let unitDb      = 'central';
-    let unitName    = null;
     let dbPool      = centralPool;
 
     // ── Step 1: Check central DB (super_admin / global_auditor) ──────────────
@@ -90,11 +138,9 @@ const login = async (req, res) => {
     }
 
     // ── Step 2: Not in central → search unit DB by unit_id or unit_code ────────
-    if (!user) {
-      if (!unitId && !unit_code) {
-        return sendError(res, 'Please select your unit / branch to sign in.', 400);
-      }
-
+    // With no unit selected ("Central / Global" sign-in) there is nothing more to
+    // look up: user stays null and the attempt fails as invalid credentials below.
+    if (!user && (unitId || unit_code)) {
       let unitRows;
       if (unitId) {
         [unitRows] = await centralPool.query(
@@ -119,7 +165,6 @@ const login = async (req, res) => {
       }
 
       unitDb   = unit.db_name;
-      unitName = unit.name;
       dbPool   = getPool(unitDb);
 
       const [unitUserRows] = await dbPool.query(
@@ -133,20 +178,40 @@ const login = async (req, res) => {
         [email, email]
       );
 
-      if (unitUserRows.length === 0) {
-        return sendError(res, 'Invalid credentials.', 401);
-      }
-
-      user = unitUserRows[0];
+      user = unitUserRows[0] || null;
     }
 
-    // ── Step 3: Verify password ───────────────────────────────────────────────
+    // ── Step 3: Account lockout (same for existing and unknown accounts) ──────
+    const failureKey = lockKey(unitDb, email);
+    const minsLeft   = await lockMinutesLeft(failureKey);
+    if (minsLeft) {
+      return sendError(res, `Too many failed sign-in attempts. Please try again in ${minsLeft} minute(s).`, 429);
+    }
+
+    // ── Step 4: Verify password ───────────────────────────────────────────────
+    // Unknown accounts are compared against a dummy hash, so response time doesn't
+    // reveal whether the account exists
+    const isMatch = await bcrypt.compare(password, user ? user.password_hash : DUMMY_PASSWORD_HASH);
+    if (!user || !isMatch) {
+      const auditCtx = {
+        db: unitDb !== 'central' ? dbPool : null, isSuperAdminAction: unitDb === 'central', sourceUnit: unitDb,
+        module: 'AUTH', recordType: 'USER', recordId: user?.id ?? null,
+        ipAddress: req.ip, userAgent: req.headers['user-agent'] || null,
+      };
+      const nowLocked = await recordLoginFailure(failureKey);
+      logAudit({ ...auditCtx, action: nowLocked ? 'LOGIN_LOCKOUT' : 'LOGIN_FAILED', newValues: { email } });
+      if (nowLocked) {
+        return sendError(res, `Too many failed sign-in attempts. Please try again in ${LOGIN_LOCK_MINUTES} minutes.`, 429);
+      }
+      const unitHint = (!unitId && !unit_code) ? ' If you are unit staff, select your unit / branch above.' : '';
+      return sendError(res, `Invalid email or password.${unitHint}`, 401);
+    }
+    await clearLoginFailures(failureKey);
+
+    // Checked after the password: only someone who knows it learns the account is deactivated
     if (!user.is_active) {
       return sendError(res, 'Your account has been deactivated. Please contact an administrator.', 401);
     }
-
-    const isMatch = await bcrypt.compare(password, user.password_hash);
-    if (!isMatch) return sendError(res, 'Invalid credentials.', 401);
 
     // ── Step 4: Generate login OTP and send via email ─────────────────────────
     const userEmail = user.email;
@@ -155,32 +220,30 @@ const login = async (req, res) => {
     }
 
     // Rate-limit: allow max 1 send per 60 seconds per email
-    const existingEntry = [...loginOtpStore.values()].find(
-      v => v.email === userEmail && v.lastSent > Date.now() - 60_000
+    const [recentRows] = await centralPool.query(
+      `SELECT id FROM login_otp_sessions
+       WHERE email = ? AND created_at > NOW() - INTERVAL 60 SECOND LIMIT 1`,
+      [userEmail]
     );
-    if (existingEntry) {
+    if (recentRows.length > 0) {
       return sendError(res, 'OTP already sent. Please wait 60 seconds before requesting a new one.', 429);
     }
 
-    const otpCode      = String(Math.floor(100000 + Math.random() * 900000));
-    const OTP_TTL_MS   = 10 * 60 * 1000; // 10 minutes
-    const loginToken   = jwt.sign(
-      { otp_pending: true, userId: user.id, unitDb },
-      process.env.JWT_SECRET,
-      { expiresIn: '10m' }
-    );
+    // loginToken is an opaque random string, not a JWT — it can never be mistaken
+    // for a session token. Only its hash and the OTP's hash are stored.
+    const otpCode    = generateOtp();
+    const loginToken = crypto.randomBytes(32).toString('hex');
 
-    loginOtpStore.set(loginToken, {
-      otp:      otpCode,
-      email:    userEmail,
-      userId:   user.id,
-      unitDb,
-      unitName,
-      user,      // full user row — reused in verifyLoginOtp
-      dbPool,
-      expiresAt: Date.now() + OTP_TTL_MS,
-      lastSent:  Date.now(),
-    });
+    // A new login supersedes any earlier pending OTP for the same account
+    await centralPool.query(
+      'UPDATE login_otp_sessions SET is_used = TRUE WHERE user_id = ? AND unit_db = ? AND is_used = FALSE',
+      [user.id, unitDb]
+    );
+    await centralPool.query(
+      `INSERT INTO login_otp_sessions (token_hash, user_id, unit_db, email, otp_hash, expires_at)
+       VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE))`,
+      [hashToken(loginToken), user.id, unitDb, userEmail, hashOtp(otpCode), LOGIN_OTP_TTL_MINUTES]
+    );
 
     // Send the OTP via email
     const { subject, html } = otpTemplate(otpCode, 'email');
@@ -214,39 +277,92 @@ const verifyLoginOtp = async (req, res) => {
       return sendError(res, 'loginToken and otp are required.', 400);
     }
 
-    // Verify the temp token is genuine
-    let decoded;
-    try {
-      decoded = jwt.verify(loginToken, process.env.JWT_SECRET);
-    } catch {
-      return sendError(res, 'Invalid or expired session. Please log in again.', 401);
-    }
-
-    if (!decoded.otp_pending) {
-      return sendError(res, 'Invalid token type.', 400);
-    }
-
-    const entry = loginOtpStore.get(loginToken);
-    if (!entry) {
+    const [sessionRows] = await centralPool.query(
+      `SELECT id, user_id, unit_db, otp_hash, attempts, (expires_at < NOW()) AS expired
+       FROM login_otp_sessions
+       WHERE token_hash = ? AND is_used = FALSE
+       LIMIT 1`,
+      [hashToken(loginToken)]
+    );
+    if (sessionRows.length === 0) {
       return sendError(res, 'OTP session not found or already used. Please log in again.', 401);
     }
+    const session = sessionRows[0];
 
-    if (Date.now() > entry.expiresAt) {
-      loginOtpStore.delete(loginToken);
+    if (session.expired) {
+      await centralPool.query('UPDATE login_otp_sessions SET is_used = TRUE WHERE id = ?', [session.id]);
       return sendError(res, 'OTP has expired. Please log in again.', 401);
     }
 
-    if (otp.trim() !== entry.otp) {
-      return sendError(res, 'Incorrect OTP. Please try again.', 401);
+    // Count this attempt atomically *before* checking the code, so parallel
+    // guesses can't get past MAX_OTP_ATTEMPTS
+    const [claim] = await centralPool.query(
+      `UPDATE login_otp_sessions SET attempts = attempts + 1
+       WHERE id = ? AND is_used = FALSE AND attempts < ?`,
+      [session.id, MAX_OTP_ATTEMPTS]
+    );
+    if (claim.affectedRows === 0) {
+      return sendError(res, 'Too many incorrect attempts. Please log in again.', 401);
     }
 
-    // OTP is correct — consume it
-    loginOtpStore.delete(loginToken);
+    if (hashOtp(otp.trim()) !== session.otp_hash) {
+      const attemptsLeft = MAX_OTP_ATTEMPTS - (session.attempts + 1);
+      return sendError(
+        res,
+        attemptsLeft > 0
+          ? `Incorrect OTP. ${attemptsLeft} attempt(s) left.`
+          : 'Too many incorrect attempts. Please log in again.',
+        401
+      );
+    }
 
-    const { user, unitDb, unitName, dbPool } = entry;
+    // OTP is correct — consume it (affectedRows guards against a parallel success)
+    const [consumed] = await centralPool.query(
+      'UPDATE login_otp_sessions SET is_used = TRUE WHERE id = ? AND is_used = FALSE',
+      [session.id]
+    );
+    if (consumed.affectedRows === 0) {
+      return sendError(res, 'OTP session not found or already used. Please log in again.', 401);
+    }
 
-    // Issue the real session JWT
-    const payload = { userId: user.id, role: user.role_type, unit_db: unitDb };
+    // Re-load the user — the account may have changed since the password step
+    const unitDb = session.unit_db;
+    const dbPool = unitDb === 'central' ? centralPool : getPool(unitDb);
+    let userRows;
+    let unitName = null;
+    if (unitDb === 'central') {
+      [userRows] = await centralPool.query(
+        `SELECT id, role_type, full_name, email, phone, employee_code,
+                is_active, last_login_at,
+                NULL AS department_id, NULL AS department_name,
+                NULL AS unit_id, NULL AS designation, NULL AS designation_id
+         FROM users
+         WHERE id = ? AND deleted_at IS NULL`,
+        [session.user_id]
+      );
+    } else {
+      [userRows] = await dbPool.query(
+        `SELECT u.id, u.role_type, u.full_name, u.email, u.phone, u.employee_code,
+                u.is_active, u.last_login_at,
+                u.department_id, u.unit_id, u.designation, u.designation_id,
+                d.name AS department_name
+         FROM users u
+         LEFT JOIN departments d ON d.id = u.department_id
+         WHERE u.id = ? AND u.deleted_at IS NULL`,
+        [session.user_id]
+      );
+      const [unitRows] = await centralPool.query('SELECT name FROM units WHERE db_name = ? LIMIT 1', [unitDb]);
+      unitName = unitRows[0]?.name || null;
+    }
+
+    const user = userRows[0];
+    if (!user || !user.is_active) {
+      return sendError(res, 'Your account has been deactivated. Please contact an administrator.', 401);
+    }
+
+    // Issue the real session JWT. auth_time = sign-in time, kept across refreshes
+    // so a session can't be extended past SESSION_MAX_HOURS (see refresh)
+    const payload = { userId: user.id, role: user.role_type, unit_db: unitDb, auth_time: Math.floor(Date.now() / 1000) };
     const token   = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '8h',
     });
@@ -344,8 +460,11 @@ const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     const userId = req.user.id;
+    // Central users always live in centralPool — req.db may be switched to a unit
+    // (X-Unit-Id / X-Unit-Db), where this id would belong to a different person
+    const db = req.user.unit_db === 'central' ? centralPool : req.db;
 
-    const [rows] = await req.db.query(
+    const [rows] = await db.query(
       'SELECT id, password_hash FROM users WHERE id = ? AND is_active = 1 AND deleted_at IS NULL',
       [userId]
     );
@@ -359,10 +478,22 @@ const changePassword = async (req, res) => {
     if (!valid) return sendError(res, errors[0], 400);
 
     const newHash = await bcrypt.hash(newPassword, 12);
-    await req.db.query('UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?', [newHash, userId]);
+    // password_changed_at invalidates every older session (auth.middleware). Taken
+    // from the Node clock, truncated to seconds, so the fresh token issued below
+    // (same clock) is never older than it.
+    const changedAt = new Date(Math.floor(Date.now() / 1000) * 1000);
+    await db.query(
+      'UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = NOW() WHERE id = ?',
+      [newHash, changedAt, userId]
+    );
+    const token = jwt.sign(
+      { userId, role: req.user.role_type, unit_db: req.user.unit_db, auth_time: req.authTime },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
+    );
 
     await logAudit({
-      db:                 req.user.unit_db !== 'central' ? req.db : null,
+      db:                 req.user.unit_db !== 'central' ? db : null,
       isSuperAdminAction: req.user.unit_db === 'central',
       sourceUnit:         req.user.unit_db,
       userId,
@@ -374,10 +505,148 @@ const changePassword = async (req, res) => {
       userAgent:          req.headers['user-agent'] || null,
     });
 
-    return sendSuccess(res, null, 'Password changed successfully.', 200);
+    // Other sessions are now signed out; this one continues with the fresh token
+    return sendSuccess(res, { token }, 'Password changed successfully.', 200);
   } catch (err) {
     console.error('[AuthController] changePassword error:', err.message);
     return sendError(res, 'Password change failed due to a server error.', 500);
+  }
+};
+
+// ── Forgot / Reset Password (tender 1.4: password recovery by email) ─────────
+
+const RESET_TOKEN_TTL_MINUTES = 30;
+
+/**
+ * POST /api/auth/forgot-password
+ * Body: { email, unit_id? }  — unit_id as on the login page (omit for central users)
+ * Emails a single-use reset link. Always answers the same way, whether or not
+ * the account exists, so it can't be used to discover registered emails.
+ */
+const forgotPassword = async (req, res) => {
+  const genericMessage = 'If an account exists for this email, a password reset link has been sent to it.';
+  try {
+    const email  = req.body.email.trim();
+    const unitId = req.body.unit_id ? parseInt(req.body.unit_id, 10) : null;
+
+    // Same lookup order as login: central users first, then the selected unit
+    let user   = null;
+    let unitDb = 'central';
+    const [centralRows] = await centralPool.query(
+      'SELECT id, email, is_active FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1', [email]
+    );
+    if (centralRows.length > 0) {
+      user = centralRows[0];
+    } else if (unitId) {
+      const [unitRows] = await centralPool.query(
+        "SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = 'ACTIVE' LIMIT 1", [unitId]
+      );
+      if (unitRows.length > 0) {
+        unitDb = unitRows[0].db_name;
+        const [rows] = await getPool(unitDb).query(
+          'SELECT id, email, is_active FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1', [email]
+        );
+        user = rows[0] || null;
+      }
+    }
+    if (!user || !user.is_active) return sendSuccess(res, null, genericMessage);
+
+    // Max one email per 60 s per address (silently — same response)
+    const [recentRows] = await centralPool.query(
+      'SELECT id FROM password_reset_tokens WHERE email = ? AND created_at > NOW() - INTERVAL 60 SECOND LIMIT 1',
+      [user.email]
+    );
+    if (recentRows.length > 0) return sendSuccess(res, null, genericMessage);
+
+    // Only the newest link works; the token itself is only ever in the email
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    await centralPool.query(
+      'UPDATE password_reset_tokens SET is_used = TRUE WHERE user_id = ? AND unit_db = ? AND is_used = FALSE',
+      [user.id, unitDb]
+    );
+    await centralPool.query(
+      `INSERT INTO password_reset_tokens (token_hash, user_id, unit_db, email, expires_at)
+       VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE))`,
+      [hashToken(resetToken), user.id, unitDb, user.email, RESET_TOKEN_TTL_MINUTES]
+    );
+
+    const resetUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/reset-password?token=${resetToken}`;
+    const { subject, html } = passwordResetTemplate(resetUrl, RESET_TOKEN_TTL_MINUTES);
+    sendEmail({ to: user.email, subject, html }).catch(() => {});
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`\n[Auth] 🔑 Dev Mode password reset link for ${user.email}: ${resetUrl}\n`);
+    }
+
+    return sendSuccess(res, null, genericMessage);
+  } catch (err) {
+    console.error('[AuthController] forgotPassword error:', err.message);
+    return sendError(res, 'Could not process the request. Please try again.', 500);
+  }
+};
+
+/**
+ * POST /api/auth/reset-password
+ * Body: { token, newPassword }
+ * Sets the new password, consumes the link, and signs out every existing session.
+ * Errors use 400 (not 401) so the frontend's 401 handler doesn't redirect.
+ */
+const resetPassword = async (req, res) => {
+  const invalidLink = 'This reset link is invalid or has expired. Please request a new one.';
+  try {
+    const { token, newPassword } = req.body;
+
+    const [rows] = await centralPool.query(
+      `SELECT id, user_id, unit_db, (expires_at < NOW()) AS expired
+       FROM password_reset_tokens
+       WHERE token_hash = ? AND is_used = FALSE
+       LIMIT 1`,
+      [hashToken(token)]
+    );
+    if (rows.length === 0 || rows[0].expired) return sendError(res, invalidLink, 400);
+
+    const { valid, errors } = validatePassword(newPassword);
+    if (!valid) return sendError(res, errors[0], 400);
+
+    // Consume the link first (affectedRows guards against using it twice in parallel)
+    const [consumed] = await centralPool.query(
+      'UPDATE password_reset_tokens SET is_used = TRUE WHERE id = ? AND is_used = FALSE', [rows[0].id]
+    );
+    if (consumed.affectedRows === 0) return sendError(res, invalidLink, 400);
+
+    const { user_id: userId, unit_db: unitDb } = rows[0];
+    const db = unitDb === 'central' ? centralPool : getPool(unitDb);
+    const newHash   = await bcrypt.hash(newPassword, 12);
+    const changedAt = new Date(Math.floor(Date.now() / 1000) * 1000); // see changePassword
+    const [updated] = await db.query(
+      `UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = NOW()
+       WHERE id = ? AND is_active = 1 AND deleted_at IS NULL`,
+      [newHash, changedAt, userId]
+    );
+    if (updated.affectedRows === 0) return sendError(res, invalidLink, 400);
+
+    // Any half-finished login for this account is void too
+    await centralPool.query(
+      'UPDATE login_otp_sessions SET is_used = TRUE WHERE user_id = ? AND unit_db = ? AND is_used = FALSE',
+      [userId, unitDb]
+    );
+
+    await logAudit({
+      db:                 unitDb !== 'central' ? db : null,
+      isSuperAdminAction: unitDb === 'central',
+      sourceUnit:         unitDb,
+      userId,
+      action:             'RESET_PASSWORD',
+      module:             'AUTH',
+      recordType:         'USER',
+      recordId:           userId,
+      ipAddress:          req.ip,
+      userAgent:          req.headers['user-agent'] || null,
+    });
+
+    return sendSuccess(res, null, 'Your password has been reset. Please sign in with your new password.');
+  } catch (err) {
+    console.error('[AuthController] resetPassword error:', err.message);
+    return sendError(res, 'Password reset failed due to a server error.', 500);
   }
 };
 
@@ -386,14 +655,22 @@ const changePassword = async (req, res) => {
 /**
  * POST /api/auth/refresh
  * Requires a valid (non-expired) JWT via protect middleware.
- * Issues a fresh JWT with the same payload — extends the session for active users.
+ * Issues a fresh JWT with the same payload — extends the session for active users,
+ * but never beyond SESSION_MAX_HOURS after the original sign-in (default 24 h).
  */
+const SESSION_MAX_HOURS = parseInt(process.env.SESSION_MAX_HOURS || '24', 10);
+
 const refresh = async (req, res) => {
   try {
+    const sessionAgeSecs = Math.floor(Date.now() / 1000) - req.authTime;
+    if (sessionAgeSecs > SESSION_MAX_HOURS * 3600) {
+      return sendError(res, 'Your session has reached its maximum length. Please sign in again.', 401);
+    }
     const payload = {
-      userId:  req.user.id,
-      role:    req.user.role_type,
-      unit_db: req.user.unit_db,
+      userId:    req.user.id,
+      role:      req.user.role_type,
+      unit_db:   req.user.unit_db,
+      auth_time: req.authTime,
     };
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '8h',
@@ -405,4 +682,4 @@ const refresh = async (req, res) => {
   }
 };
 
-module.exports = { login, verifyLoginOtp, getMe, changePassword, refresh };
+module.exports = { login, verifyLoginOtp, getMe, changePassword, refresh, forgotPassword, resetPassword };

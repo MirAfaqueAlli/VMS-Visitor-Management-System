@@ -67,37 +67,62 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
     if (unitRows.length) unitCode = unitRows[0].code;
   } catch (_) {} // non-fatal
 
-  // ── 5. Generate pass number + QR code (local only) ─────────────────────────
-  const passNumber = generatePassNumber(unitCode);
-  const qrData     = {
-    pass_number:      passNumber,
-    visit_request_id: visitRequestId,
-    visit_date:       request.visit_date,
-    visitor_name:     request.resolved_visitor_name,
-  };
+  // ── 5–6. Pick a free pass number, generate QR, persist ─────────────────────
+  // 5 random digits per unit per day can collide and pass_number is UNIQUE, so skip
+  // numbers already taken and retry if a parallel request grabs the same one.
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const passNumber = generatePassNumber(unitCode);
+    const [taken] = await unitDb.query(
+      'SELECT 1 FROM gate_passes WHERE pass_number = ? LIMIT 1', [passNumber]
+    );
+    if (taken.length) continue;
 
-  const qrCodePath = await generateQRCode(qrData, passNumber);
+    const qrData = {
+      pass_number:      passNumber,
+      visit_request_id: visitRequestId,
+      visit_date:       request.visit_date,
+      visitor_name:     request.resolved_visitor_name,
+    };
+    const qrCodePath = await generateQRCode(qrData, passNumber);
 
-  // ── 6. Persist to gate_passes ─────────────────────────────────────────────
-  const [insertResult] = await unitDb.query(
-    `INSERT INTO gate_passes
-       (visit_request_id, pass_number, qr_code_data, qr_code_path, status, issued_by, issued_at, created_at)
-     VALUES (?, ?, ?, ?, 'ISSUED', ?, NOW(), NOW())`,
-    [visitRequestId, passNumber, JSON.stringify(qrData), qrCodePath, generatedByUserId]
-  );
-  const gate_pass_id = insertResult.insertId;
+    let insertResult;
+    try {
+      [insertResult] = await unitDb.query(
+        `INSERT INTO gate_passes
+           (visit_request_id, pass_number, qr_code_data, qr_code_path, status, issued_by, issued_at, created_at)
+         VALUES (?, ?, ?, ?, 'ISSUED', ?, NOW(), NOW())`,
+        [visitRequestId, passNumber, JSON.stringify(qrData), qrCodePath, generatedByUserId]
+      );
+    } catch (err) {
+      if (err.code !== 'ER_DUP_ENTRY') throw err;
+      // visit_request_id is UNIQUE too: if a parallel call already created this
+      // visit's pass, return that one; otherwise the pass number collided — retry.
+      const [existing] = await unitDb.query(
+        'SELECT id, pass_number, qr_code_path FROM gate_passes WHERE visit_request_id = ? LIMIT 1',
+        [visitRequestId]
+      );
+      if (existing.length) {
+        return { pass_number: existing[0].pass_number, qr_code_path: existing[0].qr_code_path, gate_pass_id: existing[0].id };
+      }
+      continue;
+    }
+    const gate_pass_id = insertResult.insertId;
 
-  // ── 7. Audit log (fire-and-forget) ─────────────────────────────────────────
-  logAudit({
-    db:        unitDb,
-    userId:    generatedByUserId,
-    action:    'GENERATE_PASS',
-    module:    'GATE',
-    recordType: 'GATE_PASS',
-    recordId:  gate_pass_id,
-  }).catch(() => {});
+    // ── 7. Audit log (fire-and-forget) ───────────────────────────────────────
+    logAudit({
+      db:        unitDb,
+      userId:    generatedByUserId,
+      action:    'GENERATE_PASS',
+      module:    'GATE',
+      recordType: 'GATE_PASS',
+      recordId:  gate_pass_id,
+    }).catch(() => {});
 
-  return { pass_number: passNumber, qr_code_path: qrCodePath, gate_pass_id };
+    return { pass_number: passNumber, qr_code_path: qrCodePath, gate_pass_id };
+  }
+
+  throw new Error(`Could not allocate a unique gate pass number after ${MAX_ATTEMPTS} attempts.`);
 };
 
 module.exports = { generateGatePass };

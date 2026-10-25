@@ -1,6 +1,6 @@
 // frontend/src/pages/requests/RequestDetail.jsx
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, User, Building2, Calendar, Clock, QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2, Briefcase } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
@@ -183,6 +183,9 @@ function ApprovalConflictModal({ conflict, remarks, onClose, onForceApprove, loa
 // ─────────────────────────────────────────────────────────────────────────────
 export default function RequestDetail() {
   const { id } = useParams();
+  // Set when opening a cross-unit request (stored in another unit's DB) from the list
+  const [searchParams] = useSearchParams();
+  const crossUnitId = searchParams.get('unit_id');
   const navigate = useNavigate();
   const { user } = useAuth();
 
@@ -207,12 +210,14 @@ export default function RequestDetail() {
   const fetchRequest = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get(`/visit-requests/${id}`);
+      const res = await apiClient.get(`/visit-requests/${id}`, {
+        params: crossUnitId ? { unit_id: crossUnitId } : undefined,
+      });
       setRequest(res.data?.data ?? res.data);
     } catch (err) {
       toast.error(err?.response?.data?.message || 'Failed to load request.');
     } finally { setLoading(false); }
-  }, [id]);
+  }, [id, crossUnitId]);
 
   useEffect(() => { fetchRequest(); }, [fetchRequest]);
 
@@ -280,17 +285,23 @@ export default function RequestDetail() {
   if (!request) return <div className="text-center py-20" style={{ color: 'var(--color-text-faint)' }}>Request not found.</div>;
 
   const role        = user?.role_type || user?.role;
-  const canViewPass = ['security', 'receptionist', 'unit_admin', 'super_admin'].includes(role);
-  const isHost      = String(request.host_user_id) === String(user?.id);
-  const isAdmin     = ['super_admin', 'unit_admin'].includes(role);
+  // A cross-unit request belongs to another unit's DB: its ids (host_user_id, pass)
+  // are that unit's, and every action endpoint targets the viewer's own unit —
+  // so no host/admin actions or pass view on it.
+  const isCrossUnit = !!request.cross_unit;
+  // super_admin is read-only inside a unit (no approve/reject/block/pass) — API enforces the same.
+  // isHost also excludes central users: their id is from vms_central, not this unit.
+  const canViewPass = !isCrossUnit && ['security', 'receptionist', 'unit_admin'].includes(role);
+  const isHost      = !isCrossUnit && role !== 'super_admin' && String(request.host_user_id) === String(user?.id);
+  const isAdmin     = !isCrossUnit && role === 'unit_admin';
   const canApprove  = (isHost || isAdmin) && request.status === 'PENDING';
   const isBlocked   = !!request.host_block_id;
   const canBlock    = (isHost || isAdmin) && !!request.visitor_phone;
   const companions  = request.companions ?? [];
   const timeline    = buildTimeline(request);
 
-  const apiBase = (import.meta.env.VITE_API_URL ?? '').replace(/\/api\/?$/, '');
-  const qrSrc   = request.qr_code_path ? `${apiBase}/${request.qr_code_path}` : null;
+  // qr_code_path is a short-lived signed S3 link from the API (null for old pre-S3 passes)
+  const qrSrc   = /^https?:\/\//.test(request.qr_code_path ?? '') ? request.qr_code_path : null;
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -370,6 +381,7 @@ export default function RequestDetail() {
                 request.company_name && request.visitor_name ? `🏢 ${request.company_name}` : null,
                 request.visitor_phone ? `📞 ${request.visitor_phone}` : null,
                 request.visitor_email || request.vendor_email ? `✉ ${request.visitor_email || request.vendor_email}` : null,
+                request.visitor_address ? `📍 ${request.visitor_address}` : null,
               ].filter(Boolean),
             },
             { label: 'Host',  icon: Building2, lines: [request.host_name, request.host_designation, request.host_email] },

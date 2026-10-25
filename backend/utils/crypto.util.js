@@ -39,6 +39,12 @@ const crypto = require('crypto');
 const hashOtp = (otp) =>
   crypto.createHash('sha256').update(String(otp)).digest('hex');
 
+/** Generates a 6-digit OTP from a cryptographically secure RNG (not Math.random). */
+const generateOtp = () => String(crypto.randomInt(100000, 1000000));
+
+/** Wrong guesses allowed per OTP before it is locked (must request a new one). */
+const MAX_OTP_ATTEMPTS = 5;
+
 // ── AES-256-GCM Field Encryption ──────────────────────────────────────────────
 
 const ALGO = 'aes-256-gcm';
@@ -129,19 +135,36 @@ const decryptField = (stored) => {
 };
 
 /**
+ * Masks all but the last 4 characters of a plaintext ID number.
+ * e.g. "123412341234" → "XXXXXXXX1234". Values of 4 chars or fewer are fully masked.
+ *
+ * @param {string|null} value
+ * @returns {string|null}
+ */
+const maskIdNumber = (value) => {
+  if (value === null || value === undefined || value === '') return value;
+  const s = String(value);
+  if (s.length <= 4) return 'X'.repeat(s.length);
+  return 'X'.repeat(s.length - 4) + s.slice(-4);
+};
+
+/**
  * Decrypts an array of objects, decrypting a specific field in each.
  *
  * @param {object[]} rows
- * @param {string[]} fields - Field names to decrypt in each row
- * @returns {object[]} Rows with the specified fields decrypted
+ * @param {string[]} fields         - Field names to decrypt in each row
+ * @param {object}   [opts]
+ * @param {boolean}  [opts.mask]    - If true, mask the decrypted values (last 4 chars visible)
+ * @returns {object[]} Rows with the specified fields decrypted (and optionally masked)
  */
-const decryptRows = (rows, fields) => {
+const decryptRows = (rows, fields, { mask = false } = {}) => {
   if (!Array.isArray(rows)) return rows;
   return rows.map(row => {
     const out = { ...row };
     for (const field of fields) {
       if (out[field] !== undefined) {
-        out[field] = decryptField(out[field]);
+        const plain = decryptField(out[field]);
+        out[field] = mask ? maskIdNumber(plain) : plain;
       }
     }
     return out;
@@ -150,8 +173,11 @@ const decryptRows = (rows, fields) => {
 
 module.exports = {
   hashOtp,
+  generateOtp,
+  MAX_OTP_ATTEMPTS,
   encryptField,
   decryptField,
   decryptRows,
+  maskIdNumber,
   isEncryptionEnabled: () => ENCRYPTION_ENABLED,
 };

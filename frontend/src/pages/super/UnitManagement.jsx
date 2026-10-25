@@ -8,9 +8,10 @@ import PasswordStrength from '../../components/PasswordStrength';
 import { validatePassword } from '../../utils/passwordValidator';
 import Pagination from '../../components/shared/Pagination';
 import { getApiErrorMessage } from '../../utils/apiError';
+import { OFFICE_TYPES, officeTypeLabel } from '../../utils/officeTypes';
 
 const EMPTY_UNIT = {
-  name: '', code: '', city: '', state: '', phone: '', email: '',
+  name: '', code: '', type: 'UNIT', city: '', state: '', phone: '', email: '',
 };
 const EMPTY_ADMIN = {
   full_name: '', email: '', phone: '', password: '', employee_code: '',
@@ -229,6 +230,7 @@ export default function UnitManagement() {
 
                   {/* Meta */}
                   <div className="flex flex-wrap gap-3 text-[11px]" style={{ color: 'var(--color-text-faint)' }}>
+                    <span>{officeTypeLabel(unit.type)}</span>
                     <span className="flex items-center gap-1"><Users size={11} /> {unit.user_count ?? 0} users</span>
                     <span className="flex items-center gap-1"><Layers size={11} /> {unit.department_count ?? 0} depts</span>
                     {unit.city && <span>{unit.city}{unit.state ? `, ${unit.state}` : ''}</span>}
@@ -342,6 +344,12 @@ export default function UnitManagement() {
                     placeholder="e.g. HQ"
                   />
                 </div>
+              </div>
+              <div>
+                <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Office Type *</label>
+                <select className={inputCls} value={unitForm.type} onChange={setUnit('type')}>
+                  {OFFICE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
               </div>
               <div>
                 <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>City</label>

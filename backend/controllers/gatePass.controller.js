@@ -5,8 +5,10 @@ const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
 const { generateGatePass }       = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { getSignedFileUrl, withSignedUrls } = require('../utils/s3.util');
 
 // ── Helper: fetch a full gate pass row with joins ─────────────────────────────
+// qr_code_path is returned as a short-lived signed link (the S3 bucket is private)
 async function fetchFullPass(db, passId) {
   const [rows] = await db.query(
     `SELECT gp.*,
@@ -24,7 +26,8 @@ async function fetchFullPass(db, passId) {
      WHERE gp.id = ?`,
     [passId]
   );
-  return rows[0] || null;
+  if (!rows[0]) return null;
+  return { ...rows[0], qr_code_path: await getSignedFileUrl(rows[0].qr_code_path) };
 }
 
 // ── generatePass ──────────────────────────────────────────────────────────────
@@ -151,7 +154,7 @@ const listPasses = async (req, res) => {
     );
 
     return sendSuccess(res, {
-      passes,
+      passes: await withSignedUrls(passes, ['qr_code_path']),
       pagination: { total, page, limit, pages: Math.ceil(total / limit) },
     }, 'Gate passes retrieved successfully.');
   } catch (err) {

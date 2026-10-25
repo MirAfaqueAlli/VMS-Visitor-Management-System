@@ -3,7 +3,7 @@
 
 const { centralPool, getPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
-const { logAudit }               = require('../utils/auditLogger.util');
+const { logAudit, auditActor } = require('../utils/auditLogger.util');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 
 // ── Public: list departments (no auth — for visitor public form) ───────────────
@@ -49,8 +49,8 @@ const listPublicDepartments = async (req, res) => {
 const listDepartments = async (req, res) => {
   try {
     const { search } = req.query;
-    const page   = Math.max(1, parseInt(req.query.page  || '1',  10));
-    const limit  = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const offset = (page - 1) * limit;
 
     const conditions = ['d.is_active = 1'];
@@ -146,8 +146,7 @@ const createDepartment = async (req, res) => {
       await conn.commit();
 
       await logAudit({
-        db:        req.db,
-        userId:    req.user.id,
+        ...auditActor(req), // central users → global audit log (see auditActor)
         action:    'CREATE_DEPARTMENT',
         module:    'ADMIN',
         recordType: 'DEPARTMENT',
@@ -200,8 +199,7 @@ const updateDepartment = async (req, res) => {
     );
 
     await logAudit({
-      db:        req.db,
-      userId:    req.user.id,
+      ...auditActor(req), // central users → global audit log (see auditActor)
       action:    'UPDATE_DEPARTMENT',
       module:    'ADMIN',
       recordType: 'DEPARTMENT',

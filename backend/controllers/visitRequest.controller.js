@@ -8,9 +8,10 @@ const { sendNotification }       = require('../services/notification.service');
 const emailService               = require('../services/email.service');
 const { logAudit }               = require('../utils/auditLogger.util');
 const { generateGatePass }       = require('../services/gatePass.service');
-const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { isSuperAdmin, isUnitAdmin, isEmployee, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
 const { emitToUser, emitToUnitSecurity } = require('../socket/socketManager');
 const { encryptField, decryptRows } = require('../utils/crypto.util');
+const { getSignedFileUrl }          = require('../utils/s3.util');
 
 // IST date helper (mirrors the one in approval.controller.js)
 const getISTDateString = (d = new Date()) =>
@@ -113,30 +114,37 @@ const checkScheduleConflict = async (db, hostUserId, visitDate, startTime, endTi
   return result;
 };
 
+/**
+ * getCrossUnitId — reads ?unit_id= for an employee opening/cancelling an
+ * EMPLOYEE_VISIT they raised in another unit (stored in that unit's DB).
+ * Returns the other unit's id, or null if absent / it is the caller's own unit.
+ */
+const getCrossUnitId = (req) => {
+  const unitId = parseInt(req.query.unit_id, 10);
+  return unitId && unitId !== parseInt(req.user.unit_id, 10) ? unitId : null;
+};
+
+/** Returns the pool for an active unit, or null if the unit is unknown/inactive. */
+const getActiveUnitPool = async (unitId) => {
+  const [rows] = await centralPool.query(
+    "SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = 'ACTIVE' LIMIT 1",
+    [unitId]
+  );
+  return rows.length ? getPool(rows[0].db_name) : null;
+};
+
 // ── Visitor Phone Lookup ───────────────────────────────────────────────────────
 /**
- * GET /api/visit-requests/lookup-visitor?phone=XXXXXXXXXX&unit_code=HQ
- * Phone-based visitor autofill. Returns existing visitor data or { found: false }.
+ * GET /api/visit-requests/lookup-visitor?phone=XXXXXXXXXX
+ * Phone-based visitor autofill for staff (route requires auth).
+ * Returns existing visitor data or { found: false }.
  */
 const lookupVisitorByPhone = async (req, res) => {
   try {
-    const { phone, unit_code } = req.query;
+    const { phone } = req.query;
     if (!phone) return sendError(res, 'phone query param is required.', 400);
 
-    let db = req.db;
-
-    if (!db && unit_code) {
-      const [unitRows] = await centralPool.query(
-        `SELECT db_name FROM units WHERE code = ? AND is_active = 1 AND db_status = 'ACTIVE'`,
-        [unit_code.toUpperCase().trim()]
-      );
-      if (unitRows.length === 0) return sendError(res, 'Unit not found.', 404);
-      db = getPool(unitRows[0].db_name);
-    }
-
-    if (!db) return sendError(res, 'Provide unit_code for unauthenticated requests.', 400);
-
-    const [rows] = await db.query(
+    const [rows] = await req.db.query(
       'SELECT id, full_name, email, phone, address, visitor_type FROM visitors WHERE phone = ?',
       [phone.trim()]
     );
@@ -414,14 +422,16 @@ const createRequest = async (req, res) => {
 
       `INSERT INTO visit_requests (
          visitor_id, visitor_phone, visitor_name, visitor_email,
-         requester_user_id, host_user_id, department_id, unit_id, target_unit_id,
+         requester_user_id, cross_unit_requester_id, requester_unit_id,
+         host_user_id, department_id, unit_id, target_unit_id,
          visit_category, request_source,
          purpose, visit_date, visit_start_time, visit_end_time, accompanying_count,
          status, company_name, vendor_email, service_type, work_order_ref, force_created,
          created_at, updated_at
        ) VALUES (
          ?, ?, ?, ?,
-         ?, ?, ?, ?, ?,
+         ?, ?, ?,
+         ?, ?, ?, ?,
          ?, ?,
          ?, ?, ?, ?, ?,
          ?, ?, ?, ?, ?, ?,
@@ -432,9 +442,12 @@ const createRequest = async (req, res) => {
         resolvedVisitorPhone,
         resolvedVisitorName || (typeCode === 'VENDOR' ? (company_name || null) : null),
         resolvedVisitorEmail,
-        // For cross-unit requests the requester lives in a different DB;
-        // their local ID cannot satisfy the FK in the target unit's users table.
+        // For cross-unit requests the requester lives in a different DB, so their
+        // id must not land in requester_user_id (which joins this unit's users).
+        // It goes into cross_unit_requester_id + requester_unit_id instead.
         isCrossUnit ? null : requester_user_id,
+        isCrossUnit ? requester_user_id : null,
+        isCrossUnit ? (req.user?.unit_id || null) : null,
         effectiveHostId,
         effectiveDeptId || null,
         effectiveUnitId,
@@ -551,21 +564,33 @@ const createRequest = async (req, res) => {
         await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Employee visit for ${resolvedVisitorName || 'colleague'} on ${visit_date}${timeStr} auto-approved. Gate pass generated.` });
       }
     } else if (typeCode === 'VENDOR') {
-      // qr_code_path is now a full S3 URL — use it directly
-      const qrCodeUrl = passResult?.qr_code_path || null;
       if (vendor_email) {
-        const tmpl = emailService.visitApprovedTemplate(contact_person || company_name || 'Vendor Team', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeUrl, visit_start_time || null);
-        await notify({ visitRequestId, recipientEmail: vendor_email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
+        // QR is attached inline (cid:) — the S3 bucket is private
+        const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
+        const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
+        const tmpl = emailService.visitApprovedTemplate(contact_person || company_name || 'Vendor Team', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
+        await notify({ visitRequestId, recipientEmail: vendor_email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
       }
       await notify({ visitRequestId, type: 'DASHBOARD', message: `Vendor visit scheduled: ${company_name || 'Unknown'} on ${visit_date}${timeStr}.` });
     } else if (typeCode === 'SPOT') {
+      // Tender 1.1.1: security needs the host's approval before issuing a pass, so
+      // alert the host by SMS and email too — not only on the dashboard
       await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `URGENT: Walk-in visitor waiting at reception for you. Purpose: ${purpose}` });
+      if (host.phone) {
+        await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientPhone: host.phone, type: 'SMS',
+          message: `VMS: Walk-in visitor ${resolvedVisitorName || ''} is waiting at reception to meet you. Please approve or reject in VMS.` });
+      }
+      if (host.email) {
+        const tmpl = emailService.visitRequestTemplate(resolvedVisitorName || 'Walk-in visitor', host.full_name, visit_date, purpose, '', visit_start_time || null);
+        await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientEmail: host.email, type: 'EMAIL', subject: `URGENT (walk-in waiting) — ${tmpl.subject}`, message: tmpl.html });
+      }
     } else if (typeCode === 'PERSONAL_VISIT') {
-      // qr_code_path is now a full S3 URL — use it directly
-      const qrCodeUrl = passResult?.qr_code_path || null;
       if (resolvedVisitorEmail) {
-        const tmpl = emailService.visitApprovedTemplate(resolvedVisitorName || 'Guest', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeUrl, visit_start_time || null);
-        await notify({ visitRequestId, recipientEmail: resolvedVisitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
+        // QR is attached inline (cid:) — the S3 bucket is private
+        const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
+        const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
+        const tmpl = emailService.visitApprovedTemplate(resolvedVisitorName || 'Guest', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
+        await notify({ visitRequestId, recipientEmail: resolvedVisitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
       }
       await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Your personal visit request for ${resolvedVisitorName || 'Guest'} on ${visit_date}${timeStr} is auto-approved. Gate pass generated.` });
     }
@@ -598,14 +623,16 @@ const createRequest = async (req, res) => {
     }
 
     // ── Audit log ─────────────────────────────────────────────────────────────
+    // Logged in the requester's own unit (req.db) — their user id means nothing in
+    // another unit's audit_logs. Cross-unit requests note which unit holds the record.
     await logAudit({
-      db:         db,
+      db:         req.db,
       userId:     requester_user_id,
       action:     'CREATE_REQUEST',
       module:     'VISIT_REQUEST',
       recordType: 'VISIT',
       recordId:   visitRequestId,
-      newValues:  { typeCode, status, force_create },
+      newValues:  { typeCode, status, force_create, ...(isCrossUnit ? { target_unit_id } : {}) },
       ipAddress:  req.ip,
       userAgent:  req.headers['user-agent'] || null,
     });
@@ -621,7 +648,9 @@ const createRequest = async (req, res) => {
       [visitRequestId]
     );
 
-    return sendSuccess(res, { ...fullRequest[0], gate_pass: passResult }, 'Visit request created successfully.', 201);
+    // Private bucket — hand the browser a short-lived signed link for the QR
+    const gatePass = passResult && { ...passResult, qr_code_path: await getSignedFileUrl(passResult.qr_code_path) };
+    return sendSuccess(res, { ...fullRequest[0], gate_pass: gatePass }, 'Visit request created successfully.', 201);
   } catch (err) {
     if (conn) {
       try { await conn.rollback(); } catch (_) {}
@@ -636,7 +665,21 @@ const createRequest = async (req, res) => {
 const getRequest = async (req, res) => {
   try {
     const { id } = req.params;
-    const [rows] = await req.db.query(
+
+    // ?unit_id=<other unit> → an EMPLOYEE_VISIT the caller raised in another unit.
+    // Only that requester may open it (matched on cross_unit_requester_id + requester_unit_id).
+    const crossUnitId = getCrossUnitId(req);
+    let db = req.db;
+    let crossUnitScope = '';
+    const params = [id];
+    if (crossUnitId) {
+      db = await getActiveUnitPool(crossUnitId);
+      if (!db) return sendError(res, 'Visit request not found.', 404);
+      crossUnitScope = ' AND vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?';
+      params.push(req.user.id, req.user.unit_id);
+    }
+
+    const [rows] = await db.query(
       `SELECT vr.*,
               h.full_name AS host_name, h.email AS host_email, h.phone AS host_phone, h.designation AS host_designation,
               d.name AS department_name,
@@ -645,18 +688,24 @@ const getRequest = async (req, res) => {
        JOIN users h ON h.id = vr.host_user_id
        LEFT JOIN departments d ON d.id = vr.department_id
        LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
-       WHERE vr.id = ?`,
-      [id]
+       WHERE vr.id = ?${crossUnitScope}`,
+      params
     );
     if (rows.length === 0) return sendError(res, 'Visit request not found.', 404);
 
     const request = rows[0];
-    const [rawCompanions] = await req.db.query(
+
+    // Employees may only open requests they host or raised (404 so IDs can't be probed)
+    if (!crossUnitId && isEmployee(req.user) && request.host_user_id !== req.user.id && request.requester_user_id !== req.user.id) {
+      return sendError(res, 'Visit request not found.', 404);
+    }
+
+    const [rawCompanions] = await db.query(
       'SELECT id, full_name, id_type, id_number FROM request_companions WHERE visit_request_id = ?', [id]
     );
-    // Decrypt companion id_number before sending to client
-    const companions = decryptRows(rawCompanions, ['id_number']);
-    const [approvalRows] = await req.db.query(
+    // Decrypt companion id_number; mask it for roles that don't verify IDs at the gate
+    const companions = decryptRows(rawCompanions, ['id_number'], { mask: !canViewFullIdNumbers(req.user) });
+    const [approvalRows] = await db.query(
       `SELECT ah.*, u.full_name AS acted_by_name, u.email AS acted_by_email
        FROM approval_history ah
        JOIN users u ON u.id = ah.acted_by_user_id
@@ -667,18 +716,19 @@ const getRequest = async (req, res) => {
 
     let visitorDetails = null;
     if (request.visitor_id) {
-      const [vRows] = await req.db.query(
+      const [vRows] = await db.query(
         'SELECT id, full_name, email, phone, address FROM visitors WHERE id = ?', [request.visitor_id]
       );
       visitorDetails = vRows[0] || null;
     }
 
     // ── Check if the requesting user has blocked this visitor's phone ────────
-    // Returns block ID if blocked (so frontend can show Unblock instead of Block)
+    // Returns block ID if blocked (so frontend can show Unblock instead of Block).
+    // Not for cross-unit views — the caller is the requester there, never the host.
     let hostBlockId = null;
-    if (request.visitor_phone && req.user && request.host_user_id) {
+    if (!crossUnitId && request.visitor_phone && req.user && request.host_user_id) {
       try {
-        const [blCheck] = await req.db.query(
+        const [blCheck] = await db.query(
           `SELECT id FROM host_phone_blacklist
            WHERE host_user_id = ? AND visitor_phone = ? AND is_active = TRUE LIMIT 1`,
           [request.host_user_id, request.visitor_phone]
@@ -689,10 +739,14 @@ const getRequest = async (req, res) => {
 
     return sendSuccess(res, {
       ...request,
+      qr_code_path: await getSignedFileUrl(request.qr_code_path), // private bucket → signed link
       companions,
       approval_history: approvalRows,
       visitor: visitorDetails,
       host_block_id: hostBlockId,  // null = not blocked, number = block entry ID
+      // true = stored in another unit's DB; ids in it (host_user_id etc.) are that unit's,
+      // so the frontend must not offer host/admin actions on it
+      cross_unit: !!crossUnitId,
     }, 'Visit request fetched successfully.');
   } catch (err) {
     console.error('[VisitRequestController] getRequest error:', err.message);
@@ -735,6 +789,12 @@ const listRequests = async (req, res) => {
       d.name      AS department_name,
       gp.pass_number`;
 
+    // Employees' lists merge rows from several unit DBs (see fan-out below). To page
+    // the merged list correctly, fetch the first offset+limit rows from every source,
+    // merge-sort them, then slice out the requested page.
+    const fetchLimit  = isEmployee ? offset + limit : limit;
+    const fetchOffset = isEmployee ? 0 : offset;
+
     const [rows] = await req.db.query(
       `SELECT ${SELECT_COLS}
        FROM visit_requests vr
@@ -743,7 +803,7 @@ const listRequests = async (req, res) => {
        LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
        ${whereClause}
        ORDER BY vr.created_at DESC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [...params, fetchLimit, fetchOffset]
     );
 
     const [[{ total: ownTotal }]] = await req.db.query(
@@ -753,34 +813,44 @@ const listRequests = async (req, res) => {
     // ── Cross-unit fan-out for employees ────────────────────────────────────────────────
     // When an employee visits someone in another unit, the request is stored in
     // that unit's DB (not theirs). Fan out to make those requests visible here.
-    let crossUnitRows = [];
-    if (isEmployee) {
+    // Matched on cross_unit_requester_id + requester_unit_id — user ids alone are
+    // only unique within a unit, so requester_user_id would match other people.
+    let crossUnitRows  = [];
+    let crossUnitTotal = 0;
+    if (isEmployee && req.user.unit_id) {
       try {
-        const { centralPool, getPool } = require('../services/dbManager');
         const [activeUnits] = await centralPool.query(
-          `SELECT u.db_name FROM units u
-           JOIN units myUnit ON myUnit.id = ?
-           WHERE u.is_active = 1 AND u.db_status = 'ACTIVE' AND u.db_name != myUnit.db_name`,
+          `SELECT u.id, u.db_name FROM units u
+           WHERE u.is_active = 1 AND u.db_status = 'ACTIVE' AND u.id != ?`,
           [req.user.unit_id]
         );
         await Promise.all(activeUnits.map(async (unit) => {
           try {
             const otherDb  = getPool(unit.db_name);
-            const xConds   = [`vr.requester_user_id = ?`, `vr.visit_category = 'EMPLOYEE_VISIT'`];
-            const xParams  = [req.user.id];
+            const xConds   = [
+              'vr.cross_unit_requester_id = ?', 'vr.requester_unit_id = ?',
+              `vr.visit_category = 'EMPLOYEE_VISIT'`,
+            ];
+            const xParams  = [req.user.id, req.user.unit_id];
             if (status)     { xConds.push('vr.status = ?');     xParams.push(status); }
             if (visit_date) { xConds.push('vr.visit_date = ?'); xParams.push(visit_date); }
+            const xWhere = `WHERE ${xConds.join(' AND ')}`;
             const [xRows] = await otherDb.query(
               `SELECT ${SELECT_COLS}
                FROM visit_requests vr
                JOIN users h ON h.id = vr.host_user_id
                LEFT JOIN departments d  ON d.id  = vr.department_id
                LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
-               WHERE ${xConds.join(' AND ')}
-               ORDER BY vr.created_at DESC LIMIT 50`,
-              xParams
+               ${xWhere}
+               ORDER BY vr.created_at DESC LIMIT ?`,
+              [...xParams, fetchLimit]
             );
-            crossUnitRows.push(...xRows.map(r => ({ ...r, _cross_unit_db: unit.db_name })));
+            const [[{ total: xTotal }]] = await otherDb.query(
+              `SELECT COUNT(*) AS total FROM visit_requests vr ${xWhere}`, xParams
+            );
+            // _cross_unit_id lets the frontend open the row via ?unit_id=
+            crossUnitRows.push(...xRows.map(r => ({ ...r, _cross_unit_id: unit.id })));
+            crossUnitTotal += Number(xTotal);
           } catch { /* unit DB unreachable — skip silently */ }
         }));
       } catch { /* fan-out error — non-fatal */ }
@@ -789,8 +859,8 @@ const listRequests = async (req, res) => {
     const allRows  = [...rows, ...crossUnitRows].sort((a, b) =>
       new Date(b.created_at) - new Date(a.created_at)
     );
-    const total    = Number(ownTotal) + crossUnitRows.length;
-    const pageRows = allRows.slice(0, limit);
+    const total    = Number(ownTotal) + crossUnitTotal;
+    const pageRows = isEmployee ? allRows.slice(offset, offset + limit) : allRows;
 
     return sendSuccess(res, {
       requests:   pageRows,
@@ -808,32 +878,25 @@ const cancelRequest = async (req, res) => {
     const { id } = req.params;
     const user = req.user;
 
-    // Try own unit DB first; if not found, fan out to other unit DBs
-    // (needed for cross-unit EMPLOYEE_VISIT stored in the target unit's DB)
+    // ?unit_id=<other unit> → cancel an EMPLOYEE_VISIT the caller raised in another
+    // unit; only that requester may (matched on cross_unit_requester_id + requester_unit_id).
+    // Without it, only the caller's own unit DB is searched — never fan out by id alone,
+    // since ids repeat across unit DBs.
+    const crossUnitId = getCrossUnitId(req);
     let targetDb = req.db;
-    let [rows]   = await req.db.query(
-      'SELECT id, status, requester_user_id, host_user_id FROM visit_requests WHERE id = ?', [id]
-    );
-
-    if (rows.length === 0) {
-      try {
-        const { centralPool, getPool } = require('../services/dbManager');
-        const [activeUnits] = await centralPool.query(
-          `SELECT u.db_name FROM units u
-           JOIN units myUnit ON myUnit.id = ?
-           WHERE u.is_active = 1 AND u.db_status = 'ACTIVE' AND u.db_name != myUnit.db_name`,
-          [req.user.unit_id]
-        );
-        for (const unit of activeUnits) {
-          try {
-            const otherDb = getPool(unit.db_name);
-            const [xRows] = await otherDb.query(
-              'SELECT id, status, requester_user_id, host_user_id FROM visit_requests WHERE id = ?', [id]
-            );
-            if (xRows.length > 0) { rows = xRows; targetDb = otherDb; break; }
-          } catch { /* skip unreachable DBs */ }
-        }
-      } catch { /* fan-out failed — fall through to 404 */ }
+    let rows;
+    if (crossUnitId) {
+      targetDb = await getActiveUnitPool(crossUnitId);
+      if (!targetDb) return sendError(res, 'Visit request not found.', 404);
+      [rows] = await targetDb.query(
+        `SELECT id, status FROM visit_requests
+         WHERE id = ? AND cross_unit_requester_id = ? AND requester_unit_id = ?`,
+        [id, user.id, user.unit_id]
+      );
+    } else {
+      [rows] = await req.db.query(
+        'SELECT id, status, requester_user_id, host_user_id FROM visit_requests WHERE id = ?', [id]
+      );
     }
 
     if (rows.length === 0) return sendError(res, 'Visit request not found.', 404);
@@ -843,23 +906,28 @@ const cancelRequest = async (req, res) => {
       return sendError(res, `Cannot cancel a request with status '${request.status}'.`, 400);
     }
 
-    const isAdmin    = isSuperAdmin(user) || isUnitAdmin(user);
-    const isInvolved = request.requester_user_id === user.id || request.host_user_id === user.id;
-    if (!isAdmin && !isInvolved) {
-      return sendError(res, 'You do not have permission to cancel this request.', 403);
+    // Cross-unit rows were already scoped to the requester in the query above
+    if (!crossUnitId) {
+      const isAdmin    = isSuperAdmin(user) || isUnitAdmin(user);
+      const isInvolved = request.requester_user_id === user.id || request.host_user_id === user.id;
+      if (!isAdmin && !isInvolved) {
+        return sendError(res, 'You do not have permission to cancel this request.', 403);
+      }
     }
 
     await targetDb.query(
       "UPDATE visit_requests SET status = 'CANCELLED', updated_at = NOW() WHERE id = ?", [id]
     );
 
+    // Logged in the canceller's own unit (see createRequest audit note)
     await logAudit({
-      db:        targetDb,
+      db:        req.db,
       userId:    user.id,
       action:    'CANCEL_REQUEST',
       module:    'VISIT_REQUEST',
       recordType: 'VISIT',
       recordId:  parseInt(id),
+      newValues: crossUnitId ? { target_unit_id: crossUnitId } : null,
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'] || null,
     });
@@ -923,22 +991,24 @@ const getMyRequests = async (req, res) => {
 const createPublicRequest = async (req, res) => {
   let conn = null;
   try {
-    // ── Decode X-Visitor-Token to populate visitor identity details ──────────
+    // ── Require a verified visitor session (issued by /public-auth/verify-email-otp) ──
     const token = req.headers['x-visitor-token'];
-    let tokenData = {};
-    if (token) {
-      try {
-        tokenData = jwt.verify(token, process.env.JWT_SECRET);
-      } catch (jwtErr) {
-        console.error('[VisitRequestController] Public request JWT verification failed:', jwtErr.message);
-        return sendError(res, 'Session expired or invalid visitor verification token. Please verify your OTP again.', 401);
-      }
+    if (!token) {
+      return sendError(res, 'Please verify your phone and email before submitting a request.', 401);
+    }
+    let tokenData;
+    try {
+      tokenData = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (jwtErr) {
+      console.error('[VisitRequestController] Public request JWT verification failed:', jwtErr.message);
+      return sendError(res, 'Session expired or invalid visitor verification token. Please verify your OTP again.', 401);
+    }
+    // Session tokens share JWT_SECRET, so check this is specifically a visitor token
+    if (tokenData.purpose !== 'PUBLIC_VISITOR' || !tokenData.phone_verified || !tokenData.email_verified) {
+      return sendError(res, 'Invalid visitor verification token. Please verify your OTP again.', 401);
     }
 
     const {
-      visitor_full_name: bodyName,
-      visitor_phone: bodyPhone,
-      visitor_email: bodyEmail,
       host_user_id,
       department_id,
       unit_code,
@@ -952,18 +1022,28 @@ const createPublicRequest = async (req, res) => {
       company_name,
     } = req.body;
 
-    const visitor_full_name = (bodyName || tokenData.visitor_name || '').trim();
-    const visitor_phone = (bodyPhone || tokenData.visitor_phone || '').trim();
-    const visitor_email = (bodyEmail || tokenData.visitor_email || '').trim();
+    // Visitor identity comes only from the verified token — never from the body
+    const visitor_full_name = (tokenData.visitor_name  || '').trim();
+    const visitor_phone     = (tokenData.visitor_phone || '').trim();
+    const visitor_email     = (tokenData.visitor_email || '').trim();
+    const visitor_address   = (tokenData.visitor_address || '').trim();
 
     // ── Map public-facing visit type to internal category ────────────────────
-    const PUBLIC_CATEGORY_MAP = { INDIVIDUAL: 'PERSONAL_VISIT', BUSINESS: 'VENDOR' };
-    let visit_category = req.body.visit_category || 'INDIVIDUAL';
-    visit_category = PUBLIC_CATEGORY_MAP[visit_category] || visit_category;
-    // If already an internal value (PERSONAL_VISIT, VENDOR), pass through unchanged
+    // Internal values (PERSONAL_VISIT, VENDOR) are accepted as-is; anything else is rejected
+    const PUBLIC_CATEGORY_MAP = {
+      INDIVIDUAL: 'PERSONAL_VISIT', BUSINESS: 'VENDOR',
+      PERSONAL_VISIT: 'PERSONAL_VISIT', VENDOR: 'VENDOR',
+    };
+    const visit_category = PUBLIC_CATEGORY_MAP[req.body.visit_category || 'INDIVIDUAL'];
+    if (!visit_category) {
+      return sendError(res, 'visit_category must be INDIVIDUAL or BUSINESS.', 400);
+    }
 
-    if (!visitor_full_name || !visitor_phone || !host_user_id || !department_id || !purpose || !visit_date) {
-      return sendError(res, 'Missing required fields (visitor_full_name, visitor_phone, host_user_id, department_id, purpose, visit_date).', 400);
+    if (!visitor_full_name || !visitor_phone) {
+      return sendError(res, 'Invalid visitor verification token. Please verify your OTP again.', 401);
+    }
+    if (!host_user_id || !department_id || !purpose || !visit_date) {
+      return sendError(res, 'Missing required fields (host_user_id, department_id, purpose, visit_date).', 400);
     }
     if (!unit_id && !unit_code) {
       return sendError(res, 'unit_id or unit_code is required.', 400);
@@ -1056,15 +1136,15 @@ const createPublicRequest = async (req, res) => {
     // Insert visit request with inline visitor details (no visitor_id)
     const [reqResult] = await conn.query(
       `INSERT INTO visit_requests (
-         visitor_id, visitor_phone, visitor_name, visitor_email,
+         visitor_id, visitor_phone, visitor_name, visitor_email, visitor_address,
          requester_user_id, host_user_id, department_id, unit_id,
          visit_category, request_source, purpose, visit_date,
          visit_start_time, visit_end_time, accompanying_count,
          company_name, status, created_at, updated_at
-       ) VALUES (NULL, ?, ?, ?, NULL, ?, ?, ?, ?, 'SELF', ?, ?,
+       ) VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 'SELF', ?, ?,
                  ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
       [
-        visitor_phone, visitor_full_name, visitor_email || null,
+        visitor_phone, visitor_full_name, visitor_email || null, visitor_address || null,
         host.id, parsedDeptId || null, unit.id,
         visit_category,
         purpose, visit_date,

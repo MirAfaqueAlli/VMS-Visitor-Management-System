@@ -3,6 +3,7 @@
 
 const { centralPool, getPool } = require('./dbManager');
 const emailService = require('./email.service');
+const smsService   = require('./sms.service');
 
 /**
  * Inserts a notification record and delivers it via the appropriate channel.
@@ -21,6 +22,7 @@ const emailService = require('./email.service');
  * @param {'EMAIL'|'SMS'|'DASHBOARD'} opts.type
  * @param {string|null}  opts.subject
  * @param {string}       opts.message
+ * @param {object[]|null} opts.attachments    — EMAIL only: nodemailer attachments (e.g. inline QR image)
  * @returns {Promise<{ success: boolean }>}
  */
 const sendNotification = async ({
@@ -32,6 +34,7 @@ const sendNotification = async ({
   type,
   subject           = null,
   message,
+  attachments       = null,
 }) => {
   // ── 1. Resolve which DB pool to write the notification into ─────────────────
   let unitDb = db;
@@ -81,29 +84,18 @@ const sendNotification = async ({
         to:      recipientEmail,
         subject: subject || 'VMS Notification',
         html:    message,
+        attachments,
       });
       if (!result.success) throw new Error(result.error || 'Email delivery failed');
       deliverySuccess = true;
 
     } else if (type === 'SMS') {
       if (!recipientPhone) throw new Error('recipientPhone required for SMS notifications');
-      const apiKey = process.env.FAST2SMS_API_KEY;
-      if (!apiKey) {
-        console.warn('[NotificationService] FAST2SMS_API_KEY not set. Skipping SMS.');
-        deliverySuccess = true; // treat as success in dev
-      } else {
-        const body = new URLSearchParams({ route: 'q', message, numbers: recipientPhone, flash: '0' });
-        const smsRes  = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-          method: 'POST',
-          headers: { authorization: apiKey, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body:    body.toString(),
-        });
-        const smsData = await smsRes.json().catch(() => ({}));
-        if (!smsRes.ok || smsData.return === false) {
-          throw new Error(`Fast2SMS error: ${JSON.stringify(smsData)}`);
-        }
-        deliverySuccess = true;
-      }
+      // Not configured → recorded as FAILED with the reason (previously it was
+      // silently marked SENT, hiding a missing gateway in production)
+      const result = await smsService.sendSms(recipientPhone, message);
+      if (!result.success) throw new Error(result.error);
+      deliverySuccess = true;
 
     } else if (type === 'DASHBOARD') {
       deliverySuccess = true; // Read directly from DB — mark sent immediately

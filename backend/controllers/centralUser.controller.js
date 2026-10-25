@@ -13,8 +13,8 @@ const { logAudit } = require('../utils/auditLogger.util');
 const listCentralUsers = async (req, res) => {
   try {
     const { search } = req.query;
-    const page   = Math.max(1, parseInt(req.query.page  || '1',  10));
-    const limit  = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const offset = (page - 1) * limit;
 
     const conditions = ['deleted_at IS NULL'];

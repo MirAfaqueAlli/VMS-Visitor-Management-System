@@ -22,15 +22,10 @@ export default function ProtectedRoute({ roles }) {
 
  if (roles && !hasRole(...roles)) {
  return (
- <div className="min-h-screen bg-bg-primary flex flex-col items-center justify-center text-center px-6">
- <div className="w-16 h-16 rounded-full bg-lightColor flex items-center justify-center mb-8">
- <ShieldOff
- strokeWidth={1.5}
- className="w-7 h-7 text-warning"
- />
- </div>
- <h1 className="text-4xl font-semibold text-loud mb-3">
- Access <em className="italic">Restricted</em>
+ <div className="min-h-screen bg-bg-secondary flex flex-col items-center justify-center text-center px-6">
+
+ <h1 className="text-4xl font-semibold text-loud mb-3 select-none">
+ Access Restricted
  </h1>
  <p className="text-faint max-w-sm mb-8 leading-relaxed">
  You don&apos;t have permission to view this area. Please contact your

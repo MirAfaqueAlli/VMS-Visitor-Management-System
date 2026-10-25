@@ -4,6 +4,7 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { centralPool, getPool } = require('../services/dbManager');
+const { issuedBeforePasswordChange } = require('../middlewares/auth.middleware');
 
 let io = null;
 
@@ -15,11 +16,12 @@ let io = null;
 function initSocket(httpServer) {
   io = new Server(httpServer, {
     cors: {
+      // Same rule as the REST API (server.js): localhost origins only outside production
       origin: [
         process.env.CLIENT_URL,
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:5175',
+        process.env.NODE_ENV !== 'production' && 'http://localhost:5173',
+        process.env.NODE_ENV !== 'production' && 'http://localhost:5174',
+        process.env.NODE_ENV !== 'production' && 'http://localhost:5175',
       ].filter(Boolean),
       credentials: true,
     },
@@ -43,6 +45,8 @@ function initSocket(httpServer) {
       const unitDb = decoded.unit_db;
 
       if (!userId) return next(new Error('INVALID_TOKEN'));
+      // Reject the pre-OTP loginToken and any token without a unit_db claim
+      if (decoded.otp_pending || !unitDb) return next(new Error('INVALID_TOKEN'));
 
       let user = null;
 
@@ -50,20 +54,24 @@ function initSocket(httpServer) {
         // Unit user — query the unit database
         const db = getPool(unitDb);
         const [rows] = await db.query(
-          'SELECT id, role_type, unit_id, department_id, full_name FROM users WHERE id = ? AND is_active = 1',
+          `SELECT id, role_type, unit_id, department_id, full_name, password_changed_at
+           FROM users WHERE id = ? AND is_active = 1 AND deleted_at IS NULL`,
           [userId]
         );
         user = rows[0] || null;
       } else {
         // Central user (super_admin / global_auditor)
         const [rows] = await centralPool.query(
-          'SELECT id, role_type, NULL AS unit_id, NULL AS department_id, full_name FROM users WHERE id = ?',
+          `SELECT id, role_type, NULL AS unit_id, NULL AS department_id, full_name, password_changed_at
+           FROM users WHERE id = ? AND is_active = 1 AND deleted_at IS NULL`,
           [userId]
         );
         user = rows[0] || null;
       }
 
       if (!user) return next(new Error('USER_NOT_FOUND'));
+      if (issuedBeforePasswordChange(decoded, user)) return next(new Error('INVALID_TOKEN'));
+      delete user.password_changed_at;
 
       socket.user = user;
       socket.user.unit_db = unitDb;

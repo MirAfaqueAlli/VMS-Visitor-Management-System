@@ -92,6 +92,14 @@ router.get(
   ctrl.getRejectedReport
 );
 
+// Debarred (blacklisted) visitors: unit_admin+ and auditors
+router.get(
+  '/debarred',
+  protect,
+  authorize(...adminOrAuditor),
+  ctrl.getDebarredReport
+);
+
 // Active & Expected: security + receptionist + unit_admin+
 router.get(
   '/active-expected',

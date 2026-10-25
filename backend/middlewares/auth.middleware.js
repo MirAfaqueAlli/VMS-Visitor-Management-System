@@ -2,8 +2,17 @@
 'use strict';
 
 const jwt = require('jsonwebtoken');
-const { getPool, centralPool, CENTRAL_DB_NAME } = require('../services/dbManager');
+const { getPool, getActiveUnitPoolByDbName, centralPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { sendError } = require('../utils/response.util');
+
+/**
+ * True if the token was issued before the user's last password change/reset.
+ * Such sessions must stop working (e.g. a reset after a suspected compromise).
+ * The changing request itself gets a fresh token (auth.controller changePassword).
+ */
+const issuedBeforePasswordChange = (decoded, user) =>
+  !!user.password_changed_at &&
+  decoded.iat < Math.floor(new Date(user.password_changed_at).getTime() / 1000);
 
 /**
  * protect — JWT auth middleware for multi-database architecture.
@@ -39,14 +48,19 @@ const protect = async (req, res, next) => {
       return sendError(res, 'Invalid authentication token.', 401);
     }
 
-    const { userId, unit_db } = decoded;
+    const { userId, unit_db, otp_pending } = decoded;
 
     if (!userId) return sendError(res, 'Malformed token: missing userId.', 401);
+
+    // Only full session tokens carry unit_db. The pre-OTP loginToken (otp_pending)
+    // must never authenticate — otherwise it would bypass OTP and fall through to
+    // the central DB, matching a central user that shares the same numeric id.
+    if (otp_pending || !unit_db) return sendError(res, 'Invalid authentication token.', 401);
 
     // ── 3. Resolve the correct DB pool ────────────────────────────────────────
     // super_admin and global_auditor use 'central', everyone else uses their unit DB
     let pool;
-    if (!unit_db || unit_db === 'central' || unit_db === CENTRAL_DB_NAME) {
+    if (unit_db === 'central' || unit_db === CENTRAL_DB_NAME) {
       pool = centralPool;
     } else {
       try {
@@ -60,12 +74,12 @@ const protect = async (req, res, next) => {
     // ── 4. Fetch user from the resolved DB ────────────────────────────────────
     // Central users (super_admin, global_auditor) have a simpler schema
     let rows;
-    const isCentral = !unit_db || unit_db === 'central' || unit_db === CENTRAL_DB_NAME;
+    const isCentral = unit_db === 'central' || unit_db === CENTRAL_DB_NAME;
 
     if (isCentral) {
       [rows] = await pool.query(
         `SELECT id, role_type, full_name, email, phone, employee_code,
-                is_active, last_login_at, NULL AS department_id, NULL AS unit_id,
+                is_active, last_login_at, password_changed_at, NULL AS department_id, NULL AS unit_id,
                 NULL AS designation_id, NULL AS designation, NULL AS department_name
          FROM users
          WHERE id = ? AND deleted_at IS NULL`,
@@ -74,7 +88,7 @@ const protect = async (req, res, next) => {
     } else {
       [rows] = await pool.query(
         `SELECT u.id, u.role_type, u.full_name, u.email, u.phone, u.employee_code,
-                u.is_active, u.last_login_at, u.department_id, u.unit_id,
+                u.is_active, u.last_login_at, u.password_changed_at, u.department_id, u.unit_id,
                 u.designation_id, u.designation,
                 d.name AS department_name
          FROM users u
@@ -94,11 +108,16 @@ const protect = async (req, res, next) => {
     if (!user.is_active) {
       return sendError(res, 'Your account has been deactivated. Please contact an administrator.', 401);
     }
+    if (issuedBeforePasswordChange(decoded, user)) {
+      return sendError(res, 'Your password was changed. Please sign in again.', 401);
+    }
 
     // ── 6. Attach to request ──────────────────────────────────────────────────
     req.user         = user;
     req.user.unit_db = unit_db || 'central'; // carry forward for logging
     req.db           = pool;                  // ← controllers use this, NOT the global import
+    // Original sign-in time (kept across refreshes) — caps total session length
+    req.authTime     = decoded.auth_time || decoded.iat;
 
     // Support dynamic unit database overriding for central users (super_admin / global_auditor)
     if (isCentral) {
@@ -106,10 +125,13 @@ const protect = async (req, res, next) => {
       const targetUnitId = req.headers['x-unit-id'];
 
       if (targetUnitDb) {
-        try {
-          req.db = getPool(targetUnitDb);
-        } catch (poolErr) {
-          console.error('[AuthMiddleware] SuperAdmin override failed for DB:', targetUnitDb, poolErr.message);
+        // Only DB names of active registered units — never an arbitrary database
+        const unitPool = await getActiveUnitPoolByDbName(targetUnitDb);
+        if (unitPool) {
+          req.db         = unitPool;
+          req.unitDbName = targetUnitDb; // which unit a central user is managing (for audit logs)
+        } else {
+          console.warn('[AuthMiddleware] Ignoring X-Unit-Db for unknown/inactive unit:', JSON.stringify(targetUnitDb));
         }
       } else if (targetUnitId) {
         try {
@@ -118,7 +140,8 @@ const protect = async (req, res, next) => {
             [parseInt(targetUnitId, 10)]
           );
           if (unitRows.length > 0) {
-            req.db = getPool(unitRows[0].db_name);
+            req.db         = getPool(unitRows[0].db_name);
+            req.unitDbName = unitRows[0].db_name;
           }
         } catch (unitErr) {
           console.error('[AuthMiddleware] SuperAdmin override failed for Unit ID:', targetUnitId, unitErr.message);
@@ -154,22 +177,23 @@ const optionalProtect = async (req, res, next) => {
       return next(); // expired or invalid — treat as unauthenticated
     }
 
-    const { userId, unit_db } = decoded;
+    const { userId, unit_db, otp_pending } = decoded;
     if (!userId) return next();
+    if (otp_pending || !unit_db) return next(); // pre-OTP loginToken — treat as unauthenticated
 
     let pool;
-    if (!unit_db || unit_db === 'central' || unit_db === CENTRAL_DB_NAME) {
+    if (unit_db === 'central' || unit_db === CENTRAL_DB_NAME) {
       pool = centralPool;
     } else {
       try { pool = getPool(unit_db); } catch (_) { return next(); }
     }
 
-    const isCentral = !unit_db || unit_db === 'central' || unit_db === CENTRAL_DB_NAME;
+    const isCentral = unit_db === 'central' || unit_db === CENTRAL_DB_NAME;
     let rows;
     if (isCentral) {
       [rows] = await pool.query(
         `SELECT id, role_type, full_name, email, phone, employee_code,
-                is_active, NULL AS department_id, NULL AS unit_id,
+                is_active, password_changed_at, NULL AS department_id, NULL AS unit_id,
                 NULL AS designation_id, NULL AS designation
          FROM users WHERE id = ? AND deleted_at IS NULL`,
         [userId]
@@ -177,7 +201,7 @@ const optionalProtect = async (req, res, next) => {
     } else {
       [rows] = await pool.query(
         `SELECT u.id, u.role_type, u.full_name, u.email, u.phone, u.employee_code,
-                u.is_active, u.department_id, u.unit_id,
+                u.is_active, u.password_changed_at, u.department_id, u.unit_id,
                 u.designation_id, u.designation
          FROM users u
          WHERE u.id = ? AND u.deleted_at IS NULL`,
@@ -185,7 +209,7 @@ const optionalProtect = async (req, res, next) => {
       );
     }
 
-    if (rows.length > 0 && rows[0].is_active) {
+    if (rows.length > 0 && rows[0].is_active && !issuedBeforePasswordChange(decoded, rows[0])) {
       req.user         = rows[0];
       req.user.unit_db = unit_db || 'central';
       req.db           = pool;
@@ -196,9 +220,9 @@ const optionalProtect = async (req, res, next) => {
         const targetUnitId = req.headers['x-unit-id'];
 
         if (targetUnitDb) {
-          try {
-            req.db = getPool(targetUnitDb);
-          } catch (_) {}
+          // Only DB names of active registered units — never an arbitrary database
+          const unitPool = await getActiveUnitPoolByDbName(targetUnitDb);
+          if (unitPool) req.db = unitPool;
         } else if (targetUnitId) {
           try {
             const [unitRows] = await centralPool.query(
@@ -218,4 +242,4 @@ const optionalProtect = async (req, res, next) => {
   next();
 };
 
-module.exports = { protect, optionalProtect };
+module.exports = { protect, optionalProtect, issuedBeforePasswordChange };

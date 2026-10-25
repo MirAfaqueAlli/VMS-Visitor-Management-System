@@ -17,8 +17,8 @@ const { validatePassword } = require('../utils/passwordValidator.util');
 const listUnits = async (req, res) => {
   try {
     const { search } = req.query;
-    const page   = Math.max(1, parseInt(req.query.page  || '1',  10));
-    const limit  = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const offset = (page - 1) * limit;
 
     const conditions = [];
@@ -138,6 +138,10 @@ const createUnit = async (req, res) => {
       if (!adminName || !adminName.trim() || !adminEmail || !adminEmail.trim() || !adminPass || !adminPass.trim() || !adminCode || !adminCode.trim()) {
         return sendError(res, 'Unit admin name, email, password, and employee code are required when creating an admin.', 400);
       }
+      // Check the password policy BEFORE creating anything — otherwise the unit gets
+      // provisioned without an admin and a retry fails with "code already exists"
+      const { valid, errors } = validatePassword(adminPass);
+      if (!valid) return sendError(res, `Unit admin password: ${errors[0]}`, 400);
     }
 
     const sanitizedCode = code.toUpperCase().trim();
@@ -184,10 +188,7 @@ const createUnit = async (req, res) => {
               password: adminPass, employee_code: adminCode } = unit_admin;
 
       if (adminName && adminEmail && adminPass && adminCode) {
-        // Enforce password policy
-        const { valid, errors } = validatePassword(adminPass);
-        if (!valid) return sendError(res, `Unit admin password: ${errors[0]}`, 400);
-
+        // (password policy already checked at the top)
         const hash = await bcrypt.hash(adminPass, 12);
         const unitPool = getPool(dbName);
         await unitPool.query(

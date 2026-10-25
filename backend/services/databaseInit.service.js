@@ -83,6 +83,23 @@ async function addColumnIfMissing(conn, dbName, tableName, columnName, columnDef
 }
 
 /**
+ * Safely adds an index if it does not already exist.
+ */
+async function addIndexIfMissing(conn, dbName, tableName, indexName, columnsSql) {
+  const [idx] = await conn.query(
+    `SELECT INDEX_NAME
+     FROM information_schema.STATISTICS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?
+     LIMIT 1`,
+    [dbName, tableName, indexName]
+  );
+  if (idx.length > 0) return false;
+
+  await conn.query(`CREATE INDEX \`${indexName}\` ON \`${dbName}\`.\`${tableName}\` ${columnsSql}`);
+  return true;
+}
+
+/**
  * Drops a foreign key constraint if it exists.
  */
 async function dropFkIfExists(conn, dbName, tableName, columnName) {
@@ -117,6 +134,11 @@ async function ensureCentralDatabase(adminConn) {
 
   const centralSchemaPath = path.join(__dirname, '../database/vms_central_schema.sql');
   await executeSqlFile(adminConn, centralSchemaPath, CENTRAL_DB);
+
+  // Wrong-guess counter for public OTPs (brute-force limit)
+  await addColumnIfMissing(adminConn, CENTRAL_DB, 'public_otp_logs', 'attempts', 'INT NOT NULL DEFAULT 0 AFTER is_used');
+  // Sessions issued before the last password change/reset are rejected (auth.middleware)
+  await addColumnIfMissing(adminConn, CENTRAL_DB, 'users', 'password_changed_at', 'DATETIME NULL AFTER password_hash');
 
   // Guarantee seed data is present in central lookup tables
   await adminConn.query(`USE \`${CENTRAL_DB}\``);
@@ -156,6 +178,29 @@ async function migrateUnitDatabase(conn, dbName) {
   // 1. Column migrations
   await addColumnIfMissing(conn, dbName, 'visit_requests', 'service_type', 'VARCHAR(100) NULL AFTER vendor_email');
   await addColumnIfMissing(conn, dbName, 'visit_requests', 'work_order_ref', 'VARCHAR(100) NULL AFTER service_type');
+  // Visitor's address from the public form (tender 1.1.1)
+  await addColumnIfMissing(conn, dbName, 'visit_requests', 'visitor_address', 'VARCHAR(255) NULL AFTER visitor_email');
+  // Visit-day reminder already sent (services/reminder.service.js)
+  await addColumnIfMissing(conn, dbName, 'visit_requests', 'reminder_sent_at', 'DATETIME NULL AFTER force_created');
+  // Cross-unit EMPLOYEE_VISIT requester (lives in another unit's DB)
+  await addColumnIfMissing(conn, dbName, 'visit_requests', 'cross_unit_requester_id', 'INT NULL AFTER requester_user_id');
+  await addColumnIfMissing(conn, dbName, 'visit_requests', 'requester_unit_id', 'INT NULL AFTER cross_unit_requester_id');
+  await addIndexIfMissing(conn, dbName, 'visit_requests', 'idx_visit_request_cross_requester', '(requester_unit_id, cross_unit_requester_id)');
+
+  // otp_logs: otp_code holds a 64-char SHA-256 hash (was VARCHAR(10), so inserts failed)
+  // and gets a wrong-guess counter (brute-force limit)
+  const [otpCol] = await conn.query(
+    `SELECT CHARACTER_MAXIMUM_LENGTH AS len FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'otp_logs' AND COLUMN_NAME = 'otp_code'`,
+    [dbName]
+  );
+  if (otpCol.length > 0 && otpCol[0].len < 64) {
+    await conn.query(`ALTER TABLE \`${dbName}\`.otp_logs MODIFY COLUMN otp_code VARCHAR(64) NOT NULL`);
+  }
+  await addColumnIfMissing(conn, dbName, 'otp_logs', 'attempts', 'INT NOT NULL DEFAULT 0 AFTER is_used');
+
+  // Sessions issued before the last password change/reset are rejected (auth.middleware)
+  await addColumnIfMissing(conn, dbName, 'users', 'password_changed_at', 'DATETIME NULL AFTER password_hash');
 
   // 2. request_source ENUM update (include 'PUBLIC')
   try {

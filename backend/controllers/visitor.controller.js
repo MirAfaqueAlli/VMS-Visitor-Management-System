@@ -2,7 +2,7 @@
 'use strict';
 
 const { sendSuccess, sendError } = require('../utils/response.util');
-const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { isSuperAdmin, isUnitAdmin, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
 const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
 
 // ── createVisitor ─────────────────────────────────────────────────────────────
@@ -126,8 +126,8 @@ const getVisitor = async (req, res) => {
       `SELECT id, id_type, id_number, is_primary, created_at FROM visitor_documents WHERE visitor_id = ?`,
       [id]
     );
-    // Decrypt id_number in each document
-    const decryptedProofs = decryptRows(idProofs, ['id_number']);
+    // Decrypt id_number in each document; mask it for roles that don't verify IDs at the gate
+    const decryptedProofs = decryptRows(idProofs, ['id_number'], { mask: !canViewFullIdNumbers(req.user) });
 
     const [blacklist] = await req.db.query(
       `SELECT id, reason, blacklisted_at FROM blacklisted_visitors WHERE visitor_id = ? AND is_active = TRUE LIMIT 1`,
@@ -200,7 +200,7 @@ const listVisitors = async (req, res) => {
 const addToBlacklist = async (req, res) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
+    const { reason } = req.body ?? {}; // Express 5: body is undefined when none is sent
 
     if (!reason || !reason.trim()) return sendError(res, 'reason is required.', 400);
 
@@ -234,7 +234,7 @@ const addToBlacklist = async (req, res) => {
 const liftBlacklist = async (req, res) => {
   try {
     const { id } = req.params;
-    const { lift_reason } = req.body;
+    const { lift_reason } = req.body ?? {};
 
     const [blRows] = await req.db.query(
       'SELECT id FROM blacklisted_visitors WHERE visitor_id = ? AND is_active = TRUE LIMIT 1', [id]

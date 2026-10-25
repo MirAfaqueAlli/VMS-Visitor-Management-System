@@ -5,7 +5,7 @@ const bcrypt = require('bcrypt');
 const { validatePassword } = require('../utils/passwordValidator.util');
 const { centralPool, getPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
-const { logAudit }               = require('../utils/auditLogger.util');
+const { logAudit, auditActor } = require('../utils/auditLogger.util');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 
 // ── Role sets ─────────────────────────────────────────────────────────────────
@@ -19,8 +19,8 @@ const UNIT_MANAGEABLE_ROLES = ['unit_admin', 'employee', 'security', 'receptioni
 const listUsers = async (req, res) => {
   try {
     const { role, search } = req.query;
-    const page   = Math.max(1, parseInt(req.query.page  || '1',  10));
-    const limit  = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const offset = (page - 1) * limit;
 
     const conditions = ['u.deleted_at IS NULL'];
@@ -82,6 +82,13 @@ const listHosts = async (req, res) => {
   try {
     const { department_id, unit_code, unit_id, include_all } = req.query;
 
+    // Unauthenticated callers (public visitor form) only get a department-scoped
+    // list of names — never contact details or the whole staff directory.
+    const isPublic = !req.user;
+    if (isPublic && !department_id) {
+      return sendError(res, 'department_id is required.', 400);
+    }
+
     let dbPool = null;
     const isCrossUnit = !!(unit_id || unit_code); // visiting a specific unit by ID or code
 
@@ -129,14 +136,20 @@ const listHosts = async (req, res) => {
         : `u.role_type = 'employee'`;
     }
 
-    let rows;
-    if (include_all === 'true' || !department_id) {
-      // No department filter — return all eligible users in the unit
-      [rows] = await dbPool.query(
-        `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
+    const columns = isPublic
+      ? `u.id, u.full_name, u.designation,
+                des.name AS designation_name,
+                d.name AS department_name`
+      : `u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
                 u.role_type, u.department_id, u.unit_id,
                 des.name AS designation_name,
-                d.name AS department_name
+                d.name AS department_name`;
+
+    let rows;
+    if (!isPublic && (include_all === 'true' || !department_id)) {
+      // No department filter — return all eligible users in the unit
+      [rows] = await dbPool.query(
+        `SELECT ${columns}
          FROM users u
          LEFT JOIN departments d    ON d.id   = u.department_id
          LEFT JOIN designations des ON des.id = u.designation_id
@@ -148,10 +161,7 @@ const listHosts = async (req, res) => {
     } else {
       // Department-scoped lookup
       [rows] = await dbPool.query(
-        `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
-                u.role_type, u.department_id, u.unit_id,
-                des.name AS designation_name,
-                d.name AS department_name
+        `SELECT ${columns}
          FROM users u
          LEFT JOIN departments d    ON d.id   = u.department_id
          LEFT JOIN designations des ON des.id = u.designation_id
@@ -287,8 +297,7 @@ const createUser = async (req, res) => {
     );
 
     await logAudit({
-      db:        req.db,
-      userId:    req.user.id,
+      ...auditActor(req), // central users → global audit log (see auditActor)
       action:    'CREATE_USER',
       module:    'ADMIN',
       recordType: 'USER',
@@ -369,8 +378,7 @@ const updateUser = async (req, res) => {
     );
 
     await logAudit({
-      db:        req.db,
-      userId:    req.user.id,
+      ...auditActor(req), // central users → global audit log (see auditActor)
       action:    'UPDATE_USER',
       module:    'ADMIN',
       recordType: 'USER',
@@ -393,8 +401,10 @@ const updateUser = async (req, res) => {
 const deactivateUser = async (req, res) => {
   try {
     const { id } = req.params;
+    // Central users (super_admin) have vms_central ids — never compare/store them as unit user ids
+    const isCentralActor = req.user.unit_db === 'central';
 
-    if (parseInt(id) === req.user.id) {
+    if (!isCentralActor && parseInt(id) === req.user.id) {
       return sendError(res, 'You cannot deactivate your own account.', 400);
     }
 
@@ -409,12 +419,12 @@ const deactivateUser = async (req, res) => {
 
     await req.db.query(
       `UPDATE users SET is_active = FALSE, deleted_at = NOW(), deleted_by = ?, updated_at = NOW() WHERE id = ?`,
-      [req.user.id, id]
+      // deleted_by refers to this unit's users; a central actor is recorded in global_audit_logs
+      [isCentralActor ? null : req.user.id, id]
     );
 
     await logAudit({
-      db:        req.db,
-      userId:    req.user.id,
+      ...auditActor(req), // central users → global audit log (see auditActor)
       action:    'DEACTIVATE_USER',
       module:    'ADMIN',
       recordType: 'USER',

@@ -9,6 +9,7 @@ import {
 import useAuth from '../../hooks/useAuth';
 import apiClient from '../../api/axios';
 import { getApiErrorMessage } from '../../utils/apiError';
+import AuthLayout from '../../components/AuthLayout';
 
 /* -- Custom Unit Dropdown (avoids native select OS dark-mode popup) --------- */
 function UnitDropdown({ value, units, loading, onChange, inputStyle }) {
@@ -108,6 +109,9 @@ export default function Login() {
   const [otp,         setOtp]         = useState(['', '', '', '', '', '']);
   const [resendTimer, setResendTimer] = useState(0);
   const otpRefs = useRef([]);
+
+  // -- Step 3 (forgot password) state
+  const [forgotSent, setForgotSent] = useState(false);
 
   // -- Shared state
   const [isLoading, setIsLoading] = useState(false);
@@ -241,6 +245,26 @@ export default function Login() {
     }
   };
 
+  // -- Step 3: forgot password — emails a reset link. The API answers the same
+  //    whether or not the account exists, so we always show the same message.
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (codeStatus === 'invalid') { setError('Invalid unit code in URL.'); return; }
+    if (!isGlobalContext && !unitId) { setError('Please select your unit / branch first.'); return; }
+    setIsLoading(true);
+    try {
+      const body = { email };
+      if (!isGlobalContext) body.unit_id = parseInt(unitId, 10);
+      await apiClient.post('/auth/forgot-password', body);
+      setForgotSent(true);
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Could not send the reset link. Please try again.'));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   /* -- Styles -- */
   const fieldWrap = { position: 'relative', marginBottom: '16px' };
   const labelStyle = {
@@ -269,29 +293,41 @@ export default function Login() {
     e.target.style.background = '#f8fafc';
   };
 
-  return (
-    <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      // background: 'linear-gradient(135deg, #eff6ff 0%, #f0f4ff 50%, #e8eeff 100%)',
-      padding: '16px', fontFamily: 'Inter, system-ui, sans-serif',
-    }}
-    className="bg-bg-secondary"
-    >
-      {/* Card */}
-      <div style={{
-        width: '100%', maxWidth: '440px', borderRadius: '20px',
-        boxShadow: '0 20px 60px rgba(15,30,80,0.12)', background: 'white',
-        padding: 'clamp(28px, 5vw, 44px) clamp(24px, 5vw, 40px) 32px',
-      }}>
-        {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '28px' }}>
-          <img src="/logo.png" alt="VMS Logo"
-            style={{ width: '34px', height: '34px', objectFit: 'contain', borderRadius: '7px' }} />
-          <div>
-            <p style={{ fontWeight: 800, fontSize: '15px', color: '#1e3a8a', lineHeight: 1 }}>VMS</p>
-            <p style={{ fontSize: '10px', color: '#60a5fa', marginTop: '2px', lineHeight: 1 }}>Visitor Management System</p>
+  // Unit selector — shared by the sign-in and forgot-password forms
+  const unitSelectorField = (
+    <div style={fieldWrap}>
+      <label style={labelStyle}>{isLocked ? 'Unit / Branch' : 'Select Your Unit / Branch *'}</label>
+      <div style={{ position: 'relative' }}>
+        <Building2 size={14} strokeWidth={1.8} style={{ ...iconStyle, top: '50%' }} />
+        {isLocked ? (
+          <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', cursor: 'not-allowed', border: '1.5px solid #93c5fd' }}>
+            <span style={{ flex: 1, fontSize: '13px', color: '#0f172a' }}>
+              {codeStatus === 'loading' ? 'Verifying...'
+                : codeStatus === 'valid'
+                  ? `${lockedUnit?.name}${lockedUnit?.city ? ` - ${lockedUnit.city}` : ''}`
+                  : `Unknown: ${unitCode?.toUpperCase()}`}
+            </span>
+            <span style={{
+              fontSize: '9px', fontWeight: 700, textTransform: 'uppercase',
+              letterSpacing: '0.08em', padding: '2px 8px', borderRadius: '4px',
+              background: 'rgba(59,130,246,0.1)', color: '#3b82f6',
+            }}>{unitCode?.toUpperCase()}</span>
           </div>
-        </div>
+        ) : (
+          <UnitDropdown
+            value={unitId}
+            units={units}
+            loading={unitsLoading}
+            onChange={(val) => { setUnitId(val); setError(''); }}
+            inputStyle={inputStyle}
+          />
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <AuthLayout>
 
         {/* STEP 1: Credentials */}
         {step === 1 && (
@@ -328,35 +364,7 @@ export default function Login() {
 
             <form onSubmit={handleSubmit}>
               {/* Unit Selector */}
-              <div style={fieldWrap}>
-                <label style={labelStyle}>{isLocked ? 'Unit / Branch' : 'Select Your Unit / Branch *'}</label>
-                <div style={{ position: 'relative' }}>
-                  <Building2 size={14} strokeWidth={1.8} style={{ ...iconStyle, top: '50%' }} />
-                  {isLocked ? (
-                    <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', cursor: 'not-allowed', border: '1.5px solid #93c5fd' }}>
-                      <span style={{ flex: 1, fontSize: '13px', color: '#0f172a' }}>
-                        {codeStatus === 'loading' ? 'Verifying...'
-                          : codeStatus === 'valid'
-                            ? `${lockedUnit?.name}${lockedUnit?.city ? ` - ${lockedUnit.city}` : ''}`
-                            : `Unknown: ${unitCode?.toUpperCase()}`}
-                      </span>
-                      <span style={{
-                        fontSize: '9px', fontWeight: 700, textTransform: 'uppercase',
-                        letterSpacing: '0.08em', padding: '2px 8px', borderRadius: '4px',
-                        background: 'rgba(59,130,246,0.1)', color: '#3b82f6',
-                      }}>{unitCode?.toUpperCase()}</span>
-                    </div>
-                  ) : (
-                    <UnitDropdown
-                      value={unitId}
-                      units={units}
-                      loading={unitsLoading}
-                      onChange={(val) => { setUnitId(val); setError(''); }}
-                      inputStyle={inputStyle}
-                    />
-                  )}
-                </div>
-              </div>
+              {unitSelectorField}
 
               {/* Email */}
               <div style={fieldWrap}>
@@ -405,6 +413,15 @@ export default function Login() {
                     {showPassword ? <EyeOff size={14} strokeWidth={1.8} /> : <Eye size={14} strokeWidth={1.8} />}
                   </button>
                 </div>
+                <div style={{ textAlign: 'right', marginTop: '6px' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setStep(3); setError(''); setForgotSent(false); }}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#3b82f6', fontSize: '12px', fontWeight: 600, fontFamily: 'Inter, system-ui, sans-serif' }}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
               </div>
 
               {error && (
@@ -424,12 +441,12 @@ export default function Login() {
                 disabled={isLoading || codeStatus === 'loading' || codeStatus === 'invalid'}
                 style={{
                   width: '100%', padding: '12px', borderRadius: '10px', border: 'none',
-                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: 'white',
+                  background: '#13315c', color: 'white',
                   fontSize: '14px', fontWeight: 700,
                   cursor: isLoading ? 'not-allowed' : 'pointer',
                   opacity: (isLoading || codeStatus === 'loading' || codeStatus === 'invalid') ? 0.7 : 1,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  boxShadow: '0 4px 14px rgba(59,130,246,0.4)',
+                  boxShadow: '0 4px 14px rgba(19,49,92,0.25)',
                   transition: 'opacity 150ms',
                   fontFamily: 'Inter, system-ui, sans-serif',
                   letterSpacing: '0.02em', marginBottom: '16px',
@@ -479,19 +496,11 @@ export default function Login() {
             </button>
 
             <div style={{ marginBottom: '24px' }}>
-              <div style={{
-                width: '44px', height: '44px', borderRadius: '12px',
-                background: 'rgba(59,130,246,0.10)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                marginBottom: '14px',
-              }}>
-                <KeyRound size={22} style={{ color: '#3b82f6' }} strokeWidth={1.8} />
-              </div>
               <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Check your email</h2>
-              <p style={{ fontSize: '13px', color: '#64748b', marginTop: '6px', lineHeight: 1.6 }}>
-                We sent a 6-digit verification code to
+              <p style={{ fontSize: '13px', color: '#64748b', marginTop: '39px', lineHeight: 1.6 }}>
+                We sent a 6-digit verification code to  <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e3a8a', marginTop: '2px' }}>{maskedEmail}</span>
               </p>
-              <p style={{ fontSize: '13px', fontWeight: 700, color: '#1e3a8a', marginTop: '2px' }}>{maskedEmail}</p>
+             
             </div>
 
             <form onSubmit={handleOtpSubmit}>
@@ -546,12 +555,12 @@ export default function Login() {
                 disabled={isLoading || otp.join('').length < 6}
                 style={{
                   width: '100%', padding: '12px', borderRadius: '10px', border: 'none',
-                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: 'white',
+                  background: '#13315c', color: 'white',
                   fontSize: '14px', fontWeight: 700,
                   cursor: (isLoading || otp.join('').length < 6) ? 'not-allowed' : 'pointer',
                   opacity: (isLoading || otp.join('').length < 6) ? 0.6 : 1,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  boxShadow: '0 4px 14px rgba(59,130,246,0.4)',
+                  boxShadow: '0 4px 14px rgba(19,49,92,0.25)',
                   transition: 'opacity 150ms',
                   fontFamily: 'Inter, system-ui, sans-serif',
                   letterSpacing: '0.02em', marginBottom: '14px',
@@ -595,11 +604,87 @@ export default function Login() {
           </>
         )}
 
-        {/* Footer */}
-        <p style={{ textAlign: 'center', fontSize: '11px', color: '#cbd5e1', marginTop: '24px', letterSpacing: '0.05em' }}>
-          &copy; {new Date().getFullYear()} SOBEIT TECHNOLOGY. All rights reserved.
-        </p>
-      </div>
-    </div>
+        {/* STEP 3: Forgot password */}
+        {step === 3 && (
+          <>
+            <button
+              onClick={() => { setStep(1); setError(''); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '5px',
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#64748b', fontSize: '12px', padding: '0 0 20px 0',
+                fontFamily: 'Inter, system-ui, sans-serif',
+              }}
+            >
+              <ArrowLeft size={13} strokeWidth={2} /> Back to sign in
+            </button>
+
+            
+
+            {forgotSent ? (
+              <div style={{
+                display: 'flex', alignItems: 'flex-start', gap: '8px',
+                padding: '12px 14px', borderRadius: '8px',
+                background: '#f0fdf4', border: '1.5px solid #86efac', color: '#16a34a', fontSize: '13px', lineHeight: 1.5,
+              }}>
+                <CheckCircle2 size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <span>If an account exists for <strong>{email}</strong>, a reset link has been sent to it. The link expires in 30 minutes.</span>
+              </div>
+            ) : (
+              <form onSubmit={handleForgotSubmit}>
+                {unitSelectorField}
+
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Email address</label>
+                  <div style={{ position: 'relative' }}>
+                    <Mail size={14} strokeWidth={1.8} style={iconStyle} />
+                    <input
+                      type="email"
+                      required
+                      autoComplete="email"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      placeholder="you@company.com"
+                      style={inputStyle}
+                      onFocus={inputFocus}
+                      onBlur={inputBlur}
+                    />
+                  </div>
+                </div>
+
+                {error && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '10px 14px', borderRadius: '8px', marginBottom: '16px',
+                    background: '#fef2f2', border: '1.5px solid #fca5a5', color: '#dc2626', fontSize: '12px',
+                  }}>
+                    <AlertCircle size={13} style={{ flexShrink: 0 }} />
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isLoading || codeStatus === 'loading' || codeStatus === 'invalid'}
+                  style={{
+                    width: '100%', padding: '12px', borderRadius: '10px', border: 'none',
+                    background: '#13315c', color: 'white',
+                    fontSize: '14px', fontWeight: 700,
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    opacity: isLoading ? 0.7 : 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                    boxShadow: '0 4px 14px rgba(19,49,92,0.25)',
+                    fontFamily: 'Inter, system-ui, sans-serif',
+                    letterSpacing: '0.02em',
+                  }}
+                >
+                  {isLoading ? 'Sending...' : 'Send reset link'}
+                </button>
+              </form>
+            )}
+          </>
+        )}
+
+    </AuthLayout>
   );
 }

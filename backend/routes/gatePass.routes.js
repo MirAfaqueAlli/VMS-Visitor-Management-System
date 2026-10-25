@@ -9,10 +9,11 @@ const { authorize } = require('../middlewares/rbac.middleware');
 const ctrl          = require('../controllers/gatePass.controller');
 
 // POST /api/passes/generate/:requestId — manually generate/re-fetch a gate pass
+// (unit staff only — super_admin is read-only inside units)
 router.post(
   '/generate/:requestId',
   protect,
-  authorize('super_admin', 'unit_admin', 'security', 'receptionist'),
+  authorize('unit_admin', 'security', 'receptionist'),
   ctrl.generatePass
 );
 
@@ -36,7 +37,7 @@ router.get(
 router.put(
   '/:id/cancel',
   protect,
-  authorize('super_admin', 'unit_admin'),
+  authorize('unit_admin'),
   ctrl.cancelPass
 );
 

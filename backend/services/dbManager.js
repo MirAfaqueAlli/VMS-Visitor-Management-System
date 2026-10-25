@@ -17,8 +17,9 @@ require('dotenv').config();
  */
 
 const BASE_CONFIG = {
-  host:               process.env.DB_HOST     || 'localhost',
-  user:               process.env.DB_USER     || 'root',
+  host:               process.env.DB_HOST     ,
+  port:               parseInt(process.env.DB_PORT || '3306', 10),
+  user:               process.env.DB_USER     ,
   password:           process.env.DB_PASSWORD || process.env.DB_PASS || '',
   waitForConnections: true,
   connectionLimit:    10,
@@ -27,6 +28,10 @@ const BASE_CONFIG = {
 
 // Registry: dbName → mysql2 Pool
 const pools = new Map();
+
+// Every session runs in IST so NOW() / CURDATE() match the app's "today"
+// (server.js pins the Node process to IST too). Override with DB_SESSION_TIMEZONE.
+const DB_SESSION_TIMEZONE = process.env.DB_SESSION_TIMEZONE || '+05:30';
 
 /**
  * getPool(dbName)
@@ -38,6 +43,12 @@ function getPool(dbName) {
   }
   if (!pools.has(dbName)) {
     const pool = mysql.createPool({ ...BASE_CONFIG, database: dbName });
+    // Runs on each new physical connection, queued before any query that uses it
+    pool.on('connection', (conn) => {
+      conn.query('SET time_zone = ?', [DB_SESSION_TIMEZONE], (err) => {
+        if (err) console.error(`[DBManager] Failed to set time_zone for ${dbName}:`, err.message);
+      });
+    });
     pools.set(dbName, pool);
   }
   return pools.get(dbName);
@@ -46,6 +57,22 @@ function getPool(dbName) {
 // Central DB pool — always available
 const CENTRAL_DB_NAME = process.env.DB_CENTRAL_NAME || 'vms_central';
 const centralPool = getPool(CENTRAL_DB_NAME);
+
+/**
+ * getActiveUnitPoolByDbName(dbName)
+ * Returns the pool for dbName only if it belongs to an active unit in the
+ * central registry, otherwise null. Use this for any DB name that comes from a
+ * request (header / query string) — getPool() trusts its input and would open
+ * a new pool for any database the MySQL user can reach.
+ */
+async function getActiveUnitPoolByDbName(dbName) {
+  if (!dbName || typeof dbName !== 'string') return null;
+  const [rows] = await centralPool.query(
+    "SELECT db_name FROM units WHERE db_name = ? AND is_active = 1 AND db_status = 'ACTIVE' LIMIT 1",
+    [dbName]
+  );
+  return rows.length ? getPool(rows[0].db_name) : null;
+}
 
 /**
  * provisionUnitDb(dbName)
@@ -57,6 +84,7 @@ async function provisionUnitDb(dbName) {
 
   const adminConn = await mysql.createConnection({
     host:     BASE_CONFIG.host,
+    port:     BASE_CONFIG.port,
     user:     BASE_CONFIG.user,
     password: BASE_CONFIG.password,
   });
@@ -110,4 +138,7 @@ async function closeAll() {
   }
 }
 
-module.exports = { getPool, centralPool, CENTRAL_DB_NAME, provisionUnitDb, queryAllUnits, closeAll };
+module.exports = {
+  getPool, getActiveUnitPoolByDbName, centralPool, CENTRAL_DB_NAME,
+  provisionUnitDb, queryAllUnits, closeAll,
+};

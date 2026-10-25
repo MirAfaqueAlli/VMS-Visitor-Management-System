@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS users (
     email           VARCHAR(100) UNIQUE NOT NULL,
     phone           VARCHAR(20)  UNIQUE,
     password_hash   VARCHAR(255) NOT NULL,
+    password_changed_at DATETIME NULL,  -- sessions issued before this are rejected
     designation     VARCHAR(100),
     is_active       BOOLEAN      DEFAULT TRUE,
     last_login_at   TIMESTAMP    NULL,
@@ -96,7 +97,12 @@ CREATE TABLE IF NOT EXISTS visit_requests (
     visitor_phone     VARCHAR(20)  NULL,
     visitor_name      VARCHAR(100) NULL,
     visitor_email     VARCHAR(100) NULL,
+    visitor_address   VARCHAR(255) NULL,
     requester_user_id INT          NULL,
+    -- Cross-unit EMPLOYEE_VISIT: the requester lives in another unit's DB, so their
+    -- id + unit are kept here (requester_user_id only ever refers to this unit's users)
+    cross_unit_requester_id INT    NULL,
+    requester_unit_id       INT    NULL,
     host_user_id      INT          NOT NULL,
     department_id     INT          NULL,
     unit_id           INT          NOT NULL,
@@ -117,6 +123,7 @@ CREATE TABLE IF NOT EXISTS visit_requests (
     approved_by       INT          NULL,
     approved_at       TIMESTAMP    NULL,
     force_created     BOOLEAN      DEFAULT FALSE,
+    reminder_sent_at  DATETIME     NULL,   -- visit-day reminder to the visitor (reminder.service)
     created_at        TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (visitor_id)        REFERENCES visitors(id),
@@ -254,9 +261,10 @@ CREATE TABLE IF NOT EXISTS otp_logs (
     id            INT         AUTO_INCREMENT PRIMARY KEY,
     user_id       INT         NULL,
     mobile_number VARCHAR(20) NOT NULL,
-    otp_code      VARCHAR(10) NOT NULL,
+    otp_code      VARCHAR(64) NOT NULL,   -- SHA-256 hex of the OTP
     purpose       VARCHAR(50),
     is_used       BOOLEAN     DEFAULT FALSE,
+    attempts      INT         NOT NULL DEFAULT 0,
     expires_at    TIMESTAMP   NOT NULL,
     created_at    TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

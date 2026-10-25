@@ -23,6 +23,7 @@ const sendOtp = async (req, res) => {
 
     const userId = req.user?.id || null;
     const result = await otpService.sendOtp(req.db, phone, purpose, userId);
+    if (!result.success) return sendError(res, result.message, 502);
     return sendSuccess(res, result, result.message, 200);
   } catch (err) {
     console.error('[OtpController] sendOtp error:', err.message);

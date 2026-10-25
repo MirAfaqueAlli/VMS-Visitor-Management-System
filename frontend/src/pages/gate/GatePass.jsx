@@ -126,12 +126,13 @@ export default function GatePass() {
 
  {/* QR Code */}
  <div className="shrink-0 p-2 bg-white rounded-md shadow-soft-sm border border-subtle">
- {passData.qr_code_path ? (
+ {/* qr_code_path is a short-lived signed S3 link from the API (null for old pre-S3 passes).
+     No crossOrigin attribute: it would require a CORS rule on the private bucket. */}
+ {/^https?:\/\//.test(passData.qr_code_path ?? '') ? (
  <img
- src={`${import.meta.env.VITE_API_URL?.replace('/api', '') ?? 'http://localhost:5000'}/${passData.qr_code_path}`}
+ src={passData.qr_code_path}
  alt="QR Code"
  className="w-24 h-24 object-contain"
- crossOrigin="anonymous"
  />
  ) : (
  <div className="w-24 h-24 bg-gray-100 flex items-center justify-center text-xs text-gray-400">

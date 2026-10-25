@@ -252,10 +252,11 @@ const publicVerifyEmailOtpSchema = z.object({
   otp:            z.string({ required_error: 'OTP is required.' }).regex(/^\d{6}$/, 'OTP must be exactly 6 digits.'),
   visitor_name:   z.string().trim().min(2, 'Name must be at least 2 characters.').optional(),
   visitor_phone:  phoneFieldOpt.optional(),
-  aadhaar_number: z.preprocess(
-    (v) => (v === '' || v === undefined || v === null) ? null : v,
-    z.string().trim().regex(/^\d{12}$/, 'Aadhaar must be exactly 12 digits.').nullable()
-  ).optional(),
+  // Tender 1.1.1: outside visitors provide name, address, email and mobile
+  visitor_address: z.string({ error: 'Address is required.' }).trim()
+    .min(5, 'Please enter your full address.').max(255, 'Address is too long (max 255 characters).'),
+  // From verify-phone-otp — proves the visitor owns visitor_phone
+  phone_token:    z.string({ error: 'Please verify your mobile number first.' }).min(1, 'Please verify your mobile number first.'),
 });
 
 // ── Exports ───────────────────────────────────────────────────────────────────

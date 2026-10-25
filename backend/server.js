@@ -1,9 +1,13 @@
 // backend/server.js
 'use strict';
 
+// OHPC operates in IST. Pin the process timezone before anything uses Date, so
+// "today" (check-in date check, dashboards, pass numbers, email dates) is the IST
+// date even on a UTC cloud server. MySQL sessions are pinned too (services/dbManager.js).
+process.env.TZ = 'Asia/Kolkata';
+
 const express = require('express');
 const http = require('http');
-const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -55,8 +59,8 @@ app.use('/api/', limiter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ── Static assets (uploaded photos & QR codes) ───────────────────────────────
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Uploaded photos & QR codes live in S3 (utils/s3.util.js). The old public
+// /uploads static route was removed — it served ID proofs without any auth.
 
 // ── API routes ────────────────────────────────────────────────────────────────
 app.use('/api/setup', setupRoutes);
@@ -111,12 +115,14 @@ const server = http.createServer(app);
 initSocket(server);
 
 const { autoMigrate } = require('./services/databaseInit.service');
+const { startReminderScheduler } = require('./services/reminder.service');
 
 async function start() {
   try {
     await autoMigrate();
     server.listen(PORT, () => {
       console.log(`[Server] VMS backend running on port ${PORT}`);
+      startReminderScheduler(); // daily visit/approval reminders (tender 1.3)
     });
   } catch (err) {
     console.error('[Server] Fatal error initializing database:', err.message);
