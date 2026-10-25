@@ -1,0 +1,1105 @@
+// backend/scripts/generate_postman_collection.js
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+const collection = {
+  info: {
+    name: "VMS - Visitor Management System API",
+    description: "Complete API collection for automated and manual testing in Postman, Insomnia, or Thunder Client.\n\nPre-configured with authentication token auto-capture on login, sample payloads, and complete route coverage across all 16 modules.",
+    schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  variable: [
+    { key: "base_url", value: "http://localhost:5001/api", type: "string" },
+    { key: "token", value: "", type: "string" },
+    { key: "login_temp_token", value: "", type: "string" },
+    { key: "visitor_token", value: "", type: "string" },
+    { key: "unit_code", value: "U1", type: "string" },
+    { key: "unit_id", value: "1", type: "string" },
+    { key: "request_id", value: "1", type: "string" },
+    { key: "visitor_id", value: "1", type: "string" },
+    { key: "user_id", value: "1", type: "string" },
+    { key: "pass_number", value: "GP-20261025-0001", type: "string" }
+  ],
+  item: [
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1. HEALTH & SYSTEM SETUP
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "1. System Health & Setup",
+      item: [
+        {
+          name: "Health Check",
+          request: {
+            method: "GET",
+            header: [],
+            url: { raw: "{{base_url}}/health", host: ["{{base_url}}"], path: ["health"] },
+            description: "Check if backend server is live and connected to MySQL database."
+          }
+        },
+        {
+          name: "Setup Status",
+          request: {
+            method: "GET",
+            header: [],
+            url: { raw: "{{base_url}}/setup/status", host: ["{{base_url}}"], path: ["setup", "status"] },
+            description: "Check whether initial system setup has already been completed."
+          }
+        },
+        {
+          name: "One-Time Setup Initialization",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                org_name: "Government Headquarters",
+                org_code: "GOV-HQ",
+                admin_name: "Kalvin Clarke",
+                admin_email: "kalvinclarke.http@gmail.com",
+                admin_password: "AdminPassword@123",
+                admin_phone: "9876543210",
+                employee_code: "EMP-001"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/setup", host: ["{{base_url}}"], path: ["setup"] },
+            description: "One-time initial bootstrap: creates organization and initial super_admin account."
+          }
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2. AUTHENTICATION & SESSION
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "2. Authentication & 2FA",
+      item: [
+        {
+          name: "Login Step 1 (Credentials -> 2FA Email OTP)",
+          event: [
+            {
+              listen: "test",
+              script: {
+                exec: [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.data && json.data.loginToken) {",
+                  "        pm.collectionVariables.set('login_temp_token', json.data.loginToken);",
+                  "        console.log('Saved login_temp_token:', json.data.loginToken);",
+                  "    }",
+                  "}"
+                ],
+                type: "text/javascript"
+              }
+            }
+          ],
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                email: "kalvinclarke.http@gmail.com",
+                password: "AdminPassword@123",
+                unit_code: ""
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/auth/login", host: ["{{base_url}}"], path: ["auth", "login"] },
+            description: "Validates email and password. In non-production mode, the 6-digit OTP code is logged in the backend console. Account locks for 15 minutes after 5 consecutive bad passwords."
+          }
+        },
+        {
+          name: "Login Step 2 (Verify 2FA OTP -> Issues JWT)",
+          event: [
+            {
+              listen: "test",
+              script: {
+                exec: [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.data && json.data.token) {",
+                  "        pm.collectionVariables.set('token', json.data.token);",
+                  "        console.log('✅ Captured session JWT into {{token}}');",
+                  "    }",
+                  "}"
+                ],
+                type: "text/javascript"
+              }
+            }
+          ],
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                loginToken: "{{login_temp_token}}",
+                otp: "123456"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/auth/verify-login-otp", host: ["{{base_url}}"], path: ["auth", "verify-login-otp"] },
+            description: "Verifies the 6-digit OTP code and receives the authentic session JWT token."
+          }
+        },
+        {
+          name: "Get Current Profile (Me)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: { raw: "{{base_url}}/auth/me", host: ["{{base_url}}"], path: ["auth", "me"] },
+            description: "Returns currently authenticated user profile with permissions and active role."
+          }
+        },
+        {
+          name: "Refresh Session Token",
+          request: {
+            method: "POST",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: { raw: "{{base_url}}/auth/refresh", host: ["{{base_url}}"], path: ["auth", "refresh"] },
+            description: "Refreshes session token."
+          }
+        },
+        {
+          name: "Change Password",
+          request: {
+            method: "PUT",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                currentPassword: "OldPassword@123",
+                newPassword: "NewSecurePassword@123"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/auth/change-password", host: ["{{base_url}}"], path: ["auth", "change-password"] }
+          }
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3. PUBLIC VISITOR AUTH & REQUESTS
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "3. Public Visitor Auth & Verification",
+      item: [
+        {
+          name: "Send Email OTP (Public)",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                email: "visitor@example.com"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/public-auth/send-email-otp", host: ["{{base_url}}"], path: ["public-auth", "send-email-otp"] }
+          }
+        },
+        {
+          name: "Verify Firebase Phone ID Token",
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                phone: "9876543210",
+                idToken: "FIREBASE_ID_TOKEN_HERE"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/public-auth/verify-firebase-phone", host: ["{{base_url}}"], path: ["public-auth", "verify-firebase-phone"] }
+          }
+        },
+        {
+          name: "Verify Email OTP + Issue Visitor Token",
+          event: [
+            {
+              listen: "test",
+              script: {
+                exec: [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.data && json.data.visitor_token) {",
+                  "        pm.collectionVariables.set('visitor_token', json.data.visitor_token);",
+                  "        console.log('Saved visitor_token:', json.data.visitor_token);",
+                  "    }",
+                  "}"
+                ],
+                type: "text/javascript"
+              }
+            }
+          ],
+          request: {
+            method: "POST",
+            header: [{ key: "Content-Type", value: "application/json" }],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                email: "visitor@example.com",
+                otp: "123456",
+                visitor_name: "Rahul Verma",
+                visitor_phone: "9876543210",
+                aadhaar_number: "123456789012"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/public-auth/verify-email-otp", host: ["{{base_url}}"], path: ["public-auth", "verify-email-otp"] }
+          }
+        },
+        {
+          name: "Public Phone Lookup Check",
+          request: {
+            method: "GET",
+            header: [],
+            url: {
+              raw: "{{base_url}}/visit-requests/lookup-visitor?phone=9876543210&unit_code={{unit_code}}",
+              host: ["{{base_url}}"],
+              path: ["visit-requests", "lookup-visitor"],
+              query: [
+                { key: "phone", value: "9876543210" },
+                { key: "unit_code", value: "{{unit_code}}" }
+              ]
+            }
+          }
+        },
+        {
+          name: "Submit Public Visit Request",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{visitor_token}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                unit_code: "{{unit_code}}",
+                department_id: 1,
+                host_user_id: 2,
+                visitor_name: "Rahul Verma",
+                visitor_phone: "9876543210",
+                visitor_email: "visitor@example.com",
+                aadhaar_number: "123456789012",
+                purpose: "Vendor inspection meeting",
+                service_type: "Inspection",
+                work_order_ref: "WO-9921",
+                start_date: "2026-10-26T10:00:00.000Z",
+                end_date: "2026-10-26T12:00:00.000Z"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/visit-requests/public", host: ["{{base_url}}"], path: ["visit-requests", "public"] }
+          }
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 4. UNITS MANAGEMENT (Super Admin)
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "4. Units Management",
+      item: [
+        {
+          name: "List Public Units (No Auth)",
+          request: {
+            method: "GET",
+            header: [],
+            url: { raw: "{{base_url}}/units/public", host: ["{{base_url}}"], path: ["units", "public"] }
+          }
+        },
+        {
+          name: "Get Unit by Code (No Auth)",
+          request: {
+            method: "GET",
+            header: [],
+            url: { raw: "{{base_url}}/units/by-code/{{unit_code}}", host: ["{{base_url}}"], path: ["units", "by-code", "{{unit_code}}"] }
+          }
+        },
+        {
+          name: "List All Units (Admin/Auditor)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: {
+              raw: "{{base_url}}/units?page=1&limit=10&search=",
+              host: ["{{base_url}}"],
+              path: ["units"],
+              query: [
+                { key: "page", value: "1" },
+                { key: "limit", value: "10" },
+                { key: "search", value: "" }
+              ]
+            }
+          }
+        },
+        {
+          name: "Get Unit by ID",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: { raw: "{{base_url}}/units/{{unit_id}}", host: ["{{base_url}}"], path: ["units", "{{unit_id}}"] }
+          }
+        },
+        {
+          name: "Create New Unit (Super Admin)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                name: "Unit 3 Regional Office",
+                code: "U3",
+                type: "Regional",
+                city: "Bhubaneswar",
+                state: "Odisha",
+                phone: "0674-2555666",
+                email: "unit3@gov.in",
+                admin_name: "Unit 3 Admin",
+                admin_email: "unit3admin@gov.in",
+                admin_phone: "9123456780",
+                admin_password: "Unit3Password@123",
+                employee_code: "U3-001"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/units", host: ["{{base_url}}"], path: ["units"] }
+          }
+        },
+        {
+          name: "Update Unit",
+          request: {
+            method: "PUT",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                name: "Updated Unit 1 Name",
+                city: "New Delhi",
+                state: "Delhi",
+                phone: "011-23344555",
+                email: "unit1@gov.in"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/units/{{unit_id}}", host: ["{{base_url}}"], path: ["units", "{{unit_id}}"] }
+          }
+        },
+        {
+          name: "Deactivate Unit",
+          request: {
+            method: "DELETE",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: { raw: "{{base_url}}/units/{{unit_id}}", host: ["{{base_url}}"], path: ["units", "{{unit_id}}"] }
+          }
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 5. CENTRAL USERS & UNIT USERS
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "5. Users & Organization Members",
+      item: [
+        {
+          name: "List Central Users (Super Admin Only)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: { raw: "{{base_url}}/central-users", host: ["{{base_url}}"], path: ["central-users"] }
+          }
+        },
+        {
+          name: "Create Central User (Global Auditor)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                full_name: "Auditor Sharma",
+                email: "auditor@gov.in",
+                phone: "9811223344",
+                password: "AuditorPassword@123",
+                employee_code: "AUD-01",
+                role_type: "global_auditor"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/central-users", host: ["{{base_url}}"], path: ["central-users"] }
+          }
+        },
+        {
+          name: "List Unit Users (Admin Only)",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: {
+              raw: "{{base_url}}/users?page=1&limit=20&role=&department_id=",
+              host: ["{{base_url}}"],
+              path: ["users"],
+              query: [
+                { key: "page", value: "1" },
+                { key: "limit", value: "20" },
+                { key: "role", value: "" },
+                { key: "department_id", value: "" }
+              ]
+            }
+          }
+        },
+        {
+          name: "List Hosts / Employees (Public/Internal)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: {
+              raw: "{{base_url}}/users/hosts?unit_code={{unit_code}}&department_id=",
+              host: ["{{base_url}}"],
+              path: ["users", "hosts"],
+              query: [
+                { key: "unit_code", value: "{{unit_code}}" },
+                { key: "department_id", value: "" }
+              ]
+            }
+          }
+        },
+        {
+          name: "Create Unit User (Employee / Security / Receptionist)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                full_name: "Pooja Singh",
+                email: "pooja.singh@gov.in",
+                phone: "9876500001",
+                password: "UserPassword@123",
+                employee_code: "EMP-042",
+                role_type: "employee",
+                department_id: 1,
+                designation_id: 1
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/users", host: ["{{base_url}}"], path: ["users"] }
+          }
+        },
+        {
+          name: "Deactivate User",
+          request: {
+            method: "DELETE",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/users/{{user_id}}", host: ["{{base_url}}"], path: ["users", "{{user_id}}"] }
+          }
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 6. DEPARTMENTS & DESIGNATIONS
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "6. Departments & Designations",
+      item: [
+        {
+          name: "List Public Departments (No Auth)",
+          request: {
+            method: "GET",
+            header: [],
+            url: { raw: "{{base_url}}/departments/public?unit_code={{unit_code}}", host: ["{{base_url}}"], path: ["departments", "public"], query: [{ key: "unit_code", value: "{{unit_code}}" }] }
+          }
+        },
+        {
+          name: "List Departments (Authenticated)",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/departments", host: ["{{base_url}}"], path: ["departments"] }
+          }
+        },
+        {
+          name: "Create Department",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                name: "Information Technology",
+                code: "IT",
+                description: "IT & Systems Division"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/departments", host: ["{{base_url}}"], path: ["departments"] }
+          }
+        },
+        {
+          name: "List Designations",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/designations?department_id=1", host: ["{{base_url}}"], path: ["designations"], query: [{ key: "department_id", value: "1" }] }
+          }
+        },
+        {
+          name: "Bulk Create Designations",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                department_id: 1,
+                designations: ["Senior Software Engineer", "Systems Architect", "Network Specialist"]
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/designations/bulk", host: ["{{base_url}}"], path: ["designations", "bulk"] }
+          }
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 7. VISITORS DIRECTORY & BLACKLIST
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "7. Visitors & Security Blacklist",
+      item: [
+        {
+          name: "List Visitors Directory",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: {
+              raw: "{{base_url}}/visitors?page=1&limit=20&search=",
+              host: ["{{base_url}}"],
+              path: ["visitors"],
+              query: [
+                { key: "page", value: "1" },
+                { key: "limit", value: "20" },
+                { key: "search", value: "" }
+              ]
+            }
+          }
+        },
+        {
+          name: "Check Blacklist Status",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: { raw: "{{base_url}}/visitors/blacklist-check?phone=9876543210&unit_code={{unit_code}}", host: ["{{base_url}}"], path: ["visitors", "blacklist-check"], query: [{ key: "phone", value: "9876543210" }, { key: "unit_code", value: "{{unit_code}}" }] }
+          }
+        },
+        {
+          name: "Register Visitor Manually (Gate / Receptionist)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                full_name: "Amitabh Kumar",
+                phone: "9876511223",
+                email: "amitabh@gmail.com",
+                address: "Plot 42, Civil Lines",
+                id_type: "Aadhaar",
+                id_number: "998877665544"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/visitors", host: ["{{base_url}}"], path: ["visitors"] }
+          }
+        },
+        {
+          name: "Blacklist Visitor (Unit Admin)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                reason: "Security protocol violation"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/visitors/{{visitor_id}}/blacklist", host: ["{{base_url}}"], path: ["visitors", "{{visitor_id}}", "blacklist"] }
+          }
+        },
+        {
+          name: "Lift Blacklist (Unit Admin)",
+          request: {
+            method: "PUT",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                reason: "Cleared after review"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/visitors/{{visitor_id}}/blacklist/lift", host: ["{{base_url}}"], path: ["visitors", "{{visitor_id}}", "blacklist", "lift"] }
+          }
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 8. VISIT REQUESTS & APPROVALS
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "8. Visit Requests & Approvals",
+      item: [
+        {
+          name: "Create Visit Request (Employee / Receptionist)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                visitor_name: "Sunil Sharma",
+                visitor_phone: "9876543299",
+                visitor_email: "sunil@example.com",
+                purpose: "Project technical discussion",
+                start_date: "2026-10-26T11:00:00.000Z",
+                end_date: "2026-10-26T13:00:00.000Z",
+                service_type: "Consulting",
+                work_order_ref: "PO-4091"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/visit-requests", host: ["{{base_url}}"], path: ["visit-requests"] }
+          }
+        },
+        {
+          name: "List All Visit Requests",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: {
+              raw: "{{base_url}}/visit-requests?page=1&limit=20&status=&search=",
+              host: ["{{base_url}}"],
+              path: ["visit-requests"],
+              query: [
+                { key: "page", value: "1" },
+                { key: "limit", value: "20" },
+                { key: "status", value: "" },
+                { key: "search", value: "" }
+              ]
+            }
+          }
+        },
+        {
+          name: "Get Approval Inbox (For Host)",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/approvals/inbox?page=1&limit=10", host: ["{{base_url}}"], path: ["approvals", "inbox"], query: [{ key: "page", value: "1" }, { key: "limit", value: "10" }] }
+          }
+        },
+        {
+          name: "Approve Visit Request",
+          request: {
+            method: "PUT",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                comments: "Approved. Please report to 3rd Floor Reception."
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/approvals/{{request_id}}/approve", host: ["{{base_url}}"], path: ["approvals", "{{request_id}}", "approve"] }
+          }
+        },
+        {
+          name: "Reject Visit Request",
+          request: {
+            method: "PUT",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                rejection_reason: "Host is out of office for official field visit."
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/approvals/{{request_id}}/reject", host: ["{{base_url}}"], path: ["approvals", "{{request_id}}", "reject"] }
+          }
+        },
+        {
+          name: "Cancel Visit Request",
+          request: {
+            method: "PUT",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/visit-requests/{{request_id}}/cancel", host: ["{{base_url}}"], path: ["visit-requests", "{{request_id}}", "cancel"] }
+          }
+        },
+        {
+          name: "Host Personal Blocklist (List)",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/visit-requests/my-blocked-visitors", host: ["{{base_url}}"], path: ["visit-requests", "my-blocked-visitors"] }
+          }
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 9. GATE SECURITY & PASS MANAGEMENT
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "9. Gate Operations & QR Passes",
+      item: [
+        {
+          name: "Gate Dashboard Summary",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/gate/dashboard", host: ["{{base_url}}"], path: ["gate", "dashboard"] }
+          }
+        },
+        {
+          name: "Active Visitors Inside Facility",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/gate/active", host: ["{{base_url}}"], path: ["gate", "active"] }
+          }
+        },
+        {
+          name: "Gate Check-In",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                gate_number: "Gate-1",
+                id_proof_type: "Aadhaar",
+                id_proof_number: "987654321012",
+                remarks: "Verified physical ID"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/gate/checkin/{{request_id}}", host: ["{{base_url}}"], path: ["gate", "checkin", "{{request_id}}"] }
+          }
+        },
+        {
+          name: "Gate Check-Out (Direct)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                visit_log_id: 1,
+                remarks: "Normal checkout"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/gate/checkout", host: ["{{base_url}}"], path: ["gate", "checkout"] }
+          }
+        },
+        {
+          name: "Gate Check-Out (By QR Scan)",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                qr_token: "SIGNED_QR_TOKEN_STRING"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/gate/checkout/qr", host: ["{{base_url}}"], path: ["gate", "checkout", "qr"] }
+          }
+        },
+        {
+          name: "Reject Visitor at Gate",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" },
+              { key: "Content-Type", value: "application/json" }
+            ],
+            body: {
+              mode: "raw",
+              raw: JSON.stringify({
+                request_id: 1,
+                reason: "Suspected invalid identification"
+              }, null, 2)
+            },
+            url: { raw: "{{base_url}}/gate/reject", host: ["{{base_url}}"], path: ["gate", "reject"] }
+          }
+        },
+        {
+          name: "Generate Pass",
+          request: {
+            method: "POST",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/passes/generate/{{request_id}}", host: ["{{base_url}}"], path: ["passes", "generate", "{{request_id}}"] }
+          }
+        },
+        {
+          name: "Get Gate Pass Details",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/passes/pass/{{pass_number}}", host: ["{{base_url}}"], path: ["passes", "pass", "{{pass_number}}"] }
+          }
+        },
+        {
+          name: "List Gate Passes",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: {
+              raw: "{{base_url}}/passes?page=1&limit=20&status=",
+              host: ["{{base_url}}"],
+              path: ["passes"],
+              query: [
+                { key: "page", value: "1" },
+                { key: "limit", value: "20" },
+                { key: "status", value: "" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 10. REPORTS & SECURITY AUDIT LOGS
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      name: "10. Reports & Security Audit Logs",
+      item: [
+        {
+          name: "Global Executive Summary (Super Admin & Global Auditor)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: { raw: "{{base_url}}/reports/global-summary", host: ["{{base_url}}"], path: ["reports", "global-summary"] }
+          }
+        },
+        {
+          name: "Global Recent Visits (Cross-Unit)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: { raw: "{{base_url}}/reports/global-recent-visits?limit=25", host: ["{{base_url}}"], path: ["reports", "global-recent-visits"], query: [{ key: "limit", value: "25" }] }
+          }
+        },
+        {
+          name: "Global Security Audit Trail (Cross-Unit)",
+          request: {
+            method: "GET",
+            header: [{ key: "Authorization", value: "Bearer {{token}}" }],
+            url: {
+              raw: "{{base_url}}/reports/audit-logs/global?page=1&limit=50&action=&module=",
+              host: ["{{base_url}}"],
+              path: ["reports", "audit-logs", "global"],
+              query: [
+                { key: "page", value: "1" },
+                { key: "limit", value: "50" },
+                { key: "action", value: "" },
+                { key: "module", value: "" }
+              ]
+            },
+            description: "View login lockouts, bad login attempts, wrong OTPs, and privilege actions across the entire enterprise."
+          }
+        },
+        {
+          name: "Unit Security Audit Logs",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/reports/audit-logs?page=1&limit=50", host: ["{{base_url}}"], path: ["reports", "audit-logs"], query: [{ key: "page", value: "1" }, { key: "limit", value: "50" }] }
+          }
+        },
+        {
+          name: "Visitor Summary Report",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/reports/visitor-summary?range=month", host: ["{{base_url}}"], path: ["reports", "visitor-summary"], query: [{ key: "range", value: "month" }] }
+          }
+        },
+        {
+          name: "Daily Traffic Report",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/reports/daily-traffic?days=30", host: ["{{base_url}}"], path: ["reports", "daily-traffic"], query: [{ key: "days", value: "30" }] }
+          }
+        },
+        {
+          name: "Detailed Visit History Report",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: {
+              raw: "{{base_url}}/reports/visit-history?page=1&limit=25&from=&to=&status=&department_id=",
+              host: ["{{base_url}}"],
+              path: ["reports", "visit-history"],
+              query: [
+                { key: "page", value: "1" },
+                { key: "limit", value: "25" },
+                { key: "from", value: "" },
+                { key: "to", value: "" },
+                { key: "status", value: "" },
+                { key: "department_id", value: "" }
+              ]
+            }
+          }
+        },
+        {
+          name: "Active & Expected Visitors Report",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/reports/active-expected", host: ["{{base_url}}"], path: ["reports", "active-expected"] }
+          }
+        },
+        {
+          name: "Rejected Visits Report",
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Unit-Id", value: "{{unit_id}}" }
+            ],
+            url: { raw: "{{base_url}}/reports/rejected", host: ["{{base_url}}"], path: ["reports", "rejected"] }
+          }
+        }
+      ]
+    }
+  ]
+};
+
+// Write to both root and backend directory for convenience
+const rootPath = path.join(__dirname, '../../vms_api_collection.json');
+const backendPath = path.join(__dirname, '../vms_api_collection.json');
+
+fs.writeFileSync(rootPath, JSON.stringify(collection, null, 2), 'utf8');
+fs.writeFileSync(backendPath, JSON.stringify(collection, null, 2), 'utf8');
+
+console.log(`✅ Postman Collection generated successfully:`);
+console.log(`   - Root:    ${rootPath}`);
+console.log(`   - Backend: ${backendPath}`);
+console.log(`   Total request folders: ${collection.item.length}`);
+console.log(`   Total endpoints: ${collection.item.reduce((sum, f) => sum + f.item.length, 0)}`);

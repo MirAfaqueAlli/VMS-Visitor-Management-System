@@ -1,17 +1,30 @@
-# VMS — Complete API Reference
-### For Postman / Client Testing
+# VMS — Complete API Reference & Testing Guide
+### Ready for Postman / Insomnia / Thunder Client Testing
+
+> **🚀 Postman Collection Available:**
+> A complete, pre-configured collection file is included in this repository:
+> `vms_api_collection.json` (at project root and in `backend/vms_api_collection.json`).
+> Open Postman → Click **Import** → Select `vms_api_collection.json`.
+> Logging in automatically captures the JWT token into the `{{token}}` variable for subsequent requests!
 
 ---
 
 ## 🔐 Authentication Overview
 
 **Type:** JWT Bearer Token  
-**Base URL:** `http://localhost:5000/api`
+**Base URL:** `http://localhost:5001/api`
 
 ### How to authenticate
 
-1. Call `POST /api/auth/login` to get a token
-2. Copy the `token` from the response
+VMS enforces 2-Factor Authentication (2FA) for all system staff:
+
+1. **Step 1: Credentials Check**
+   Call `POST /api/auth/login` with your email and password.
+   If valid, a 6-digit OTP is generated and sent via email (in non-production mode, it is also logged in the backend console).
+   Response returns a temporary `loginToken`.
+2. **Step 2: OTP Verification**
+   Call `POST /api/auth/verify-login-otp` with the `loginToken` and the 6-digit `otp`.
+   Returns the final session JWT `token`.
 3. On every subsequent request, add this **Header**:
 
 ```
@@ -28,17 +41,29 @@ X-Unit-Id: 1
 
 ---
 
+## 🛡️ Security Controls & Rate Limits (P0)
+
+* **Account Lockout:** 5 consecutive failed passwords lock the account for 15 minutes.
+* **IP Rate Limiting:**
+  * Login attempts: Max 5 failed attempts per IP per 15 min.
+  * Login OTP sending: Max 3 OTP sends per IP per 10 min.
+  * Public OTP sending: Max 3 requests per IP per 10 min.
+  * OTP verification: Max 10 attempts per IP per 10 min (brute force protection).
+* **Security Audit Logging:** All failed logins, lockouts, wrong OTPs, and admin actions are recorded in the central audit trail.
+
+---
+
 ## Role Reference
 
 | Role | Abbreviation | Description |
 |---|---|---|
-| `super_admin` | SA | Full system access |
-| `unit_admin` | UA | Full access to their unit |
+| `super_admin` | SA | Full system access across all units |
+| `unit_admin` | UA | Full access to their assigned unit |
 | `employee` | EMP | Can raise visit requests, approve own visitors |
 | `security` | SEC | Gate check-in / check-out |
 | `receptionist` | REC | Gate + visitor registration |
-| `unit_auditor` | UAUD | Read-only access to their unit |
-| `global_auditor` | GAUD | Read-only access to all units |
+| `unit_auditor` | UAUD | Read-only access to their unit reports |
+| `global_auditor` | GAUD | Read-only access to all units and global audit trail |
 
 ---
 
@@ -52,25 +77,52 @@ X-Unit-Id: 1
 **Body (JSON):**
 ```json
 {
-  "email": "admin@company.com",
-  "password": "YourPassword@1",
-  "unit_code": "HQ"
+  "email": "kalvinclarke.http@gmail.com",
+  "password": "AdminPassword@123",
+  "unit_code": "U1"
 }
 ```
-> `unit_code` is **optional** for `super_admin` / `global_auditor`. Required for all unit-level users.
+> `unit_code` is **optional** for `super_admin` / `global_auditor`. Required for unit-level staff.
 
-**Success Response:**
+**Success Response (Step 1):**
 ```json
 {
   "success": true,
+  "message": "OTP sent to kalvinclarke.http@gmail.com. Please verify to complete sign-in.",
+  "data": {
+    "loginToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "email": "kalvinclarke.http@gmail.com",
+    "requires_otp": true
+  }
+}
+```
+
+---
+
+### POST `/api/auth/verify-login-otp`
+> **No token required**
+
+**Body (JSON):**
+```json
+{
+  "loginToken": "<paste_loginToken_from_step_1>",
+  "otp": "123456"
+}
+```
+
+**Success Response (Step 2 — Session Created):**
+```json
+{
+  "success": true,
+  "message": "Login successful. Welcome back!",
   "data": {
     "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "user": {
       "id": 1,
-      "full_name": "Admin User",
-      "email": "admin@company.com",
-      "role_type": "unit_admin",
-      "unit_id": 1
+      "full_name": "Kalvin Clarke",
+      "email": "kalvinclarke.http@gmail.com",
+      "role_type": "super_admin",
+      "unit_id": null
     }
   }
 }
