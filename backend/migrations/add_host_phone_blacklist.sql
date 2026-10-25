@@ -1,3 +1,4 @@
+-- Target: units
 -- Migration: host_phone_blacklist
 -- Run on EACH unit database (e.g. vms_unit_ho, vms_unit_xyz, ...)
 -- This table lets a host block a visitor by phone number.

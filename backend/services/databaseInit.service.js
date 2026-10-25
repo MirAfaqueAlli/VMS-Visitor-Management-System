@@ -218,6 +218,9 @@ async function migrateUnitDatabase(conn, dbName) {
     conn, dbName, 'users', 'locked_until',
     'DATETIME NULL'
   );
+
+  // 7. Auto-apply any pending unit migrations to this unit DB
+  await runPendingMigrationsForUnit(conn, dbName);
 }
 
 /**
@@ -254,30 +257,164 @@ async function migrateAllUnitDatabases(conn) {
 }
 
 /**
- * runPendingMigrations — auto-applies every .sql file in backend/migrations/
- * that has not yet been recorded in vms_central.schema_migrations.
- *
- * Rules:
- *  - Files are processed in ascending filename order (001_, 002_, etc.)
- *  - Each file is executed once and recorded; subsequent server restarts skip it
- *  - The tracking table is created automatically if it does not exist
- *  - Each migration runs with FOREIGN_KEY_CHECKS=0 to avoid ordering issues
- *  - A failed migration is logged as a WARNING and does NOT crash the server
- *    (addColumnIfMissing guards in the hardcoded section still act as a safety net)
+ * Ensures the schema_migrations tracking table exists and has target_db column.
  */
-async function runPendingMigrations(conn) {
-  // 1. Ensure tracking table exists in central DB
+async function ensureSchemaMigrationsTable(conn) {
   await conn.query(`USE \`${CENTRAL_DB}\``);
   await conn.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id           INT AUTO_INCREMENT PRIMARY KEY,
-      filename     VARCHAR(255) NOT NULL UNIQUE,
+      filename     VARCHAR(255) NOT NULL,
+      target_db    VARCHAR(100) NOT NULL DEFAULT 'vms_central',
       applied_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      checksum     VARCHAR(64)  NULL      -- reserved for future integrity check
+      checksum     VARCHAR(64)  NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
-  // 2. Read all .sql files in migrations/ directory sorted by name
+  await addColumnIfMissing(
+    conn, CENTRAL_DB, 'schema_migrations', 'target_db',
+    "VARCHAR(100) NOT NULL DEFAULT 'vms_central' AFTER filename"
+  );
+
+  // Drop old single-column unique index on filename if it exists
+  try {
+    const [indexes] = await conn.query(
+      `SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations'
+         AND CONSTRAINT_TYPE = 'UNIQUE' AND CONSTRAINT_NAME = 'filename'`,
+      [CENTRAL_DB]
+    );
+    if (indexes.length > 0) {
+      await conn.query(`ALTER TABLE \`${CENTRAL_DB}\`.schema_migrations DROP INDEX \`filename\``);
+    }
+  } catch (_) {}
+
+  // Ensure composite unique index exists on (filename, target_db)
+  try {
+    const [indexes] = await conn.query(
+      `SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations'
+         AND CONSTRAINT_TYPE = 'UNIQUE' AND CONSTRAINT_NAME = 'uq_file_target'`,
+      [CENTRAL_DB]
+    );
+    if (indexes.length === 0) {
+      await conn.query(`ALTER TABLE \`${CENTRAL_DB}\`.schema_migrations ADD UNIQUE KEY \`uq_file_target\` (filename, target_db)`);
+    }
+  } catch (_) {}
+}
+
+/**
+ * Determines which databases a migration file should be applied to.
+ * Supports explicit header comment: `-- Target: all | units | central`
+ * Falls back to heuristic based on table names referenced in the SQL.
+ */
+function getMigrationTargets(rawSql, unitDbList) {
+  const firstLines = rawSql.split('\n').slice(0, 10).join('\n');
+  const targetMatch = firstLines.match(/--\s*target\s*:\s*(all|units?|central)/i);
+  if (targetMatch) {
+    const scope = targetMatch[1].toLowerCase();
+    if (scope === 'all') return [CENTRAL_DB, ...unitDbList];
+    if (scope === 'unit' || scope === 'units') return [...unitDbList];
+    if (scope === 'central') return [CENTRAL_DB];
+  }
+
+  const lower = rawSql.toLowerCase();
+  const unitOnlyTables = [
+    'visit_requests', 'visit_request_visitors', 'approval_history',
+    'gate_passes', 'host_phone_blacklist', 'pass_templates'
+  ];
+  if (unitOnlyTables.some(t => lower.includes(t))) {
+    return [...unitDbList];
+  }
+
+  const sharedTables = ['users', 'departments', 'designations'];
+  if (sharedTables.some(t => lower.includes(t))) {
+    return [CENTRAL_DB, ...unitDbList];
+  }
+
+  return [CENTRAL_DB];
+}
+
+/**
+ * Executes a single SQL file against a target database and records it in schema_migrations.
+ */
+async function executeMigrationOnDb(conn, filePath, filename, targetDb) {
+  try {
+    await conn.query(`USE \`${targetDb}\``);
+    await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+
+    const rawSql = fs.readFileSync(filePath, 'utf8');
+    const lines = rawSql.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    const statements = [];
+    let buffer = '';
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('--')) continue;
+      buffer += (buffer ? '\n' : '') + line;
+      if (line.endsWith(';')) {
+        const stmt = buffer.trim();
+        if (stmt && stmt !== ';') statements.push(stmt);
+        buffer = '';
+      }
+    }
+    if (buffer.trim()) statements.push(buffer.trim());
+
+    for (const stmt of statements) {
+      try {
+        await conn.query(stmt);
+      } catch (stmtErr) {
+        // errno 1060 = column exists, 1061 = duplicate key, 1050 = table exists
+        if (stmtErr.errno === 1060 || stmtErr.errno === 1061 || stmtErr.errno === 1050) {
+          continue;
+        }
+        throw stmtErr;
+      }
+    }
+
+    await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+
+    await conn.query(
+      `INSERT INTO \`${CENTRAL_DB}\`.schema_migrations (filename, target_db) VALUES (?, ?)`,
+      [filename, targetDb]
+    );
+    console.log(`[DatabaseInit] ✅ Migration applied to ${targetDb}: ${filename}`);
+  } catch (err) {
+    await conn.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => {});
+    console.error(`[DatabaseInit] ❌ Migration FAILED on ${targetDb}: ${filename} — ${err.message}`);
+  }
+}
+
+/**
+ * Applies pending migrations targeted for a specific unit database.
+ * Used during individual unit migration and provisioning.
+ */
+async function runPendingMigrationsForUnit(conn, dbName) {
+  if (!fs.existsSync(MIGRATIONS_DIR)) return;
+  const files = fs.readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).sort();
+  for (const filename of files) {
+    const filePath = path.join(MIGRATIONS_DIR, filename);
+    const rawSql = fs.readFileSync(filePath, 'utf8');
+    const targets = getMigrationTargets(rawSql, [dbName]);
+    if (targets.includes(dbName)) {
+      const [existing] = await conn.query(
+        `SELECT 1 FROM \`${CENTRAL_DB}\`.schema_migrations WHERE filename = ? AND target_db = ?`,
+        [filename, dbName]
+      );
+      if (existing.length === 0) {
+        await executeMigrationOnDb(conn, filePath, filename, dbName);
+      }
+    }
+  }
+}
+
+/**
+ * runPendingMigrations — auto-applies every .sql file in backend/migrations/
+ * that has not yet been recorded in schema_migrations for its target database(s).
+ */
+async function runPendingMigrations(conn) {
+  await ensureSchemaMigrationsTable(conn);
+
   if (!fs.existsSync(MIGRATIONS_DIR)) {
     console.log('[DatabaseInit] No migrations/ directory found — skipping.');
     return;
@@ -285,76 +422,47 @@ async function runPendingMigrations(conn) {
 
   const files = fs.readdirSync(MIGRATIONS_DIR)
     .filter(f => f.endsWith('.sql'))
-    .sort(); // alphabetical = chronological because of 001_, 002_ prefix
+    .sort();
 
   if (files.length === 0) {
     console.log('[DatabaseInit] No migration files found in migrations/.');
     return;
   }
 
-  // 3. Load already-applied filenames
   const [appliedRows] = await conn.query(
-    `SELECT filename FROM \`${CENTRAL_DB}\`.schema_migrations`
+    `SELECT filename, target_db FROM \`${CENTRAL_DB}\`.schema_migrations`
   );
-  const applied = new Set(appliedRows.map(r => r.filename));
+  const appliedSet = new Set(appliedRows.map(r => `${r.filename}::${r.target_db}`));
 
-  // 4. Run each pending migration
+  const unitDbNames = new Set();
+  try {
+    const [registered] = await conn.query(
+      `SELECT db_name FROM \`${CENTRAL_DB}\`.units WHERE db_name IS NOT NULL`
+    );
+    for (const r of registered) if (r.db_name) unitDbNames.add(r.db_name);
+  } catch (_) {}
+  try {
+    const [schemata] = await conn.query(
+      `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE 'vms_unit_%'`
+    );
+    for (const s of schemata) if (s.SCHEMA_NAME) unitDbNames.add(s.SCHEMA_NAME);
+  } catch (_) {}
+
+  const unitList = Array.from(unitDbNames);
+
   for (const filename of files) {
-    if (applied.has(filename)) {
-      console.log(`[DatabaseInit] Migration already applied: ${filename}`);
-      continue;
-    }
-
     const filePath = path.join(MIGRATIONS_DIR, filename);
-    console.log(`[DatabaseInit] Applying migration: ${filename}`);
+    const rawSql = fs.readFileSync(filePath, 'utf8');
+    const targetDbs = getMigrationTargets(rawSql, unitList);
 
-    try {
-      await conn.query('SET FOREIGN_KEY_CHECKS = 0');
-
-      // Read and execute the SQL file statement-by-statement
-      const rawSql    = fs.readFileSync(filePath, 'utf8');
-      const lines     = rawSql.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-      const statements = [];
-      let buffer = '';
-
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith('--')) continue;
-        buffer += (buffer ? '\n' : '') + line;
-        if (line.endsWith(';')) {
-          const stmt = buffer.trim();
-          if (stmt && stmt !== ';') statements.push(stmt);
-          buffer = '';
-        }
+    for (const db of targetDbs) {
+      const key = `${filename}::${db}`;
+      if (appliedSet.has(key)) {
+        continue;
       }
-      if (buffer.trim()) statements.push(buffer.trim());
-
-      for (const stmt of statements) {
-        try {
-          await conn.query(stmt);
-        } catch (stmtErr) {
-          // errno 1060 = column already exists — safe to ignore (idempotent)
-          if (stmtErr.errno === 1060 || stmtErr.errno === 1061 || stmtErr.errno === 1050) {
-            console.log(`  [DatabaseInit] Skipping (already exists): ${stmtErr.message.split("\n")[0]}`);
-            continue;
-          }
-          throw stmtErr;
-        }
-      }
-
-      await conn.query('SET FOREIGN_KEY_CHECKS = 1');
-
-      // Record the migration as applied
-      await conn.query(
-        `INSERT INTO \`${CENTRAL_DB}\`.schema_migrations (filename) VALUES (?)`,
-        [filename]
-      );
-      console.log(`[DatabaseInit] ✅ Migration applied: ${filename}`);
-
-    } catch (err) {
-      await conn.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => {});
-      console.error(`[DatabaseInit] ❌ Migration FAILED: ${filename} — ${err.message}`);
-      // Do NOT throw — let server start; hardcoded addColumnIfMissing is the safety net
+      console.log(`[DatabaseInit] Applying migration: ${filename} on ${db}`);
+      await executeMigrationOnDb(conn, filePath, filename, db);
+      appliedSet.add(key);
     }
   }
 }

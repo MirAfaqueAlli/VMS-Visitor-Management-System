@@ -287,7 +287,7 @@ CREATE TABLE IF NOT EXISTS host_phone_blacklist (
     blocked_by     INT NOT NULL,
     is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_host_phone (host_user_id, visitor_phone),
+    INDEX idx_host_phone (host_user_id, visitor_phone)
 );
 
 SET FOREIGN_KEY_CHECKS = 1;
