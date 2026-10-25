@@ -516,7 +516,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
         className="fixed top-0 right-0 h-14 flex items-center justify-between py-[29px] px-4 z-30 navbar-header"
         style={{
           background: 'var(--color-bg-primary)',
-          boxShadow: "0 2px 4px #2c2c2c2e"
+          boxShadow: "0 2px 2px #2c2c2c2e"
         }}
       >
       {/* ── Left: hamburger (mobile) + page title ─────────────────────── */}

@@ -134,17 +134,17 @@ export default function UnitManagement() {
         {/* Stats row */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
-            { label: 'Total Units',  value: totalCount,                                          icon: Building2,    color: 'var(--color-info)' },
+            { label: 'Total Units',  value: totalCount,                                          icon: Building2,    color: 'var(--color-text-loud)' },
             { label: 'Active',       value: units.filter(u => u.db_status === 'ACTIVE').length,  icon: CheckCircle,  color: '#22c55e' },
             { label: 'Provisioning', value: units.filter(u => u.db_status !== 'ACTIVE').length,  icon: AlertCircle,  color: '#eab308' },
           ].map(({ label, value, icon: Icon, color }) => (
             <div key={label} className="vms-card p-4 flex items-center gap-3">
-              <div className="w-9 h-9 rounded flex items-center justify-center" style={{ background: `${color}20` }}>
-                <Icon size={16} style={{ color }} />
+              <div className="w-9 h-9 rounded flex items-start justify-center" >
+                <Icon size={26} style={{ color : "var(--color-text-loud)" }} />
               </div>
               <div>
-                <p className="text-[20px] font-bold leading-none" style={{ color: 'var(--color-text)' }}>{value}</p>
                 <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-text-faint)' }}>{label}</p>
+                <p className="text-[22px] font-bold leading-none" style={{ color: 'var(--color-text)' }}>{value}</p>
               </div>
             </div>
           ))}
@@ -157,7 +157,7 @@ export default function UnitManagement() {
           </div>
           <input
             type="text"
-            className="w-full h-12 pl-10 pr-28 bg-bg-secondary border border-subtle rounded-xl text-[14px] text-loud placeholder-faint shadow-card focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+            className="w-full h-12 pl-10 pr-28 bg-bg-secondary border border-subtle rounded-md text-[14px] text-loud placeholder-faint  focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
             placeholder="Search by name, code or city…"
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -288,7 +288,7 @@ export default function UnitManagement() {
           width: 'min(600px, 100vw)',
           background: 'var(--color-bg-secondary)',
           borderLeft: '1px solid var(--color-border)',
-          boxShadow: '-8px 0 32px rgba(0,0,0,0.15)',
+          boxShadow: isOpen ? '-8px 0 32px rgba(0,0,0,0.15)' : 'none',
           transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 300ms ease-in-out',
           pointerEvents: isOpen ? 'auto' : 'none',

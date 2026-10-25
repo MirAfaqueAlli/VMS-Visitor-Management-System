@@ -134,11 +134,10 @@ export default function VisitorList() {
 
       {/* ── Page Header ── */}
       <div className="mb-6">
-        <p className="text-[11px] font-bold uppercase tracking-widest text-accent mb-1">Visitors</p>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-loud">
-              Visitor <em className="italic" style={{ color: 'var(--color-accent)' }}>Directory</em>
+            <h1 className="text-xl font-bold text-loud">
+              Visitor Directory
             </h1>
           </div>
         </div>

@@ -863,11 +863,9 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
         onCancel={() => setModalState(null)}
       />
       <div className="mb-10">
-        <p className="text-[11px] tracking-widest uppercase text-accent mb-1 font-sans">
-          {unitName ? `Unit Operations` : 'Admin Overview'}
-        </p>
-        <h1 className="text-2xl font-bold text-loud">
-          Operations <em className="italic">Command</em>
+        
+        <h1 className="text-xl font-bold text-loud">
+          Operations Command
         </h1>
       </div>
 

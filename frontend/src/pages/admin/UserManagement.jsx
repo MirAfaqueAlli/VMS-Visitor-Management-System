@@ -159,7 +159,7 @@ function UserSlideOver({
     }
   };
 
-  const inputCls = "w-full btn-secondary text-loud text-sm placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-border transition-all duration-300";
+  const inputCls = "w-full bg-bg-secondary btn-secondary text-loud text-sm placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-border transition-all duration-300";
   const labelCls = "block text-xs font-semibold text-muted uppercase tracking-widest mb-1.5";
 
   const deptId = lockedDepartmentId || form.department_id;
@@ -185,10 +185,10 @@ function UserSlideOver({
         }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-subtle">
+        <div className="flex items-center justify-between p-6 py-3 border-b border-subtle">
           <div>
-            <h2 className="text-2xl font-bold text-loud">
-              {isEdit ? "Edit" : "New"} <em className="italic">User</em>
+            <h2 className="text-lg font-bold text-loud">
+              {isEdit ? "Edit" : "New"} User
             </h2>
             <p className="text-xs text-faint mt-0.5">
               {isEdit ? `Editing ${editUser?.full_name}` : "Create a new system account"}
@@ -501,7 +501,7 @@ export default function UserManagement() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-loud">Team <em className="italic">Management</em></h1>
+            <h1 className="text-xl font-bold text-loud">Team Management</h1>
           </div>
           <button onClick={openCreate} className="btn-primary px-4 py-2 text-xs">
             <Plus className="w-4 h-4" /> Add New User
@@ -538,7 +538,7 @@ export default function UserManagement() {
           </div>
         )}
 
-        <div className="vms-card rounded-md p-6 shadow-card">
+        <div className=" rounded-md  ">
           {/* Filters */}
           <div className="flex flex-col md:flex-row gap-4 mb-6 pb-6 border-b border-subtle">
             <div className="flex-1 relative">
@@ -547,7 +547,7 @@ export default function UserManagement() {
               </div>
               <input
                 type="text"
-                className="block w-full pl-11 pr-4 py-3 bg-bg-primary border border-subtle rounded-full text-loud placeholder-faint focus:outline-none focus:ring-2 focus:ring-accent transition-all duration-300"
+                className="block w-full pl-11 pr-4 py-2 bg-bg-primary border border-subtle rounded-full text-loud placeholder-faint focus:outline-none focus:ring-2 focus:ring-accent transition-all duration-300"
                 placeholder="Search by name, email, or employee code..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
@@ -558,7 +558,7 @@ export default function UserManagement() {
                 <button
                   key={value}
                   onClick={() => { setRoleFilter(value); setPage(1); }}
-                  className={`btn-primary ${roleFilter === value ? "bg-accent text-white" : "bg-bg-primary border border-subtle text-muted hover:border-border"}`}
+                  className={`rounded-sm px-3 py-1 ${roleFilter === value ? "bg-accent text-white" : "bg-bg-primary text-sm border border-subtle text-muted hover:border-border"}`}
                 >
                   {label}
                 </button>

@@ -193,12 +193,12 @@ export default function GlobalUserManagement() {
             { label: 'Global Auditors',      value: users.filter(u => u.role_type === 'global_auditor').length, color: '#0369a1' },
           ].map(({ label, value, color }) => (
             <div key={label} className="vms-card p-4 flex items-center gap-3">
-              <div className="w-9 h-9 rounded flex items-center justify-center" style={{ background: `${color}20` }}>
-                <UserCheck size={16} style={{ color }} />
+              <div className="w-9 h-9 rounded flex items-start justify-center">
+                <UserCheck size={26}  style={{ color : "var(--color-text-loud)" }}  />
               </div>
               <div>
-                <p className="text-[20px] font-bold leading-none" style={{ color: 'var(--color-text)' }}>{value}</p>
                 <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-text-faint)' }}>{label}</p>
+                <p className="text-[22px] font-bold leading-none" style={{ color: 'var(--color-text)' }}>{value}</p>
               </div>
             </div>
           ))}
@@ -211,7 +211,7 @@ export default function GlobalUserManagement() {
           </div>
           <input
             type="text"
-            className="w-full h-12 pl-10 pr-28 bg-bg-secondary border border-subtle rounded-xl text-[14px] text-loud placeholder-faint shadow-card focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+            className="w-full h-12 pl-10 pr-28 bg-bg-secondary border border-subtle rounded-md text-[14px] text-loud placeholder-faint  focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
             placeholder="Search by name, email or employee code…"
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -369,7 +369,7 @@ export default function GlobalUserManagement() {
           borderLeft: '1px solid var(--color-border)',
           transform:  isOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 250ms ease',
-          boxShadow:  '-8px 0 32px rgba(0,0,0,0.15)',
+          boxShadow:  isOpen ?'-8px 0 32px rgba(0,0,0,0.15)' : 'none',
           pointerEvents: isOpen ? 'auto' : 'none',
         }}
       >

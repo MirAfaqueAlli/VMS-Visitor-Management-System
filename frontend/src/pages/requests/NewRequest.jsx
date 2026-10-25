@@ -663,19 +663,19 @@ export default function NewRequest() {
   const inputCls = "w-full bg-bg-primary border-0 border-b border-subtle px-3 py-2.5 text-loud focus:ring-0 focus:border-border transition-colors duration-300";
 
   return (
-    <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8 animate-fade-in">
-      <div className="mb-12">
-        <h1 className="text-2xl font-bold text-loud">
-          New <em className="italic">Request</em>
+    <div className=" mx-auto py-5 px-4 sm:px-6 lg:px-8 animate-fade-in">
+      <div className="mb-4">
+        <h1 className="text-xl font-bold text-loud">
+          New Request
         </h1>
 
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">
         {/* â”€â”€ Step 1: Category Selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        <div className="vms-card rounded-md p-8 shadow-card">
-          <h2 className="text-xl text-loud mb-6 flex items-center gap-2">
-            <span className="w-8 h-8 rounded-full bg-mixed-bg text-accent flex items-center justify-center text-sm font-bold">
+        <div className=" rounded-md  ">
+          <h2 className="text-sm text-loud mb-6 flex items-center gap-2">
+            <span className="w-6 h-6 rounded-sm bg-mixed-bg text-loud flex items-center justify-center text-sm font-bold">
               1
             </span>
             Visit Category
@@ -686,7 +686,7 @@ export default function NewRequest() {
                 key={c.id}
                 type="button"
                 onClick={() => handleCategoryChange(c.id)}
-                className={`p-4 rounded-md border text-left transition-all duration-300 ${
+                className={`p-3 text-sm rounded-md border text-left transition-all duration-300 ${
                   formData.visit_category === c.id
                     ? "border-border bg-mixed-bg shadow-soft-sm"
                     : "border-subtle hover:border-border hover:bg-bg-primary"
@@ -701,9 +701,9 @@ export default function NewRequest() {
         </div>
 
         {/* â”€â”€ Step 2: Visit Details â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        <div className="vms-card rounded-md p-8 shadow-card">
-          <h2 className="text-xl text-loud mb-6 flex items-center gap-2">
-            <span className="w-8 h-8 rounded-full bg-mixed-bg text-accent flex items-center justify-center text-sm font-bold">
+        <div className=" rounded-md ">
+          <h2 className="text-sm text-loud mb-6 flex items-center gap-2">
+            <span className="w-6 h-6 rounded-sm bg-mixed-bg text-loud flex items-center justify-center text-sm font-bold">
               2
             </span>
             Visit Details
@@ -712,7 +712,7 @@ export default function NewRequest() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Date */}
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-loud flex items-center gap-2">
+              <label className="block text-sm font-medium text-loud sm:flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-accent" />
                 Visit Date *
               </label>
@@ -804,7 +804,7 @@ export default function NewRequest() {
 
                 {/* Unit picker */}
                 <div className="space-y-2">
-                  <label className="block text-sm font-medium text-loud flex items-center gap-1.5">
+                  <label className="block text-sm font-medium text-loud  items-center gap-1.5">
                     <Building className="w-4 h-4 text-accent" />
                     {visitMode === "visiting" ? "Select Unit to Visit *" : "Select Visitor's Unit *"}
                   </label>
@@ -1315,10 +1315,10 @@ export default function NewRequest() {
         )}
 
         {/* â”€â”€ Companions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        <div className="vms-card rounded-md p-5 sm:p-8 shadow-card">
+        <div className=" rounded-md ">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
-            <h2 className="text-xl text-loud flex items-center gap-2">
-              <span className="w-8 h-8 rounded-full bg-mixed-bg text-accent flex items-center justify-center text-sm font-bold shrink-0">
+            <h2 className="text-sm text-loud flex items-center gap-2">
+              <span className="w-6 h-6 rounded-sm bg-mixed-bg text-loud flex items-center justify-center text-sm font-bold shrink-0">
                 {isVendor ? "4" : "3"}
               </span>
               <Users className="w-5 h-5 text-accent shrink-0" />
@@ -1343,7 +1343,7 @@ export default function NewRequest() {
               {formData.companions.map((comp, idx) => (
                 <div
                   key={idx}
-                  className="flex flex-col sm:flex-row gap-4 items-start sm:items-center bg-bg-primary p-4 rounded-md border border-subtle"
+                  className="flex flex-col sm:flex-row gap-4 items-start sm:items-center bg-bg-secondary p-4 rounded-md border border-subtle"
                 >
                   <div className="flex-1 space-y-1 w-full">
                     <input
@@ -1352,14 +1352,14 @@ export default function NewRequest() {
                       required
                       value={comp.full_name}
                       onChange={(e) => updateCompanion(idx, "full_name", e.target.value)}
-                      className="w-full bg-transparent border-0 border-b border-subtle px-0 py-1 text-sm text-loud focus:ring-0 focus:border-border"
+                      className="w-full outline-none bg-bg-primary px-2 border-0 border-b border-subtle  py-2 text-sm text-loud focus:ring-0 focus:border-border"
                     />
                   </div>
                   <div className="flex-1 space-y-1 w-full">
                     <select
                       value={comp.id_type}
                       onChange={(e) => updateCompanion(idx, "id_type", e.target.value)}
-                      className="w-full bg-transparent border-0 border-b border-subtle px-0 py-1 text-sm text-loud focus:ring-0 focus:border-border"
+                      className="w-full bg-bg-primary outline-none  border-0 border-b border-subtle px-2 py-2 text-sm text-loud focus:ring-0 focus:border-border"
                     >
                       <option value="AADHAAR">Aadhaar</option>
                       <option value="PAN">PAN</option>
@@ -1374,13 +1374,13 @@ export default function NewRequest() {
                       required
                       value={comp.id_number}
                       onChange={(e) => updateCompanion(idx, "id_number", e.target.value)}
-                      className="w-full bg-transparent border-0 border-b border-subtle px-0 py-1 text-sm text-loud focus:ring-0 focus:border-border"
+                      className="w-full bg-bg-primary px-2 border-0 border-b border-subtle  py-2 text-sm text-loud focus:ring-0 focus:border-border"
                     />
                   </div>
                   <button
                     type="button"
                     onClick={() => removeCompanion(idx)}
-                    className="p-2 text-warning hover:bg-accent/10 rounded-full transition-colors self-end sm:self-auto"
+                    className="p-2 text-color  rounded-sm transition-colors self-end sm:self-auto"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

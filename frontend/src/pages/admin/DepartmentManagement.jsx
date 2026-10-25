@@ -112,7 +112,7 @@ export default function DepartmentManagement() {
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-loud">Department <em className="italic">Management</em></h1>
+            <h1 className="text-xl font-bold text-loud">Department Management</h1>
           </div>
           <button onClick={openAdd} className="btn-primary px-4 py-2 text-xs">
             <Plus className="w-4 h-4" /> Add Department

@@ -116,12 +116,12 @@
     --color-warning-bg: rgba(251, 191, 36, 0.08);
     --color-danger-bg: rgba(248, 113, 113, 0.08);
     --color-info-bg: rgba(77, 144, 254, 0.08);
-    --color-mixed-bg: rgba(97, 58, 245, 0.12); /* deep-violet tint */
+    --color-mixed-bg: rgba(193, 192, 193, 0.12); /* deep-violet tint */
     --color-mixed: #613af5; /* deep-violet */
 
     /* Borders */
     --color-border: #272728;
-    --color-border-subtle: #1e2140;
+    --color-border-subtle: #303031;
     --color-gray: #334155;
     --color-lightColor: #1a1d38;
     --color-surface-hover: rgba(97, 58, 245, 0.1);

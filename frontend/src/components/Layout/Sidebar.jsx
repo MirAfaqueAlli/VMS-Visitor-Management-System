@@ -129,24 +129,24 @@ export default function Sidebar({ isOpen, onClose }) {
 
       {/* ── Active Unit banner ────────────────────────────────────────── */}
       {(isSuperAdmin || isGlobalAuditor) && activeUnit && (
-        <div className="px-3 py-2.5 mx-2.5 mt-3 rounded flex flex-col gap-1.5 shrink-0"
-          style={{ background: 'rgba(26,115,233,0.12)', border: '1px solid rgba(26,115,233,0.25)' }}>
-          <p className="text-[9px] uppercase font-bold tracking-widest leading-none"
-            style={{ color: '#4d90fe' }}>Active Unit</p>
+        <div className="px-3 py-2.5 mx-2.5 mt-3 rounded flex flex-col gap-1.5 shrink-0 bg-bg-secondary border border-sidebar"
+         >
+          <p className="text-[9px] uppercase font-bold tracking-widest leading-none text-accent "
+            >Active Unit</p> 
           <div className="flex items-center justify-between gap-1.5">
-            <span className="text-[11px] text-white font-semibold truncate leading-none">{activeUnit.name}</span>
+            <span className="text-[12px] text-color font-semibold truncate leading-none">{activeUnit.name}</span>
             <button
               onClick={() => {
                 setActiveUnit(null);
                 toast.success('Cleared unit context — back to central view');
               }}
-              className="p-0.5 rounded-full hover:bg-white/10 transition-colors"
-              style={{ color: 'rgba(255,255,255,0.55)' }}
-              onMouseEnter={e => e.currentTarget.style.color = '#fff'}
-              onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.55)'}
+              className="p-0.5 text-[8px] font-bold rounded-full hover:bg-white/10 transition-colors"
+              style={{ color: 'var(--color-text)' }}
+              onMouseEnter={e => e.currentTarget.style.color = 'var(--color-danger)'}
+              onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text)'}
               title="Leave Unit View"
             >
-              <X size={11} />
+              SWITCH BACK
             </button>
           </div>
         </div>

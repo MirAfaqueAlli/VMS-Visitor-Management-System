@@ -603,10 +603,10 @@ export default function CheckOut() {
   return (
     <div className="max-w-7xl mx-auto  animate-fade-in">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-loud">Gate <em className="italic">Check-Out</em></h1>
+        <h1 className="text-xl font-bold text-loud">Gate Check-Out</h1>
       </div>
 
-      <div className="vms-card rounded-md p-6 shadow-card">
+      <div className="vms-card rounded-md p-6">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
