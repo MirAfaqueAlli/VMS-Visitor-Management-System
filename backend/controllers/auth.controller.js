@@ -393,7 +393,10 @@ const verifyLoginOtp = async (req, res) => {
  */
 const getMe = async (req, res) => {
   try {
-    const isCentral = req.user.unit_db === 'central';
+    const isCentral = req.user.unit_db === 'central' ||
+      req.user.unit_db === 'vms_central' ||
+      req.user.role_type === 'super_admin' ||
+      req.user.role_type === 'global_auditor';
     let rows;
 
     if (isCentral) {

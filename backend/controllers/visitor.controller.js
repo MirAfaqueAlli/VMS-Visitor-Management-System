@@ -4,6 +4,7 @@
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
+const { centralPool, getPool } = require('../services/dbManager');
 
 // ── createVisitor ─────────────────────────────────────────────────────────────
 /**
@@ -85,11 +86,22 @@ const createVisitor = async (req, res) => {
  */
 const checkBlacklist = async (req, res) => {
   try {
-    const { phone } = req.query;
+    const { phone, unit_code } = req.query;
     if (!phone) return sendError(res, 'Query param "phone" is required.', 400);
-    if (!req.db) return sendError(res, 'unit_code is required for unauthenticated requests.', 400);
 
-    const [rows] = await req.db.query(
+    let db = req.db;
+    if (!db && unit_code) {
+      const [unitRows] = await centralPool.query(
+        `SELECT db_name FROM units WHERE code = ? AND is_active = 1 AND db_status = 'ACTIVE'`,
+        [unit_code.toUpperCase().trim()]
+      );
+      if (unitRows.length === 0) return sendError(res, 'Unit not found.', 404);
+      db = getPool(unitRows[0].db_name);
+    }
+
+    if (!db) return sendError(res, 'unit_code is required for unauthenticated requests.', 400);
+
+    const [rows] = await db.query(
       `SELECT bv.id, bv.reason, bv.blacklisted_at
        FROM blacklisted_visitors bv
        JOIN visitors v ON v.id = bv.visitor_id

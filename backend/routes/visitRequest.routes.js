@@ -97,14 +97,8 @@ router.get(
   ctrl.listRequests
 );
 
-// Get single request
-router.get('/:id', protect, ctrl.getRequest);
-
-// Cancel request
-router.put('/:id/cancel', protect, ctrl.cancelRequest);
-
 // ── Host-level visitor blocking (host blocks by phone from a visit request) ──
-// my-blocked-visitors must come BEFORE /:id to avoid param collision
+// /my-blocked-visitors must come BEFORE /:id to avoid param collision
 router.get(
   '/my-blocked-visitors',
   protect,
@@ -119,6 +113,12 @@ router.delete(
   authorize('super_admin', 'unit_admin', 'employee'),
   ctrl.unblockVisitor
 );
+
+// Get single request
+router.get('/:id', protect, ctrl.getRequest);
+
+// Cancel request
+router.put('/:id/cancel', protect, ctrl.cancelRequest);
 
 // Block visitor by phone from a specific visit request (host or admin)
 router.post(

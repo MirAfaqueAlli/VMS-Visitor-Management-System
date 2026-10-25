@@ -1,0 +1,1608 @@
+{
+  "timestamp": "2026-10-25T15:19:33.967Z",
+  "total": 48,
+  "passed": 48,
+  "failed": 0,
+  "results": [
+    {
+      "module": "Health",
+      "test": "Health Check",
+      "method": "GET",
+      "endpoint": "/health",
+      "status": 200,
+      "duration": "20ms",
+      "passed": true,
+      "message": "Central DB connected",
+      "data": null
+    },
+    {
+      "module": "Setup",
+      "test": "Setup Status",
+      "method": "GET",
+      "endpoint": "/setup/status",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "OK",
+      "data": null
+    },
+    {
+      "module": "Auth",
+      "test": "Get Profile (SuperAdmin)",
+      "method": "GET",
+      "endpoint": "/auth/me",
+      "status": 200,
+      "duration": "4ms",
+      "passed": true,
+      "message": "User profile retrieved successfully.",
+      "data": {
+        "id": 1,
+        "full_name": "Kalvin",
+        "email": "kalvinclarke.http@gmail.com",
+        "phone": null,
+        "designation": null,
+        "designation_id": null,
+        "employee_code": "SA-001",
+        "role": "super_admin",
+        "role_type": "super_admin",
+        "department_id": null,
+        "department_name": null,
+        "unit_id": null,
+        "unit_name": null,
+        "unit_db": "vms_central",
+        "last_login_at": "2026-10-24T06:55:02.000Z",
+        "is_super_admin": true,
+        "is_unit_admin": false,
+        "is_dept_admin": false,
+        "is_global_auditor": false,
+        "is_unit_auditor": false
+      }
+    },
+    {
+      "module": "Auth",
+      "test": "Get Profile (UnitAdmin)",
+      "method": "GET",
+      "endpoint": "/auth/me",
+      "status": 200,
+      "duration": "4ms",
+      "passed": true,
+      "message": "User profile retrieved successfully.",
+      "data": {
+        "id": 1,
+        "full_name": "Mir Afaque Alli",
+        "email": "mirafaquealli9@gmail.com",
+        "phone": null,
+        "designation": null,
+        "designation_id": null,
+        "employee_code": "U1-ADM",
+        "role": "unit_admin",
+        "role_type": "unit_admin",
+        "department_id": null,
+        "department_name": null,
+        "unit_id": 1,
+        "unit_name": "Unit 1",
+        "unit_db": "vms_unit_u1",
+        "last_login_at": null,
+        "is_super_admin": false,
+        "is_unit_admin": true,
+        "is_dept_admin": false,
+        "is_global_auditor": false,
+        "is_unit_auditor": false
+      }
+    },
+    {
+      "module": "Auth",
+      "test": "Get Profile (Employee)",
+      "method": "GET",
+      "endpoint": "/auth/me",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "User profile retrieved successfully.",
+      "data": {
+        "id": 2,
+        "full_name": "Mir",
+        "email": "mirafaque9@gmail.com",
+        "phone": "7846826567",
+        "designation": null,
+        "designation_id": 1,
+        "employee_code": "EMP-1",
+        "role": "employee",
+        "role_type": "employee",
+        "department_id": 1,
+        "department_name": "IT",
+        "unit_id": 1,
+        "unit_name": "Unit 1",
+        "unit_db": "vms_unit_u1",
+        "last_login_at": "2026-10-22T05:12:27.000Z",
+        "is_super_admin": false,
+        "is_unit_admin": false,
+        "is_dept_admin": false,
+        "is_global_auditor": false,
+        "is_unit_auditor": false
+      }
+    },
+    {
+      "module": "Auth",
+      "test": "Get Profile (Security)",
+      "method": "GET",
+      "endpoint": "/auth/me",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "User profile retrieved successfully.",
+      "data": {
+        "id": 3,
+        "full_name": "Sec1",
+        "email": "driemscodersguild@gmail.com",
+        "phone": "98765432190",
+        "designation": null,
+        "designation_id": null,
+        "employee_code": "SC-1",
+        "role": "security",
+        "role_type": "security",
+        "department_id": null,
+        "department_name": null,
+        "unit_id": 1,
+        "unit_name": "Unit 1",
+        "unit_db": "vms_unit_u1",
+        "last_login_at": "2026-10-22T05:10:42.000Z",
+        "is_super_admin": false,
+        "is_unit_admin": false,
+        "is_dept_admin": false,
+        "is_global_auditor": false,
+        "is_unit_auditor": false
+      }
+    },
+    {
+      "module": "Auth",
+      "test": "Refresh Token",
+      "method": "POST",
+      "endpoint": "/auth/refresh",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Token refreshed.",
+      "data": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGUiOiJ1bml0X2FkbWluIiwidW5pdF9kYiI6InZtc191bml0X3UxIiwiaWF0IjoxNzkyOTQxNTY1LCJleHAiOjE3OTMwMjc5NjV9.u-F4slZLCEhzMtOalNxlVeaBS1VuCgDD20xhYsXPdKE"
+      }
+    },
+    {
+      "module": "Auth",
+      "test": "Invalid Credentials Login",
+      "method": "POST",
+      "endpoint": "/auth/login",
+      "status": 401,
+      "duration": "4ms",
+      "passed": true,
+      "message": "Invalid credentials.",
+      "data": null
+    },
+    {
+      "module": "PublicAuth",
+      "test": "Send Public Email OTP",
+      "method": "POST",
+      "endpoint": "/public-auth/send-email-otp",
+      "status": 200,
+      "duration": "5462ms",
+      "passed": true,
+      "message": "OTP sent to your email.",
+      "data": {}
+    },
+    {
+      "module": "VisitRequests",
+      "test": "Public Phone Lookup",
+      "method": "GET",
+      "endpoint": "/visit-requests/lookup-visitor?phone=9876543210&unit_code=U1",
+      "status": 200,
+      "duration": "5ms",
+      "passed": true,
+      "message": "Visitor not found.",
+      "data": {
+        "found": false
+      }
+    },
+    {
+      "module": "Units",
+      "test": "List Public Units (No Auth)",
+      "method": "GET",
+      "endpoint": "/units/public",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Units fetched.",
+      "data": [
+        {
+          "id": 1,
+          "name": "Unit 1",
+          "code": "U1",
+          "city": null,
+          "state": null
+        },
+        {
+          "id": 2,
+          "name": "Unit 2",
+          "code": "U2",
+          "city": null,
+          "state": null
+        }
+      ]
+    },
+    {
+      "module": "Units",
+      "test": "Get Unit by Code (No Auth)",
+      "method": "GET",
+      "endpoint": "/units/by-code/U1",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Unit found.",
+      "data": {
+        "id": 1,
+        "name": "Unit 1",
+        "code": "U1",
+        "city": null,
+        "state": null
+      }
+    },
+    {
+      "module": "Units",
+      "test": "List All Units (SuperAdmin)",
+      "method": "GET",
+      "endpoint": "/units?page=1&limit=10",
+      "status": 200,
+      "duration": "10ms",
+      "passed": true,
+      "message": "Units fetched successfully.",
+      "data": {
+        "units": [
+          {
+            "id": 1,
+            "name": "Unit 1",
+            "code": "U1",
+            "type": "UNIT",
+            "db_name": "vms_unit_u1",
+            "db_status": "ACTIVE",
+            "city": null,
+            "state": null,
+            "phone": null,
+            "email": null,
+            "is_active": 1,
+            "created_at": "2026-10-22T04:26:50.000Z",
+            "updated_at": "2026-10-22T04:26:51.000Z",
+            "organization_name": "OHPC",
+            "user_count": 3,
+            "department_count": 1
+          },
+          {
+            "id": 2,
+            "name": "Unit 2",
+            "code": "U2",
+            "type": "UNIT",
+            "db_name": "vms_unit_u2",
+            "db_status": "ACTIVE",
+            "city": null,
+            "state": null,
+            "phone": null,
+            "email": null,
+            "is_active": 1,
+            "created_at": "2026-10-22T05:05:26.000Z",
+            "updated_at": "2026-10-22T05:05:26.000Z",
+            "organization_name": "OHPC",
+            "user_count": 2,
+            "department_count": 1
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 2,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "module": "Units",
+      "test": "Get Unit by ID (SuperAdmin)",
+      "method": "GET",
+      "endpoint": "/units/1",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Unit fetched successfully.",
+      "data": {
+        "id": 1,
+        "organization_id": 1,
+        "name": "Unit 1",
+        "code": "U1",
+        "type": "UNIT",
+        "db_name": "vms_unit_u1",
+        "db_status": "ACTIVE",
+        "address": null,
+        "city": null,
+        "state": null,
+        "phone": null,
+        "email": null,
+        "is_active": 1,
+        "created_at": "2026-10-22T04:26:50.000Z",
+        "updated_at": "2026-10-22T04:26:51.000Z",
+        "organization_name": "OHPC",
+        "user_count": 3,
+        "department_count": 1
+      }
+    },
+    {
+      "module": "Units",
+      "test": "Unit Access Forbidden for Employee",
+      "method": "GET",
+      "endpoint": "/units",
+      "status": 403,
+      "duration": "1ms",
+      "passed": true,
+      "message": "Access forbidden. Required role(s): super_admin, global_auditor.",
+      "data": null
+    },
+    {
+      "module": "CentralUsers",
+      "test": "List Central Users (SuperAdmin)",
+      "method": "GET",
+      "endpoint": "/central-users",
+      "status": 200,
+      "duration": "4ms",
+      "passed": true,
+      "message": "Central users fetched successfully.",
+      "data": {
+        "users": [
+          {
+            "id": 1,
+            "role_type": "super_admin",
+            "full_name": "Kalvin",
+            "email": "kalvinclarke.http@gmail.com",
+            "phone": null,
+            "employee_code": "SA-001",
+            "is_active": 1,
+            "last_login_at": "2026-10-24T06:55:02.000Z",
+            "created_at": "2026-10-22T04:25:57.000Z",
+            "updated_at": "2026-10-24T06:55:02.000Z"
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 1,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "module": "CentralUsers",
+      "test": "List Central Users Forbidden for UnitAdmin",
+      "method": "GET",
+      "endpoint": "/central-users",
+      "status": 403,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Access forbidden. Required role(s): super_admin.",
+      "data": null
+    },
+    {
+      "module": "Users",
+      "test": "List Unit Users (UnitAdmin)",
+      "method": "GET",
+      "endpoint": "/users?page=1&limit=10",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Users fetched successfully.",
+      "data": {
+        "users": [
+          {
+            "id": 2,
+            "full_name": "Mir",
+            "email": "mirafaque9@gmail.com",
+            "phone": "7846826567",
+            "designation": null,
+            "designation_id": 1,
+            "employee_code": "EMP-1",
+            "role_type": "employee",
+            "department_id": 1,
+            "unit_id": 1,
+            "is_active": 1,
+            "created_at": "2026-10-22T04:27:54.000Z",
+            "last_login_at": "2026-10-22T05:12:27.000Z",
+            "department_name": "IT"
+          },
+          {
+            "id": 1,
+            "full_name": "Mir Afaque Alli",
+            "email": "mirafaquealli9@gmail.com",
+            "phone": null,
+            "designation": null,
+            "designation_id": null,
+            "employee_code": "U1-ADM",
+            "role_type": "unit_admin",
+            "department_id": null,
+            "unit_id": 1,
+            "is_active": 1,
+            "created_at": "2026-10-22T04:26:51.000Z",
+            "last_login_at": null,
+            "department_name": null
+          },
+          {
+            "id": 3,
+            "full_name": "Sec1",
+            "email": "driemscodersguild@gmail.com",
+            "phone": "98765432190",
+            "designation": null,
+            "designation_id": null,
+            "employee_code": "SC-1",
+            "role_type": "security",
+            "department_id": null,
+            "unit_id": 1,
+            "is_active": 1,
+            "created_at": "2026-10-22T05:06:46.000Z",
+            "last_login_at": "2026-10-22T05:10:42.000Z",
+            "department_name": null
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 3,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "module": "Users",
+      "test": "List Hosts (Public / Employee)",
+      "method": "GET",
+      "endpoint": "/users/hosts?unit_code=U1",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Hosts fetched successfully.",
+      "data": [
+        {
+          "id": 2,
+          "full_name": "Mir",
+          "email": "mirafaque9@gmail.com",
+          "phone": "7846826567",
+          "designation": null,
+          "designation_id": 1,
+          "role_type": "employee",
+          "department_id": 1,
+          "unit_id": 1,
+          "designation_name": "Developer",
+          "department_name": "IT"
+        },
+        {
+          "id": 1,
+          "full_name": "Mir Afaque Alli",
+          "email": "mirafaquealli9@gmail.com",
+          "phone": null,
+          "designation": null,
+          "designation_id": null,
+          "role_type": "unit_admin",
+          "department_id": null,
+          "unit_id": 1,
+          "designation_name": null,
+          "department_name": null
+        },
+        {
+          "id": 3,
+          "full_name": "Sec1",
+          "email": "driemscodersguild@gmail.com",
+          "phone": "98765432190",
+          "designation": null,
+          "designation_id": null,
+          "role_type": "security",
+          "department_id": null,
+          "unit_id": 1,
+          "designation_name": null,
+          "department_name": null
+        }
+      ]
+    },
+    {
+      "module": "Departments",
+      "test": "List Public Departments (No Auth)",
+      "method": "GET",
+      "endpoint": "/departments/public?unit_code=U1",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Departments fetched successfully.",
+      "data": [
+        {
+          "id": 1,
+          "name": "IT",
+          "code": "IT",
+          "description": null
+        }
+      ]
+    },
+    {
+      "module": "Departments",
+      "test": "List Departments (UnitAdmin)",
+      "method": "GET",
+      "endpoint": "/departments",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Departments fetched successfully.",
+      "data": {
+        "departments": [
+          {
+            "id": 1,
+            "name": "IT",
+            "code": "IT",
+            "description": null,
+            "is_active": 1,
+            "created_at": "2026-10-22T04:27:09.000Z",
+            "unit_id": 1,
+            "user_count": 1,
+            "designation_count": 1
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 1,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "module": "Designations",
+      "test": "List Designations (Employee)",
+      "method": "GET",
+      "endpoint": "/designations?department_id=1",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Designations fetched successfully.",
+      "data": [
+        {
+          "id": 1,
+          "department_id": 1,
+          "name": "Developer",
+          "is_active": 1,
+          "created_at": "2026-10-22T04:27:09.000Z"
+        }
+      ]
+    },
+    {
+      "module": "Visitors",
+      "test": "List Visitors Directory",
+      "method": "GET",
+      "endpoint": "/visitors?page=1&limit=10",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Visitors fetched successfully.",
+      "data": {
+        "visitors": [],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 0,
+          "pages": 0
+        }
+      }
+    },
+    {
+      "module": "Visitors",
+      "test": "Check Blacklist Status",
+      "method": "GET",
+      "endpoint": "/visitors/blacklist-check?phone=9876543210&unit_code=U1",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Visitor is not blacklisted.",
+      "data": {
+        "blacklisted": false
+      }
+    },
+    {
+      "module": "Visitors",
+      "test": "Phone Lookup",
+      "method": "GET",
+      "endpoint": "/visitors/lookup?phone=9876543210",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "No previous visit found for this phone number.",
+      "data": {
+        "found": false,
+        "visitor": null
+      }
+    },
+    {
+      "module": "VisitRequests",
+      "test": "Create Visit Request (Employee)",
+      "method": "POST",
+      "endpoint": "/visit-requests",
+      "status": 201,
+      "duration": "3114ms",
+      "passed": true,
+      "message": "Visit request created successfully.",
+      "data": {
+        "id": 2,
+        "visitor_id": null,
+        "visitor_phone": "9876543210",
+        "visitor_name": "Aditya Sen",
+        "visitor_email": "aditya@example.com",
+        "requester_user_id": 2,
+        "host_user_id": 2,
+        "department_id": 1,
+        "unit_id": 1,
+        "target_unit_id": null,
+        "visit_category": "EMPLOYEE_VISIT",
+        "request_source": "SELF",
+        "company_name": null,
+        "vendor_email": null,
+        "service_type": null,
+        "work_order_ref": null,
+        "purpose": "Quarterly review meeting",
+        "visit_date": "2026-10-25T18:30:00.000Z",
+        "visit_start_time": "10:00:00",
+        "visit_end_time": "12:00:00",
+        "accompanying_count": 0,
+        "status": "PENDING",
+        "approved_by": null,
+        "approved_at": null,
+        "force_created": 0,
+        "created_at": "2026-10-25T15:19:30.000Z",
+        "updated_at": "2026-10-25T15:19:30.000Z",
+        "host_name": "Mir",
+        "host_email": "mirafaque9@gmail.com",
+        "department_name": "IT",
+        "gate_pass": null
+      }
+    },
+    {
+      "module": "VisitRequests",
+      "test": "List All Visit Requests",
+      "method": "GET",
+      "endpoint": "/visit-requests?page=1&limit=10",
+      "status": 200,
+      "duration": "5ms",
+      "passed": true,
+      "message": "Visit requests fetched successfully.",
+      "data": {
+        "requests": [
+          {
+            "id": 2,
+            "visit_date": "2026-10-25T18:30:00.000Z",
+            "visit_start_time": "10:00:00",
+            "status": "PENDING",
+            "request_source": "SELF",
+            "purpose": "Quarterly review meeting",
+            "accompanying_count": 0,
+            "created_at": "2026-10-25T15:19:30.000Z",
+            "visit_category": "EMPLOYEE_VISIT",
+            "visitor_name": "Aditya Sen",
+            "visitor_phone": "9876543210",
+            "company_name": null,
+            "force_created": 0,
+            "host_name": "Mir",
+            "department_name": "IT",
+            "pass_number": null
+          },
+          {
+            "id": 1,
+            "visit_date": "2026-10-21T18:30:00.000Z",
+            "visit_start_time": "11:00:00",
+            "status": "APPROVED",
+            "request_source": "HOST",
+            "purpose": "jsckldkdjbfklsdnfkabdfj",
+            "accompanying_count": 0,
+            "created_at": "2026-10-22T05:09:16.000Z",
+            "visit_category": "EMPLOYEE_VISIT",
+            "visitor_name": "Kalvin",
+            "visitor_phone": "9192834567",
+            "company_name": null,
+            "force_created": 0,
+            "host_name": "Mir",
+            "department_name": "IT",
+            "pass_number": "VMS-U1-20261022-97667"
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 2,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "module": "VisitRequests",
+      "test": "Get My Requests (Employee)",
+      "method": "GET",
+      "endpoint": "/visit-requests/my",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Your visit requests fetched successfully.",
+      "data": {
+        "requests": [
+          {
+            "id": 2,
+            "visit_date": "2026-10-25T18:30:00.000Z",
+            "status": "PENDING",
+            "purpose": "Quarterly review meeting",
+            "visit_category": "EMPLOYEE_VISIT",
+            "visitor_name": "Aditya Sen",
+            "visitor_phone": "9876543210",
+            "company_name": null,
+            "department_name": "IT"
+          },
+          {
+            "id": 1,
+            "visit_date": "2026-10-21T18:30:00.000Z",
+            "status": "APPROVED",
+            "purpose": "jsckldkdjbfklsdnfkabdfj",
+            "visit_category": "EMPLOYEE_VISIT",
+            "visitor_name": "Kalvin",
+            "visitor_phone": "9192834567",
+            "company_name": null,
+            "department_name": "IT"
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 2,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "module": "VisitRequests",
+      "test": "Get My Visitors (Employee)",
+      "method": "GET",
+      "endpoint": "/visit-requests/my-visitors",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Visitor history fetched successfully.",
+      "data": {
+        "visitors": [],
+        "pagination": {
+          "page": 1,
+          "limit": 20,
+          "total": 0,
+          "pages": 0
+        }
+      }
+    },
+    {
+      "module": "Approvals",
+      "test": "Get Approval Inbox",
+      "method": "GET",
+      "endpoint": "/approvals/inbox?page=1&limit=10",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Inbox fetched successfully.",
+      "data": {
+        "items": [
+          {
+            "visit_request_id": 2,
+            "visit_date": "2026-10-25T18:30:00.000Z",
+            "visit_start_time": "10:00:00",
+            "purpose": "Quarterly review meeting",
+            "status": "PENDING",
+            "visit_category": "EMPLOYEE_VISIT",
+            "assigned_at": "2026-10-25T15:19:30.000Z",
+            "visitor_name": "Aditya Sen",
+            "visitor_phone": "9876543210",
+            "company_name": null,
+            "host_name": "Mir",
+            "department_name": "IT",
+            "approval_id": 2,
+            "action": "PENDING"
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 10,
+          "total": 1,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "module": "VisitRequests",
+      "test": "Get Blocked Visitors",
+      "method": "GET",
+      "endpoint": "/visit-requests/my-blocked-visitors",
+      "status": 200,
+      "duration": "1ms",
+      "passed": true,
+      "message": "Blocked visitors fetched.",
+      "data": []
+    },
+    {
+      "module": "Gate",
+      "test": "Gate Dashboard Summary",
+      "method": "GET",
+      "endpoint": "/gate/dashboard",
+      "status": 200,
+      "duration": "5ms",
+      "passed": true,
+      "message": "Dashboard data retrieved successfully.",
+      "data": {
+        "yet_to_come": [],
+        "active": [],
+        "completed_today": [],
+        "pending_approval": [],
+        "summary": {
+          "yet_to_come_count": 0,
+          "active_count": 0,
+          "completed_today_count": 0,
+          "pending_count": 0
+        }
+      }
+    },
+    {
+      "module": "Gate",
+      "test": "Active Visitors Inside",
+      "method": "GET",
+      "endpoint": "/gate/active",
+      "status": 200,
+      "duration": "4ms",
+      "passed": true,
+      "message": "Active visitors retrieved successfully.",
+      "data": []
+    },
+    {
+      "module": "GatePasses",
+      "test": "List Gate Passes",
+      "method": "GET",
+      "endpoint": "/passes?page=1&limit=10",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Gate passes retrieved successfully.",
+      "data": {
+        "passes": [],
+        "pagination": {
+          "total": 0,
+          "page": 1,
+          "limit": 10,
+          "pages": 0
+        }
+      }
+    },
+    {
+      "module": "Reports",
+      "test": "Global Summary (SuperAdmin)",
+      "method": "GET",
+      "endpoint": "/reports/global-summary",
+      "status": 200,
+      "duration": "16ms",
+      "passed": true,
+      "message": "Success",
+      "data": {
+        "total_units": 2,
+        "active_units": 2,
+        "provisioning_units": 0,
+        "total_visits": 2,
+        "this_month_visits": 2,
+        "today_visits": 0,
+        "currently_inside": 0,
+        "pending_approvals": 1
+      }
+    },
+    {
+      "module": "Reports",
+      "test": "Global Recent Visits (SuperAdmin)",
+      "method": "GET",
+      "endpoint": "/reports/global-recent-visits",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Recent visits fetched.",
+      "data": [
+        {
+          "id": 2,
+          "visitor_name": "Aditya Sen",
+          "visitor_phone": "9876543210",
+          "visit_date": "2026-10-25T18:30:00.000Z",
+          "visit_start_time": "10:00:00",
+          "status": "PENDING",
+          "visit_category": "EMPLOYEE_VISIT",
+          "purpose": "Quarterly review meeting",
+          "created_at": "2026-10-25T15:19:30.000Z",
+          "host_name": "Mir",
+          "department_name": "IT",
+          "unit_name": "Unit 1",
+          "unit_db": "vms_unit_u1"
+        },
+        {
+          "id": 1,
+          "visitor_name": "Kalvin",
+          "visitor_phone": "9192834567",
+          "visit_date": "2026-10-21T18:30:00.000Z",
+          "visit_start_time": "11:00:00",
+          "status": "APPROVED",
+          "visit_category": "EMPLOYEE_VISIT",
+          "purpose": "jsckldkdjbfklsdnfkabdfj",
+          "created_at": "2026-10-22T05:09:16.000Z",
+          "host_name": "Mir",
+          "department_name": "IT",
+          "unit_name": "Unit 1",
+          "unit_db": "vms_unit_u1"
+        }
+      ]
+    },
+    {
+      "module": "Reports",
+      "test": "Global Audit Trail (SuperAdmin)",
+      "method": "GET",
+      "endpoint": "/reports/audit-logs/global?page=1&limit=20",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Success",
+      "data": {
+        "logs": [
+          {
+            "id": 9,
+            "user_id": 2,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Unit 1",
+            "action": "CREATE_REQUEST",
+            "module": "VISIT_REQUEST",
+            "record_type": "VISIT",
+            "record_id": 2,
+            "old_values": null,
+            "new_values": {
+              "status": "PENDING",
+              "typeCode": "EMPLOYEE_VISIT",
+              "force_create": false
+            },
+            "ip_address": "::ffff:127.0.0.1",
+            "user_agent": "node",
+            "created_at": "2026-10-25T15:19:33.000Z",
+            "user_name": "Mir",
+            "log_source": "unit"
+          },
+          {
+            "id": 4,
+            "user_id": 1,
+            "unit_db": "central",
+            "unit_name": "Central Admin",
+            "action": "LOGIN",
+            "module": "AUTH",
+            "record_type": "USER",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+            "created_at": "2026-10-24T06:55:02.000Z",
+            "user_name": "Kalvin",
+            "log_source": "central"
+          },
+          {
+            "id": 7,
+            "user_id": 2,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Unit 1",
+            "action": "GENERATE_PASS",
+            "module": "GATE",
+            "record_type": "GATE_PASS",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": null,
+            "user_agent": null,
+            "created_at": "2026-10-22T05:12:31.000Z",
+            "user_name": "Mir",
+            "log_source": "unit"
+          },
+          {
+            "id": 8,
+            "user_id": 2,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Unit 1",
+            "action": "APPROVE_REQUEST",
+            "module": "APPROVAL",
+            "record_type": "VISIT_REQUEST",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:12:31.000Z",
+            "user_name": "Mir",
+            "log_source": "unit"
+          },
+          {
+            "id": 6,
+            "user_id": 2,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Unit 1",
+            "action": "LOGIN",
+            "module": "AUTH",
+            "record_type": "USER",
+            "record_id": 2,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:12:27.000Z",
+            "user_name": "Mir",
+            "log_source": "unit"
+          },
+          {
+            "id": 5,
+            "user_id": 3,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Unit 1",
+            "action": "LOGIN",
+            "module": "AUTH",
+            "record_type": "USER",
+            "record_id": 3,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:10:42.000Z",
+            "user_name": "Sec1",
+            "log_source": "unit"
+          },
+          {
+            "id": 4,
+            "user_id": 1,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Unit 1",
+            "action": "CREATE_REQUEST",
+            "module": "VISIT_REQUEST",
+            "record_type": "VISIT",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": {
+              "status": "PENDING",
+              "typeCode": "EMPLOYEE_VISIT",
+              "force_create": false
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:09:33.000Z",
+            "user_name": "Mir Afaque Alli",
+            "log_source": "unit"
+          },
+          {
+            "id": 2,
+            "user_id": 1,
+            "unit_db": "vms_unit_u2",
+            "unit_name": "Unit 2",
+            "action": "CREATE_USER",
+            "module": "ADMIN",
+            "record_type": "USER",
+            "record_id": 2,
+            "old_values": null,
+            "new_values": {
+              "email": "coderstown.app@gmail.com",
+              "role_type": "employee"
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:08:28.000Z",
+            "user_name": "Mir",
+            "log_source": "unit"
+          },
+          {
+            "id": 1,
+            "user_id": 1,
+            "unit_db": "vms_unit_u2",
+            "unit_name": "Unit 2",
+            "action": "CREATE_DEPARTMENT",
+            "module": "ADMIN",
+            "record_type": "DEPARTMENT",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": {
+              "code": "IT",
+              "name": "IT",
+              "designation_count": 1
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:07:51.000Z",
+            "user_name": "Mir",
+            "log_source": "unit"
+          },
+          {
+            "id": 3,
+            "user_id": 1,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Unit 1",
+            "action": "CREATE_USER",
+            "module": "ADMIN",
+            "record_type": "USER",
+            "record_id": 3,
+            "old_values": null,
+            "new_values": {
+              "email": "driemscodersguild@gmail.com",
+              "role_type": "security"
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:06:46.000Z",
+            "user_name": "Mir Afaque Alli",
+            "log_source": "unit"
+          },
+          {
+            "id": 3,
+            "user_id": 1,
+            "unit_db": "vms_unit_u2",
+            "unit_name": "Central Admin",
+            "action": "CREATE_UNIT",
+            "module": "ADMIN",
+            "record_type": "UNIT",
+            "record_id": 2,
+            "old_values": null,
+            "new_values": {
+              "code": "U2",
+              "name": "Unit 2",
+              "db_name": "vms_unit_u2"
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:05:26.000Z",
+            "user_name": "Kalvin",
+            "log_source": "central"
+          },
+          {
+            "id": 2,
+            "user_id": 1,
+            "unit_db": "central",
+            "unit_name": "Central Admin",
+            "action": "LOGIN",
+            "module": "AUTH",
+            "record_type": "USER",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:04:37.000Z",
+            "user_name": "Kalvin",
+            "log_source": "central"
+          },
+          {
+            "id": 2,
+            "user_id": 1,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Unit 1",
+            "action": "CREATE_USER",
+            "module": "ADMIN",
+            "record_type": "USER",
+            "record_id": 2,
+            "old_values": null,
+            "new_values": {
+              "email": "mirafaque9@gmail.com",
+              "role_type": "employee"
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T04:27:54.000Z",
+            "user_name": "Mir Afaque Alli",
+            "log_source": "unit"
+          },
+          {
+            "id": 1,
+            "user_id": 1,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Unit 1",
+            "action": "CREATE_DEPARTMENT",
+            "module": "ADMIN",
+            "record_type": "DEPARTMENT",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": {
+              "code": "IT",
+              "name": "IT",
+              "designation_count": 1
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T04:27:09.000Z",
+            "user_name": "Mir Afaque Alli",
+            "log_source": "unit"
+          },
+          {
+            "id": 1,
+            "user_id": 1,
+            "unit_db": "vms_unit_u1",
+            "unit_name": "Central Admin",
+            "action": "CREATE_UNIT",
+            "module": "ADMIN",
+            "record_type": "UNIT",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": {
+              "code": "U1",
+              "name": "Unit 1",
+              "db_name": "vms_unit_u1"
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T04:26:51.000Z",
+            "user_name": "Kalvin",
+            "log_source": "central"
+          }
+        ],
+        "units": [
+          {
+            "db_name": "vms_unit_u1",
+            "unit_name": "Unit 1"
+          },
+          {
+            "db_name": "vms_unit_u2",
+            "unit_name": "Unit 2"
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 20,
+          "total": 15,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "module": "Reports",
+      "test": "Global Audit Forbidden for UnitAdmin",
+      "method": "GET",
+      "endpoint": "/reports/audit-logs/global",
+      "status": 403,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Access denied.",
+      "data": null
+    },
+    {
+      "module": "Reports",
+      "test": "Unit Audit Logs (UnitAdmin)",
+      "method": "GET",
+      "endpoint": "/reports/audit-logs?page=1&limit=20",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Success",
+      "data": {
+        "logs": [
+          {
+            "id": 9,
+            "user_id": 2,
+            "action": "CREATE_REQUEST",
+            "module": "VISIT_REQUEST",
+            "record_type": "VISIT",
+            "record_id": 2,
+            "old_values": null,
+            "new_values": {
+              "status": "PENDING",
+              "typeCode": "EMPLOYEE_VISIT",
+              "force_create": false
+            },
+            "ip_address": "::ffff:127.0.0.1",
+            "user_agent": "node",
+            "created_at": "2026-10-25T15:19:33.000Z",
+            "user_name": "Mir"
+          },
+          {
+            "id": 7,
+            "user_id": 2,
+            "action": "GENERATE_PASS",
+            "module": "GATE",
+            "record_type": "GATE_PASS",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": null,
+            "user_agent": null,
+            "created_at": "2026-10-22T05:12:31.000Z",
+            "user_name": "Mir"
+          },
+          {
+            "id": 8,
+            "user_id": 2,
+            "action": "APPROVE_REQUEST",
+            "module": "APPROVAL",
+            "record_type": "VISIT_REQUEST",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:12:31.000Z",
+            "user_name": "Mir"
+          },
+          {
+            "id": 6,
+            "user_id": 2,
+            "action": "LOGIN",
+            "module": "AUTH",
+            "record_type": "USER",
+            "record_id": 2,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:12:27.000Z",
+            "user_name": "Mir"
+          },
+          {
+            "id": 5,
+            "user_id": 3,
+            "action": "LOGIN",
+            "module": "AUTH",
+            "record_type": "USER",
+            "record_id": 3,
+            "old_values": null,
+            "new_values": null,
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:10:42.000Z",
+            "user_name": "Sec1"
+          },
+          {
+            "id": 4,
+            "user_id": 1,
+            "action": "CREATE_REQUEST",
+            "module": "VISIT_REQUEST",
+            "record_type": "VISIT",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": {
+              "status": "PENDING",
+              "typeCode": "EMPLOYEE_VISIT",
+              "force_create": false
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:09:33.000Z",
+            "user_name": "Mir Afaque Alli"
+          },
+          {
+            "id": 3,
+            "user_id": 1,
+            "action": "CREATE_USER",
+            "module": "ADMIN",
+            "record_type": "USER",
+            "record_id": 3,
+            "old_values": null,
+            "new_values": {
+              "email": "driemscodersguild@gmail.com",
+              "role_type": "security"
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T05:06:46.000Z",
+            "user_name": "Mir Afaque Alli"
+          },
+          {
+            "id": 2,
+            "user_id": 1,
+            "action": "CREATE_USER",
+            "module": "ADMIN",
+            "record_type": "USER",
+            "record_id": 2,
+            "old_values": null,
+            "new_values": {
+              "email": "mirafaque9@gmail.com",
+              "role_type": "employee"
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T04:27:54.000Z",
+            "user_name": "Mir Afaque Alli"
+          },
+          {
+            "id": 1,
+            "user_id": 1,
+            "action": "CREATE_DEPARTMENT",
+            "module": "ADMIN",
+            "record_type": "DEPARTMENT",
+            "record_id": 1,
+            "old_values": null,
+            "new_values": {
+              "code": "IT",
+              "name": "IT",
+              "designation_count": 1
+            },
+            "ip_address": "::1",
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+            "created_at": "2026-10-22T04:27:09.000Z",
+            "user_name": "Mir Afaque Alli"
+          }
+        ],
+        "pagination": {
+          "page": 1,
+          "limit": 20,
+          "total": 9,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "module": "Reports",
+      "test": "Visitor Summary Report",
+      "method": "GET",
+      "endpoint": "/reports/visitor-summary?range=month",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Visitor summary fetched.",
+      "data": {
+        "monthly": [
+          {
+            "month": 10,
+            "count": 2
+          }
+        ],
+        "total": 2,
+        "approved": 1,
+        "pending": 1,
+        "rejected": 0
+      }
+    },
+    {
+      "module": "Reports",
+      "test": "Daily Traffic Report",
+      "method": "GET",
+      "endpoint": "/reports/daily-traffic?days=30",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Daily traffic fetched.",
+      "data": [
+        {
+          "date": "2026-10-21T18:30:00.000Z",
+          "total": 1,
+          "completed": "0",
+          "pending": "0",
+          "rejected": "0",
+          "cancelled": "0"
+        },
+        {
+          "date": "2026-10-25T18:30:00.000Z",
+          "total": 1,
+          "completed": "0",
+          "pending": "1",
+          "rejected": "0",
+          "cancelled": "0"
+        }
+      ]
+    },
+    {
+      "module": "Reports",
+      "test": "Top Hosts Report",
+      "method": "GET",
+      "endpoint": "/reports/top-hosts",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Top hosts fetched.",
+      "data": [
+        {
+          "id": 2,
+          "full_name": "Mir",
+          "designation": null,
+          "department_name": "IT",
+          "visit_count": 2
+        }
+      ]
+    },
+    {
+      "module": "Reports",
+      "test": "Active & Expected Report",
+      "method": "GET",
+      "endpoint": "/reports/active-expected",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Success",
+      "data": {
+        "active": [],
+        "expected": [],
+        "date": "2026-10-25"
+      }
+    },
+    {
+      "module": "Reports",
+      "test": "Rejected Visits Report",
+      "method": "GET",
+      "endpoint": "/reports/rejected",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Success",
+      "data": {
+        "rows": [],
+        "total": 0,
+        "page": 1,
+        "limit": 50
+      }
+    },
+    {
+      "module": "Reports",
+      "test": "Visit History Report",
+      "method": "GET",
+      "endpoint": "/reports/visit-history?page=1&limit=10",
+      "status": 200,
+      "duration": "3ms",
+      "passed": true,
+      "message": "Success",
+      "data": {
+        "rows": [],
+        "total": 0,
+        "page": 1,
+        "limit": 10
+      }
+    },
+    {
+      "module": "Reports",
+      "test": "Report Meta Units",
+      "method": "GET",
+      "endpoint": "/reports/meta/units",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Success",
+      "data": [
+        {
+          "id": 1,
+          "name": "Unit 1",
+          "db_name": "vms_unit_u1"
+        },
+        {
+          "id": 2,
+          "name": "Unit 2",
+          "db_name": "vms_unit_u2"
+        }
+      ]
+    },
+    {
+      "module": "Reports",
+      "test": "Report Meta Departments",
+      "method": "GET",
+      "endpoint": "/reports/meta/departments",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Success",
+      "data": [
+        {
+          "id": 1,
+          "name": "IT"
+        }
+      ]
+    },
+    {
+      "module": "Reports",
+      "test": "Report Meta Employees",
+      "method": "GET",
+      "endpoint": "/reports/meta/employees",
+      "status": 200,
+      "duration": "2ms",
+      "passed": true,
+      "message": "Success",
+      "data": [
+        {
+          "id": 2,
+          "full_name": "Mir",
+          "employee_code": "EMP-1",
+          "department_id": 1
+        }
+      ]
+    }
+  ]
+}
