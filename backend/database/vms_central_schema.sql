@@ -46,18 +46,22 @@ CREATE TABLE IF NOT EXISTS units (
 
 -- Super admin + global auditor users ONLY (unit users live in their own unit DB)
 CREATE TABLE IF NOT EXISTS users (
-    id            INT AUTO_INCREMENT PRIMARY KEY,
-    role_type     ENUM('super_admin','global_auditor') NOT NULL,
-    full_name     VARCHAR(100) NOT NULL,
-    email         VARCHAR(100) UNIQUE NOT NULL,
-    phone         VARCHAR(20)  UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
-    employee_code VARCHAR(50)  UNIQUE NOT NULL,
-    is_active     BOOLEAN      DEFAULT TRUE,
-    last_login_at TIMESTAMP    NULL,
-    deleted_at    TIMESTAMP    NULL,
-    created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-    updated_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    role_type        ENUM('super_admin','global_auditor') NOT NULL,
+    full_name        VARCHAR(100) NOT NULL,
+    email            VARCHAR(100) UNIQUE NOT NULL,
+    phone            VARCHAR(20)  UNIQUE,
+    password_hash    VARCHAR(255) NOT NULL,
+    employee_code    VARCHAR(50)  UNIQUE NOT NULL,
+    is_active        BOOLEAN      DEFAULT TRUE,
+    last_login_at    TIMESTAMP    NULL,
+    deleted_at       TIMESTAMP    NULL,
+    -- ── Login lockout ─────────────────────────────────────────────────────────
+    failed_attempts  TINYINT UNSIGNED NOT NULL DEFAULT 0,  -- resets to 0 on success
+    locked_until     DATETIME         NULL,                -- NULL = not locked
+    -- ─────────────────────────────────────────────────────────────────────────
+    created_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 -- Global role definitions (lookup only — not used for FK)

@@ -76,6 +76,7 @@ const login = async (req, res) => {
     const [centralRows] = await centralPool.query(
       `SELECT id, role_type, full_name, email, phone, employee_code,
               password_hash, is_active, last_login_at,
+              failed_attempts, locked_until,
               NULL AS department_id, NULL AS department_name,
               NULL AS unit_id, NULL AS designation, NULL AS designation_id
        FROM users
@@ -125,6 +126,7 @@ const login = async (req, res) => {
       const [unitUserRows] = await dbPool.query(
         `SELECT u.id, u.role_type, u.full_name, u.email, u.phone, u.employee_code,
                 u.password_hash, u.is_active, u.last_login_at,
+                u.failed_attempts, u.locked_until,
                 u.department_id, u.unit_id, u.designation, u.designation_id,
                 d.name AS department_name
          FROM users u
@@ -140,13 +142,101 @@ const login = async (req, res) => {
       user = unitUserRows[0];
     }
 
-    // ── Step 3: Verify password ───────────────────────────────────────────────
+    // ── Step 3: Verify account status ─────────────────────────────────────────
     if (!user.is_active) {
       return sendError(res, 'Your account has been deactivated. Please contact an administrator.', 401);
     }
 
+    // ── Step 3a: Lockout gate ─────────────────────────────────────────────────
+    const LOCK_THRESHOLD   = 5;
+    const LOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      const minutesLeft = Math.ceil((new Date(user.locked_until) - Date.now()) / 60000);
+      // Audit every blocked attempt so the trail captures repeat attacks
+      await logAudit({
+        db:                 unitDb !== 'central' ? dbPool : null,
+        isSuperAdminAction: unitDb === 'central',
+        sourceUnit:         unitDb,
+        userId:             user.id,
+        action:             'ACCOUNT_BLOCKED_LOGIN_ATTEMPT',
+        module:             'AUTH',
+        recordType:         'USER',
+        recordId:           user.id,
+        newValues:          { locked_until: user.locked_until, minutes_remaining: minutesLeft },
+        ipAddress:          req.ip,
+        userAgent:          req.headers['user-agent'] || null,
+      });
+      return sendError(
+        res,
+        `Account is temporarily locked due to repeated failed login attempts. Try again in ${minutesLeft} minute(s).`,
+        429
+      );
+    }
+
+    // ── Step 3b: Verify password ──────────────────────────────────────────────
     const isMatch = await bcrypt.compare(password, user.password_hash);
-    if (!isMatch) return sendError(res, 'Invalid credentials.', 401);
+    if (!isMatch) {
+      const newAttempts = (user.failed_attempts || 0) + 1;
+
+      if (newAttempts >= LOCK_THRESHOLD) {
+        // Lock the account for 15 minutes
+        const lockUntil = new Date(Date.now() + LOCK_DURATION_MS);
+        await dbPool.query(
+          'UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?',
+          [newAttempts, lockUntil, user.id]
+        );
+        await logAudit({
+          db:                 unitDb !== 'central' ? dbPool : null,
+          isSuperAdminAction: unitDb === 'central',
+          sourceUnit:         unitDb,
+          userId:             user.id,
+          action:             'ACCOUNT_LOCKED',
+          module:             'AUTH',
+          recordType:         'USER',
+          recordId:           user.id,
+          newValues:          { failed_attempts: newAttempts, locked_until: lockUntil.toISOString() },
+          ipAddress:          req.ip,
+          userAgent:          req.headers['user-agent'] || null,
+        });
+        return sendError(
+          res,
+          'Account locked for 15 minutes due to repeated failed login attempts. Please try again later or contact an administrator.',
+          429
+        );
+      }
+
+      // Not yet locked — increment counter and log the failed attempt
+      await dbPool.query(
+        'UPDATE users SET failed_attempts = ? WHERE id = ?',
+        [newAttempts, user.id]
+      );
+      await logAudit({
+        db:                 unitDb !== 'central' ? dbPool : null,
+        isSuperAdminAction: unitDb === 'central',
+        sourceUnit:         unitDb,
+        userId:             user.id,
+        action:             'FAILED_LOGIN_ATTEMPT',
+        module:             'AUTH',
+        recordType:         'USER',
+        recordId:           user.id,
+        newValues:          { attempt_number: newAttempts, max_attempts: LOCK_THRESHOLD },
+        ipAddress:          req.ip,
+        userAgent:          req.headers['user-agent'] || null,
+      });
+      const remaining = LOCK_THRESHOLD - newAttempts;
+      return sendError(
+        res,
+        `Invalid credentials. ${remaining} attempt(s) remaining before account is temporarily locked.`,
+        401
+      );
+    }
+
+    // Password correct — reset the failure counter immediately
+    await dbPool.query(
+      'UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?',
+      [user.id]
+    );
 
     // ── Step 4: Generate login OTP and send via email ─────────────────────────
     const userEmail = user.email;
@@ -237,6 +327,20 @@ const verifyLoginOtp = async (req, res) => {
     }
 
     if (otp.trim() !== entry.otp) {
+      // Audit: log invalid OTP attempt — helps detect systematic OTP brute-force
+      await logAudit({
+        db:                 entry.unitDb !== 'central' ? entry.dbPool : null,
+        isSuperAdminAction: entry.unitDb === 'central',
+        sourceUnit:         entry.unitDb,
+        userId:             entry.userId,
+        action:             'INVALID_OTP_ATTEMPT',
+        module:             'AUTH',
+        recordType:         'USER',
+        recordId:           entry.userId,
+        newValues:          { otp_type: 'login_email' },
+        ipAddress:          req.ip,
+        userAgent:          req.headers['user-agent'] || null,
+      });
       return sendError(res, 'Incorrect OTP. Please try again.', 401);
     }
 

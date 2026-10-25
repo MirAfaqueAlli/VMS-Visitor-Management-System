@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_at   TIMESTAMP    NULL,
     deleted_at      TIMESTAMP    NULL,
     deleted_by      INT          NULL,
+    -- ── Login lockout ─────────────────────────────────────────────────────────
+    failed_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,  -- resets to 0 on success
+    locked_until    DATETIME         NULL,                -- NULL = not locked
+    -- ─────────────────────────────────────────────────────────────────────────
     created_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (department_id)  REFERENCES departments(id),

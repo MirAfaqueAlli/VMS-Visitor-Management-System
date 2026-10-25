@@ -118,6 +118,16 @@ async function ensureCentralDatabase(adminConn) {
   const centralSchemaPath = path.join(__dirname, '../database/vms_central_schema.sql');
   await executeSqlFile(adminConn, centralSchemaPath, CENTRAL_DB);
 
+  // ── Migration 002: Login lockout columns (central users table) ──────────────
+  await addColumnIfMissing(
+    adminConn, CENTRAL_DB, 'users', 'failed_attempts',
+    'TINYINT UNSIGNED NOT NULL DEFAULT 0'
+  );
+  await addColumnIfMissing(
+    adminConn, CENTRAL_DB, 'users', 'locked_until',
+    'DATETIME NULL'
+  );
+
   // Guarantee seed data is present in central lookup tables
   await adminConn.query(`USE \`${CENTRAL_DB}\``);
 
@@ -196,6 +206,16 @@ async function migrateUnitDatabase(conn, dbName) {
   // 5. Drop cross-unit foreign keys that break multi-tenancy
   await dropFkIfExists(conn, dbName, 'visit_requests',   'requester_user_id');
   await dropFkIfExists(conn, dbName, 'approval_history', 'acted_by_user_id');
+
+  // 6. Migration 002: Login lockout columns (unit users table)
+  await addColumnIfMissing(
+    conn, dbName, 'users', 'failed_attempts',
+    'TINYINT UNSIGNED NOT NULL DEFAULT 0'
+  );
+  await addColumnIfMissing(
+    conn, dbName, 'users', 'locked_until',
+    'DATETIME NULL'
+  );
 }
 
 /**
