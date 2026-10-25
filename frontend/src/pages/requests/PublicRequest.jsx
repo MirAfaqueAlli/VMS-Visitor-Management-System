@@ -5,6 +5,8 @@ import {
   Briefcase, UserCircle, Lock, Phone, Mail, CreditCard,
   ArrowRight, RefreshCw, Loader2, Check,
 } from "lucide-react";
+import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
+import { auth } from "../../utils/firebase";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 
@@ -119,6 +121,13 @@ function Shell({ step, children }) {
   return (
     <div className="min-h-screen bg-bg-primary py-12 px-4 sm:px-6">
       <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 80% 60% at 50% -10%, rgba(59,130,246,0.07) 0%, transparent 70%)" }} />
+      {/*
+        recaptcha-container MUST always be in the DOM while this page is mounted.
+        Firebase's RecaptchaVerifier anchors to this element when size='invisible'.
+        Keeping it here (outside the conditional step renders) means it survives
+        all step transitions without causing a "element not found" error.
+      */}
+      <div id="recaptcha-container" style={{ position: 'absolute', bottom: 0, left: 0 }} />
       <div className="max-w-xl mx-auto relative z-10">
         {/* Logo */}
         <div className="text-center mb-8">
@@ -136,6 +145,7 @@ function Shell({ step, children }) {
     </div>
   );
 }
+
 
 /* ── Locked field ───────────────────────────────────────────────────────────── */
 function LockedField({ label, value }) {
@@ -164,24 +174,41 @@ export default function PublicRequest() {
   const [step1Busy, setStep1Busy] = useState(false);
 
   // ── Step 2 ─ OTP ──────────────────────────────────────────────────────────
-  const [phoneOtp,      setPhoneOtp]      = useState("");
-  const [emailOtp,      setEmailOtp]      = useState("");
-  const [phoneVerified, setPhoneVerified] = useState(false);
-  const [emailVerified, setEmailVerified] = useState(false);
-  const [phoneVerifying, setPhoneVerifying] = useState(false);
-  const [emailVerifying, setEmailVerifying] = useState(false);
-  const [phoneResending, setPhoneResending] = useState(false);
-  const [emailResending, setEmailResending] = useState(false);
+  // Phone OTP — Firebase handles SMS delivery.
+  // confirmationResult: the object returned by signInWithPhoneNumber()
+  // firebaseIdToken:    the idToken we get after user confirms the OTP in Firebase
+  const [confirmationResult, setConfirmationResult] = useState(null);
+  const [phoneOtp,           setPhoneOtp]           = useState("");
+  const [firebaseIdToken,    setFirebaseIdToken]    = useState(null);
+  const [phoneVerified,      setPhoneVerified]      = useState(false);
+  const [phoneVerifying,     setPhoneVerifying]     = useState(false);
+  const [phoneResending,     setPhoneResending]     = useState(false);
 
-  // dev OTPs (shown only if API keys not configured)
-  const [devPhoneOtp, setDevPhoneOtp] = useState(null);
-  const [devEmailOtp, setDevEmailOtp] = useState(null);
+  // Email OTP — unchanged (our own backend)
+  const [emailOtp,      setEmailOtp]      = useState("");
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [emailVerifying, setEmailVerifying] = useState(false);
+  const [emailResending, setEmailResending] = useState(false);
+  const [devEmailOtp,    setDevEmailOtp]   = useState(null);
 
   const phoneTimer = useCountdown();
   const emailTimer = useCountdown();
 
   // ── Step 2 → 3 transition token ───────────────────────────────────────────
   const [visitorToken, setVisitorToken] = useState(null);
+
+  // ── reCAPTCHA ref — keeps the verifier instance between renders ───────────
+  const recaptchaVerifierRef = useRef(null);
+
+  // Cleanup reCAPTCHA verifier when the component unmounts (e.g. user navigates away)
+  useEffect(() => {
+    return () => {
+      if (recaptchaVerifierRef.current) {
+        try { recaptchaVerifierRef.current.clear(); } catch (_) {}
+        recaptchaVerifierRef.current = null;
+      }
+    };
+  }, []);
 
   // ── Step 3 ─ Request form ──────────────────────────────────────────────────
   const [formData, setFormData] = useState({
@@ -241,21 +268,46 @@ export default function PublicRequest() {
 
     setStep1Busy(true);
     try {
-      const [phoneRes, emailRes] = await Promise.all([
-        apiClient.post("/public-auth/send-phone-otp", { phone: visitor_phone.trim() }),
-        apiClient.post("/public-auth/send-email-otp", { email: visitor_email.trim() }),
-      ]);
+      // ── Firebase Phone OTP ────────────────────────────────────────────────
+      // Always clear and recreate — a stale verifier causes invalid-app-credential.
+      // When VITE_FIREBASE_TEST_MODE=true, appVerificationDisabledForTesting is set
+      // on the auth object in firebase.js, so Firebase skips reCAPTCHA entirely
+      // for test phone numbers registered in the Firebase Console.
+      if (recaptchaVerifierRef.current) {
+        try { recaptchaVerifierRef.current.clear(); } catch (_) {}
+        recaptchaVerifierRef.current = null;
+      }
 
-      // Dev mode: show OTP in UI if SMS/email not configured
-      if (phoneRes.data?.data?.dev_otp) setDevPhoneOtp(phoneRes.data.data.dev_otp);
-      if (emailRes.data?.data?.dev_otp) setDevEmailOtp(emailRes.data.data.dev_otp);
+      recaptchaVerifierRef.current = new RecaptchaVerifier(
+        auth,
+        'recaptcha-container',
+        { size: 'invisible' }   // size only — no extra options that can break token
+      );
 
+      const phoneWithCode = `+91${visitor_phone.trim()}`;
+      const confirmation  = await signInWithPhoneNumber(
+        auth,
+        phoneWithCode,
+        recaptchaVerifierRef.current
+      );
+      setConfirmationResult(confirmation);
       phoneTimer.start();
+
+      // ── Email OTP (our backend) ───────────────────────────────────────────
+      const emailRes = await apiClient.post("/public-auth/send-email-otp", { email: visitor_email.trim() });
+      if (emailRes.data?.data?.dev_otp) setDevEmailOtp(emailRes.data.data.dev_otp);
       emailTimer.start();
-      toast.success("OTPs sent! Check your phone and email.");
+
+      toast.success("OTP sent to your phone via SMS and to your email!");
       setStep(2);
     } catch (err) {
-      toast.error(err?.response?.data?.message || "Failed to send OTPs. Please try again.");
+      // Clear verifier on any failure so next attempt gets a fresh one
+      if (recaptchaVerifierRef.current) {
+        try { recaptchaVerifierRef.current.clear(); } catch (_) {}
+        recaptchaVerifierRef.current = null;
+      }
+      const msg = err?.response?.data?.message || err?.message || "Failed to send OTPs. Please try again.";
+      toast.error(msg);
     } finally {
       setStep1Busy(false);
     }
@@ -264,15 +316,28 @@ export default function PublicRequest() {
   /* ==============================================================================
    STEP 2 ─ Verify OTPs
 ============================================================================== */
+  // ── Phone: verify with Firebase, then send idToken to backend ────────────
   const verifyPhone = async () => {
     if (phoneOtp.length !== 6) { toast.error("Enter the 6-digit phone OTP."); return; }
+    if (!confirmationResult)   { toast.error("No active phone OTP session. Please go back and try again."); return; }
     setPhoneVerifying(true);
     try {
-      await apiClient.post("/public-auth/verify-phone-otp", { phone: identity.visitor_phone.trim(), otp: phoneOtp });
+      // Firebase verifies the OTP code locally + with Google servers
+      const userCredential = await confirmationResult.confirm(phoneOtp);
+      // Get a short-lived Firebase ID token to prove phone ownership to our backend
+      const idToken = await userCredential.user.getIdToken();
+      setFirebaseIdToken(idToken);
+
+      // Verify with our backend — backend checks idToken with firebase-admin
+      await apiClient.post("/public-auth/verify-firebase-phone", {
+        phone:   identity.visitor_phone.trim(),
+        idToken,
+      });
       setPhoneVerified(true);
       toast.success("Phone verified! ✓");
     } catch (err) {
-      toast.error(err?.response?.data?.message || "Invalid phone OTP.");
+      const msg = err?.response?.data?.message || err?.message || "Invalid phone OTP.";
+      toast.error(msg);
     } finally {
       setPhoneVerifying(false);
     }
@@ -299,16 +364,37 @@ export default function PublicRequest() {
     }
   };
 
+  // ── Phone: resend via Firebase ──────────────────────────────────────────
   const resendPhone = async () => {
     setPhoneResending(true);
     try {
-      const res = await apiClient.post("/public-auth/send-phone-otp", { phone: identity.visitor_phone.trim() });
-      if (res.data?.data?.dev_otp) setDevPhoneOtp(res.data.data.dev_otp);
+      // Clear existing verifier so Firebase can create a fresh reCAPTCHA session
+      if (recaptchaVerifierRef.current) {
+        recaptchaVerifierRef.current.clear();
+        recaptchaVerifierRef.current = null;
+      }
+      recaptchaVerifierRef.current = new RecaptchaVerifier(
+        auth,
+        'recaptcha-container',
+        { size: 'invisible' }
+      );
+      const phoneWithCode = `+91${identity.visitor_phone.trim()}`;
+      const confirmation  = await signInWithPhoneNumber(auth, phoneWithCode, recaptchaVerifierRef.current);
+      setConfirmationResult(confirmation);
       phoneTimer.start();
-      setPhoneOtp(""); setPhoneVerified(false);
+      setPhoneOtp("");
+      setPhoneVerified(false);
+      setFirebaseIdToken(null);
       toast.success("Phone OTP resent.");
-    } catch { toast.error("Failed to resend phone OTP."); }
-    finally { setPhoneResending(false); }
+    } catch (err) {
+      if (recaptchaVerifierRef.current) {
+        recaptchaVerifierRef.current.clear();
+        recaptchaVerifierRef.current = null;
+      }
+      toast.error(err?.message || "Failed to resend phone OTP.");
+    } finally {
+      setPhoneResending(false);
+    }
   };
 
   const resendEmail = async () => {
@@ -473,7 +559,7 @@ export default function PublicRequest() {
             <p className="text-xs text-faint">Enter the 6-digit codes sent to your phone and email.</p>
           </div>
 
-          {/* Phone OTP */}
+          {/* Phone OTP — Firebase */}
           <div className="space-y-3 p-4 rounded-xl border" style={{ borderColor: phoneVerified ? "var(--color-accent)" : "var(--color-border)", background: phoneVerified ? "rgba(59,130,246,0.05)" : "var(--color-bg-secondary)" }}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -486,15 +572,11 @@ export default function PublicRequest() {
               }
             </div>
 
-            {/* Dev OTP hint */}
-            {devPhoneOtp && !phoneVerified && (
-              <div className="text-[11px] text-accent bg-mixed-bg rounded px-2 py-1">
-                {"\uD83D\uDD27 Dev mode \u2014 OTP: "}<strong>{devPhoneOtp}</strong>
-              </div>
-            )}
-
             {!phoneVerified && (
               <>
+                <p className="text-[11px] text-faint leading-relaxed">
+                  Google sent an SMS to <strong>+91 {maskPhone(identity.visitor_phone)}</strong>. Enter the 6-digit code below.
+                </p>
                 <OtpInput value={phoneOtp} onChange={setPhoneOtp} disabled={phoneVerifying} />
                 <div className="flex items-center gap-2">
                   <button type="button" onClick={verifyPhone} disabled={phoneVerifying || phoneOtp.length < 6}

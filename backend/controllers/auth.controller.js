@@ -185,7 +185,9 @@ const login = async (req, res) => {
     // Send the OTP via email
     const { subject, html } = otpTemplate(otpCode, 'email');
     sendEmail({ to: userEmail, subject, html }).catch(() => {});
-    // console.log("otpCode", otpCode);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`\n=========================================\n[Auth] 🔑 Dev Mode Login OTP for ${userEmail}: ${otpCode}\n=========================================\n`);
+    }
     return sendSuccess(
       res,
       { loginToken, email: userEmail, requires_otp: true },

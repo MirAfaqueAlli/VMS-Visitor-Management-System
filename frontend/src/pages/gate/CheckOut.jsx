@@ -8,6 +8,7 @@ import {
 import jsQR from "jsqr";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
+import { getApiErrorMessage } from "../../utils/apiError";
 import useSocketEvent from "../../hooks/useSocketEvent";
 
 // ── QR scan modes (same as CheckIn) ──────────────────────────────────────────
@@ -66,11 +67,37 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
 
   const verifyPassString = useCallback((rawData) => {
     if (!rawData) return;
+
+    // ── Decode the signed QR token format ──────────────────────────────────
+    // Backend encodes: <base64url(JSON_payload)>.<base64url(HMAC_signature)>
+    // We only need pass_number from the payload — HMAC verification is done server-side.
     let decoded = rawData.trim();
-    try {
-      const parsed = JSON.parse(rawData);
-      if (parsed?.pass_number) decoded = parsed.pass_number;
-    } catch (_) {}
+
+    // 1. Try signed token: split on last dot, base64url-decode the payload segment
+    const dotIdx = decoded.lastIndexOf('.');
+    if (dotIdx > 0) {
+      try {
+        const encodedPayload = decoded.slice(0, dotIdx);
+        const base64 = encodedPayload.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64 + '=='.slice(0, (4 - base64.length % 4) % 4);
+        const json = atob(padded);
+        const parsed = JSON.parse(json);
+        if (parsed?.pass_number) decoded = parsed.pass_number;
+      } catch (_) {
+        // Not a signed token — try next format
+      }
+    }
+
+    // 2. Try legacy plain-JSON QR (for backward compat)
+    if (decoded === rawData.trim()) {
+      try {
+        const parsed = JSON.parse(rawData);
+        if (parsed?.pass_number) decoded = parsed.pass_number;
+      } catch (_) {
+        // Plain string — use as-is
+      }
+    }
+
     const upper = decoded.trim().toUpperCase();
 
     // ── Validate against visitor's actual pass number ──────────────
@@ -164,8 +191,7 @@ function QRCheckoutModal({ visitor, onClose, onSuccess }) {
       onSuccess();
       onClose();
     } catch (err) {
-      const msg = err.response?.data?.message || "QR checkout failed.";
-      toast.error(msg);
+      toast.error(getApiErrorMessage(err, "QR checkout failed."));
     } finally {
       setSubmitting(false);
     }
@@ -591,7 +617,7 @@ export default function CheckOut() {
       setDirectModal(null);
       fetchGateDashboard();
     } catch (err) {
-      toast.error(err.response?.data?.message || "Checkout failed");
+      toast.error(getApiErrorMessage(err, "Checkout failed. Please try again."));
     } finally {
       setDirectSubmit(false);
     }

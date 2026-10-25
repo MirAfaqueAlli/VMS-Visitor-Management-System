@@ -67,3 +67,9 @@ backend/uploads/qrcodes/*
 
 backend/uploads/visitor-photos/*
 !backend/uploads/visitor-photos/.gitkeep
+
+# ============================================================
+# Firebase Service Account Key — NEVER commit this file
+# ============================================================
+backend/config/firebase-service-account.json
+*firebase-adminsdk*.json

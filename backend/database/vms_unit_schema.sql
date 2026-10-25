@@ -288,3 +288,4 @@ CREATE TABLE IF NOT EXISTS host_phone_blacklist (
 );
 
 SET FOREIGN_KEY_CHECKS = 1;
+

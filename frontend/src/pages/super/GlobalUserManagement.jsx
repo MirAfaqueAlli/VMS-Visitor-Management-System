@@ -6,6 +6,7 @@ import apiClient from '../../api/axios';
 import PasswordStrength from '../../components/PasswordStrength';
 import { validatePassword } from '../../utils/passwordValidator';
 import Pagination from '../../components/shared/Pagination';
+import { getApiErrorMessage } from '../../utils/apiError';
 
 const EMPTY_FORM = {
   full_name: '', email: '', phone: '', employee_code: '', password: '', role_type: 'global_auditor',
@@ -147,7 +148,7 @@ export default function GlobalUserManagement() {
       close();
       fetchUsers();
     } catch (err) {
-      toast.error(err?.response?.data?.message || 'Operation failed.');
+      toast.error(getApiErrorMessage(err, 'Operation failed. Please try again.'));
     } finally {
       setSaving(false);
     }
@@ -160,7 +161,7 @@ export default function GlobalUserManagement() {
       toast.success(`${u.full_name} deactivated.`);
       fetchUsers();
     } catch (err) {
-      toast.error(err?.response?.data?.message || 'Failed to deactivate user.');
+      toast.error(getApiErrorMessage(err, 'Failed to deactivate user.'));
     }
   };
 

@@ -551,8 +551,8 @@ const createRequest = async (req, res) => {
         await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Employee visit for ${resolvedVisitorName || 'colleague'} on ${visit_date}${timeStr} auto-approved. Gate pass generated.` });
       }
     } else if (typeCode === 'VENDOR') {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      const qrCodeUrl = passResult?.qr_code_path ? `${baseUrl}/${passResult.qr_code_path}` : null;
+      // qr_code_path is now a full S3 URL — use it directly
+      const qrCodeUrl = passResult?.qr_code_path || null;
       if (vendor_email) {
         const tmpl = emailService.visitApprovedTemplate(contact_person || company_name || 'Vendor Team', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeUrl, visit_start_time || null);
         await notify({ visitRequestId, recipientEmail: vendor_email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
@@ -561,8 +561,8 @@ const createRequest = async (req, res) => {
     } else if (typeCode === 'SPOT') {
       await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `URGENT: Walk-in visitor waiting at reception for you. Purpose: ${purpose}` });
     } else if (typeCode === 'PERSONAL_VISIT') {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      const qrCodeUrl = passResult?.qr_code_path ? `${baseUrl}/${passResult.qr_code_path}` : null;
+      // qr_code_path is now a full S3 URL — use it directly
+      const qrCodeUrl = passResult?.qr_code_path || null;
       if (resolvedVisitorEmail) {
         const tmpl = emailService.visitApprovedTemplate(resolvedVisitorName || 'Guest', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeUrl, visit_start_time || null);
         await notify({ visitRequestId, recipientEmail: resolvedVisitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });

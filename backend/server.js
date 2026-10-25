@@ -27,7 +27,6 @@ const organizationRoutes = require('./routes/organization.routes');
 const unitRoutes = require('./routes/unit.routes');
 const designationRoutes = require('./routes/designation.routes');
 const centralUserRoutes = require('./routes/centralUser.routes');
-const archiveRoutes = require('./routes/archive.routes');
 const publicAuthRoutes = require('./routes/publicAuth.routes');
 
 const app = express();
@@ -75,7 +74,6 @@ app.use('/api/organizations', organizationRoutes);
 app.use('/api/units', unitRoutes);
 app.use('/api/designations', designationRoutes);
 app.use('/api/central-users', centralUserRoutes);
-app.use('/api/archive', archiveRoutes);
 app.use('/api/public-auth', publicAuthRoutes);
 
 // ── Health check ─────────────────────────────────────────────────────────────
@@ -106,24 +104,24 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ── Start server with Socket.IO ───────────────────────────────────────────────
+// ── Bootstrap server with database auto-migration & Socket.IO ─────────────────
 const PORT = process.env.PORT || 5001;
 const server = http.createServer(app);
 
 initSocket(server);
 
-// ── Run auto-migration, then start listening ──────────────────────────────────
-const { runAutoMigrate } = require('./services/autoMigrate');
+const { autoMigrate } = require('./services/databaseInit.service');
 
-runAutoMigrate()
-  .then(() => {
+async function start() {
+  try {
+    await autoMigrate();
     server.listen(PORT, () => {
       console.log(`[Server] VMS backend running on port ${PORT}`);
     });
-  })
-  .catch((err) => {
-    console.error('[Server] Auto-migration failed, starting anyway:', err.message);
-    server.listen(PORT, () => {
-      console.log(`[Server] VMS backend running on port ${PORT} (migration had errors)`);
-    });
-  });
+  } catch (err) {
+    console.error('[Server] Fatal error initializing database:', err.message);
+    process.exit(1);
+  }
+}
+
+start();

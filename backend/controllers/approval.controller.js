@@ -274,8 +274,9 @@ const approveRequest = async (req, res) => {
     const visitorEmail = request.visitor_email || null;
     const visitorPhone = request.visitor_phone || null;
     const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const qrCodeUrl = passResult?.qr_code_path ? `${baseUrl}/${passResult.qr_code_path}` : null;
+    const baseUrl = `${req.protocol}://${req.get('host')}`; // kept for any other local URL needs
+    // qr_code_path is now a full S3 URL — use it directly
+    const qrCodeUrl = passResult?.qr_code_path || null;
 
     Promise.allSettled([
       // Email visitor

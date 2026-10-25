@@ -2,7 +2,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ClipboardList, CheckSquare,
-  Shield, BarChart3, Settings, LogOut, Building2, Globe, ShieldAlert, X, UserCheck, FileArchive,
+  Shield, BarChart3, Settings, LogOut, Building2, Globe, ShieldAlert, X, UserCheck,
 } from 'lucide-react';
 
 import useAuth from '../../hooks/useAuth';
@@ -27,7 +27,6 @@ const superAdminCentralItems = [
   { label: 'Global Users',    icon: UserCheck,       path: '/super/users' },
   { label: 'Global Reports',  icon: BarChart3,       path: '/reports' },
   { label: 'Audit Logs',      icon: ShieldAlert,     path: '/audit-logs' },
-  { label: 'FY Archive',      icon: FileArchive,     path: '/admin/archive' },
 ];
 
 // Unit-level links shown to super admin when they are managing a unit
@@ -192,14 +191,6 @@ export default function Sidebar({ isOpen, onClose }) {
               <Settings size={15} strokeWidth={1.8} className="shrink-0" />
               <span>Departments</span>
             </NavLink>
-            <NavLink
-              to="/unit-archive"
-              className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-              onClick={onClose}
-            >
-              <FileArchive size={15} strokeWidth={1.8} className="shrink-0" />
-              <span>FY Archive</span>
-            </NavLink>
           </>
 
         /* ══ SUPER ADMIN — no active unit ═════════════════════════════ */
@@ -237,13 +228,6 @@ export default function Sidebar({ isOpen, onClose }) {
                 >
                   <Settings size={15} strokeWidth={1.8} className="shrink-0" />
                   <span>Departments</span>
-                </NavLink>
-                <NavLink
-                  to="/admin/archive"
-                  className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-                >
-                  <FileArchive size={15} strokeWidth={1.8} className="shrink-0" />
-                  <span>FY Archive</span>
                 </NavLink>
               </>
             )}

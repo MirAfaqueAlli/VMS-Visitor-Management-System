@@ -1,45 +1,40 @@
 // backend/services/qrcode.service.js
 'use strict';
 
-const QRCode  = require('qrcode');
-const fs      = require('fs');
-const path    = require('path');
+const QRCode           = require('qrcode');
 const { signQRPayload } = require('../utils/qrToken.util');
-
-const QR_DIR = path.join(__dirname, '..', 'uploads', 'qrcodes');
+const { uploadToS3 }   = require('../utils/s3.util');
 
 /**
- * Generates a signed QR code PNG file from a data object.
- *
- * Saves locally to uploads/qrcodes/<filename>.png (always).
+ * Generates a signed QR code PNG and uploads it to AWS S3.
  *
  * The QR encodes a compact HMAC-SHA256 signed token:
  *   <base64url(payload_json)>.<base64url(hmac_signature)>
  *
  * @param {object} data       - Data object to encode & sign.
  * @param {string} filename   - Base filename (without extension).
- * @returns {Promise<string>}  - Relative local path (uploads/qrcodes/<filename>.png)
+ * @returns {Promise<string>} - Public S3 URL of the uploaded QR code PNG.
  */
 const generateQRCode = async (data, filename) => {
-  // Ensure the output directory exists
-  fs.mkdirSync(QR_DIR, { recursive: true });
-
   // Sign the payload — produces a tamper-proof compact token
   const signedToken = signQRPayload(data);
 
-  const filePath     = path.join(QR_DIR, `${filename}.png`);
-  const relativePath = `uploads/qrcodes/${filename}.png`;
-
-  // Save locally (QRCode renders into a Buffer, then we write to disk)
+  // Render QR code into a PNG Buffer (no local disk write)
   const qrBuffer = await QRCode.toBuffer(signedToken, {
     width: 300,
     errorCorrectionLevel: 'H',
     type: 'png',
   });
 
-  fs.writeFileSync(filePath, qrBuffer);
+  // Upload to S3 and return the public URL
+  const url = await uploadToS3({
+    buffer:   qrBuffer,
+    mimeType: 'image/png',
+    folder:   'qrcodes',
+    filename: `${filename}.png`,
+  });
 
-  return relativePath;
+  return url;
 };
 
 module.exports = { generateQRCode };

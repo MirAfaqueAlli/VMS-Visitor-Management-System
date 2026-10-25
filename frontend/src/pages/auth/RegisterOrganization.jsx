@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
+import { getApiErrorMessage } from "../../utils/apiError";
 
 const STEPS = [
   { id: 1, label: "Organization", icon: Building2 },
@@ -60,10 +61,9 @@ export default function RegisterOrganization() {
 
   const handleStep1Submit = (e) => {
     e.preventDefault();
-    if (!orgData.name || !orgData.code || !orgData.type) {
-      toast.error("Please fill all required fields.");
-      return;
-    }
+    if (!orgData.name.trim()) { toast.error("Organization name is required."); return; }
+    if (!orgData.code.trim()) { toast.error("Organization short code is required."); return; }
+    if (!orgData.type)        { toast.error("Organization type is required. Please select one."); return; }
     setStep(2);
   };
 
@@ -95,7 +95,7 @@ export default function RegisterOrganization() {
       toast.success("Organization registered! Welcome to VMS.");
       navigate("/dashboard");
     } catch (err) {
-      toast.error(err.response?.data?.message || "Registration failed.");
+      toast.error(getApiErrorMessage(err, "Registration failed. Please try again."));
     } finally {
       setLoading(false);
     }

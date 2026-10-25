@@ -7,6 +7,7 @@ const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
 const { verifyQRToken }          = require('../utils/qrToken.util');
 const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
+const { uploadToS3 }             = require('../utils/s3.util');
 
 
 // ── getDashboard ──────────────────────────────────────────────────────────────
@@ -136,7 +137,24 @@ const checkIn = async (req, res) => {
     if (isNaN(requestId)) { conn.release(); return sendError(res, 'Invalid request ID.', 400); }
 
     const { id_verified_type, id_verified_number, remarks, pass_number } = req.body;
-    const visitorPhotoPath = req.file ? req.file.path.replace(/\\/g, '/') : null;
+
+    // Upload visitor photo to S3 if provided; store the returned public URL
+    let visitorPhotoPath = null;
+    if (req.file) {
+      try {
+        const ext      = req.file.mimetype.split('/')[1] || 'jpg';
+        const s3Key    = `photo-${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        visitorPhotoPath = await uploadToS3({
+          buffer:   req.file.buffer,
+          mimeType: req.file.mimetype,
+          folder:   'visitor-photos',
+          filename: s3Key,
+        });
+      } catch (s3Err) {
+        console.error('[Gate] Failed to upload visitor photo to S3:', s3Err.message);
+        // Non-fatal — allow check-in to proceed without photo
+      }
+    }
 
     if (!id_verified_type || !id_verified_number) {
       conn.release();

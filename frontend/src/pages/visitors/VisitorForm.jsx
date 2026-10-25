@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Camera, Upload, X, Check } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
+import { getApiErrorMessage } from "../../utils/apiError";
 
 export default function VisitorForm() {
  const navigate = useNavigate();
@@ -61,17 +62,7 @@ export default function VisitorForm() {
  navigate("/visitors");
  } catch (error) {
  console.error('[VisitorForm] Error:', error.response?.data);
- const zodErrors = error.response?.data?.errors;
- if (Array.isArray(zodErrors) && zodErrors.length > 0) {
-   const details = zodErrors
-     .map((e) => `${e.path?.join('.') || 'field'}: ${e.message}`)
-     .join(' | ');
-   toast.error(`Validation failed — ${details}`, { duration: 8000 });
- } else {
-   toast.error(
-     error.response?.data?.message || "Failed to register visitor"
-   );
- }
+ toast.error(getApiErrorMessage(error, 'Failed to register visitor.'), { duration: 6000 });
  } finally {
  setLoading(false);
  }
