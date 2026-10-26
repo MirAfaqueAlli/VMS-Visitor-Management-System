@@ -559,6 +559,10 @@ const createRequest = async (req, res) => {
           const tmpl = emailService.visitRequestTemplate(myName, host.full_name, visit_date, purpose, '', visit_start_time || null);
           await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientEmail: host.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
         }
+        if (host.phone) {
+          await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientPhone: host.phone, type: 'SMS',
+            message: `VMS: ${myName} wants to visit you on ${visit_date}${timeStr}. Please approve or reject in VMS.` });
+        }
         await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `${myName} wants to visit you on ${visit_date}${timeStr}. Please approve or reject.` });
       } else {
         await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Employee visit for ${resolvedVisitorName || 'colleague'} on ${visit_date}${timeStr} auto-approved. Gate pass generated.` });
@@ -570,6 +574,10 @@ const createRequest = async (req, res) => {
         const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
         const tmpl = emailService.visitApprovedTemplate(contact_person || company_name || 'Vendor Team', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
         await notify({ visitRequestId, recipientEmail: vendor_email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
+      }
+      if (resolvedVisitorPhone) {
+        await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS',
+          message: `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}` });
       }
       await notify({ visitRequestId, type: 'DASHBOARD', message: `Vendor visit scheduled: ${company_name || 'Unknown'} on ${visit_date}${timeStr}.` });
     } else if (typeCode === 'SPOT') {
@@ -591,6 +599,10 @@ const createRequest = async (req, res) => {
         const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
         const tmpl = emailService.visitApprovedTemplate(resolvedVisitorName || 'Guest', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
         await notify({ visitRequestId, recipientEmail: resolvedVisitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
+      }
+      if (resolvedVisitorPhone) {
+        await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS',
+          message: `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} has been APPROVED.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}` });
       }
       await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Your personal visit request for ${resolvedVisitorName || 'Guest'} on ${visit_date}${timeStr} is auto-approved. Gate pass generated.` });
     }

@@ -81,13 +81,13 @@ async function runDailyReminders() {
 
       // ── 2. Hosts with requests for today/tomorrow still awaiting approval ──
       const [pending] = await db.query(
-        `SELECT vr.host_user_id, h.full_name, h.email, COUNT(*) AS pending_count
+        `SELECT vr.host_user_id, h.full_name, h.email, h.phone, COUNT(*) AS pending_count
          FROM visit_requests vr
          JOIN users h ON h.id = vr.host_user_id
          WHERE vr.status = 'PENDING'
            AND vr.visit_date BETWEEN CURDATE() AND CURDATE() + INTERVAL 1 DAY
            AND h.is_active = 1 AND h.deleted_at IS NULL
-         GROUP BY vr.host_user_id, h.full_name, h.email`
+         GROUP BY vr.host_user_id, h.full_name, h.email, h.phone`
       );
       for (const p of pending) {
         const count = Number(p.pending_count);
@@ -98,6 +98,10 @@ async function runDailyReminders() {
         if (p.email) {
           const tmpl = emailService.pendingApprovalsReminderTemplate(p.full_name, count);
           await sendNotification({ db, recipientUserId: p.host_user_id, recipientEmail: p.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
+        }
+        if (p.phone) {
+          await sendNotification({ db, recipientUserId: p.host_user_id, recipientPhone: p.phone, type: 'SMS',
+            message: `VMS reminder: ${count} visit request(s) for today/tomorrow are awaiting your approval. Please approve or reject in VMS.` });
         }
         hostReminders++;
       }
