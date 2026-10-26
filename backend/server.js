@@ -10,7 +10,8 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const { initSocket } = require('./socket/socketManager');
@@ -47,13 +48,43 @@ app.use(cors({
   credentials: true,
 }));
 
-// Rate limiting — strict in production, relaxed for local dev
-const limiter = rateLimit({
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+// Signed-in staff are counted per user, everyone else per IP: a whole office
+// usually shares one public IP, so a per-IP limit would cap every user there
+// together. Sign-in / OTP / password-reset routes add stricter per-IP limits of
+// their own (middlewares/rateLimit.middleware.js). Relaxed for local dev.
+const isProd = process.env.NODE_ENV === 'production';
+const API_LIMIT_USER   = parseInt(process.env.API_RATE_LIMIT, 10)        || 3000; // per signed-in user, per 15 min
+const API_LIMIT_PUBLIC = parseInt(process.env.API_RATE_LIMIT_PUBLIC, 10) || 600;  // per IP when not signed in
+
+/**
+ * "user:<db>:<id>" for a request carrying a valid session token, else null.
+ * Only picks the rate-limit bucket — `protect` still does the real auth check.
+ */
+const sessionKey = (req) => {
+  if (req.rateLimitUser === undefined) {
+    req.rateLimitUser = null;
+    const [scheme, token] = (req.headers.authorization || '').split(' ');
+    if (scheme === 'Bearer' && token) {
+      try {
+        const { userId, unit_db } = jwt.verify(token, process.env.JWT_SECRET);
+        if (userId) req.rateLimitUser = `user:${unit_db}:${userId}`;
+      } catch { /* expired or invalid: counted by IP */ }
+    }
+  }
+  return req.rateLimitUser;
+};
+
+const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'production' ? 100 : 10000,
-  message: 'Too many requests from this IP, please try again later.',
+  limit: (req) => (!isProd ? 10000 : sessionKey(req) ? API_LIMIT_USER : API_LIMIT_PUBLIC),
+  keyGenerator: (req) => sessionKey(req) || ipKeyGenerator(req.ip),
+  skip: (req) => req.path === '/health',   // uptime monitors
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests. Please wait a few minutes and try again.' },
 });
-app.use('/api/', limiter);
+app.use('/api/', apiLimiter);
 
 // ── Standard middleware ───────────────────────────────────────────────────────
 app.use(express.json());
