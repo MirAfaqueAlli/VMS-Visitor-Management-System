@@ -17,7 +17,7 @@ const smsService = require('./sms.service');
 
 /**
  * Generates a 6-digit OTP, invalidates old ones for the same mobile+purpose,
- * saves the HASHED OTP to otp_logs, and attempts Fast2SMS delivery.
+ * saves the HASHED OTP to otp_logs, and attempts SMS delivery (sms.service).
  *
  * @param {object} db
  * @param {string} mobileNumber
