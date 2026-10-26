@@ -482,7 +482,14 @@ export default function UserManagement() {
   const openCreate = () => {
     setEditUser(null); setDesignations([]); setPanelOpen(true);
   };
-  const openEdit   = (u) => { setEditUser(u); setPanelOpen(true); };
+  const openEdit = (u) => {
+    if (u.role_type === "unit_admin" || u.id === currentUser?.id) {
+      toast.error("Unit Admin details cannot be edited here.");
+      return;
+    }
+    setEditUser(u);
+    setPanelOpen(true);
+  };
 
   const roleFilters = [
     { label: "All",          value: "" },
@@ -601,7 +608,14 @@ export default function UserManagement() {
                             <span className="text-loud font-semibold text-sm">{u.full_name?.charAt(0) ?? "?"}</span>
                           </div>
                           <div>
-                            <p className="font-medium text-loud text-sm">{u.full_name}</p>
+                            <p className="font-medium text-loud text-sm flex items-center gap-1.5">
+                              <span>{u.full_name}</span>
+                              {u.id === currentUser?.id && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-accent/10 text-accent">
+                                  You
+                                </span>
+                              )}
+                            </p>
                             <p className="text-xs text-faint flex items-center gap-1 mt-0.5">
                               <Mail strokeWidth={1.5} className="w-3 h-3" /> {u.email}
                             </p>
@@ -630,14 +644,20 @@ export default function UserManagement() {
                         {deactivatingId === u.id ? (
                           <DeactivateConfirm userId={u.id} userName={u.full_name} onConfirm={handleDeactivate} onCancel={() => setDeactivatingId(null)} />
                         ) : (
-                          <div className="flex justify-end gap-2">
-                            <button onClick={() => openEdit(u)} title="Edit user" className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300">
-                              <Edit2 strokeWidth={1.5} className="w-3.5 h-3.5" />
-                            </button>
+                          <div className="flex justify-end items-center gap-2">
+                            {/* Unit admin cannot edit their own details or unit admin details */}
+                            {!(u.role_type === "unit_admin" || u.id === currentUser?.id) && (
+                              <button onClick={() => openEdit(u)} title="Edit user" className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300">
+                                <Edit2 strokeWidth={1.5} className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             {u.is_active && u.id !== currentUser?.id && (
                               <button onClick={() => setDeactivatingId(u.id)} title="Deactivate user" className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300">
                                 <UserX strokeWidth={1.5} className="w-3.5 h-3.5" />
                               </button>
+                            )}
+                            {(u.role_type === "unit_admin" || u.id === currentUser?.id) && (!u.is_active || u.id === currentUser?.id) && (
+                              <span className="text-xs text-faint italic px-2">—</span>
                             )}
                           </div>
                         )}

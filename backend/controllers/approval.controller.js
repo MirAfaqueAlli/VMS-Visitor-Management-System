@@ -525,4 +525,30 @@ const rejectRequest = async (req, res) => {
   }
 };
 
-module.exports = { getInbox, approveRequest, rejectRequest };
+// ── getUserNotifications ──────────────────────────────────────────────────────
+const getUserNotifications = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!req.db || !user?.id) {
+      return sendSuccess(res, [], 'No notifications.');
+    }
+    const [rows] = await req.db.query(
+      `SELECT n.id, n.visit_request_id, n.message, n.subject, n.created_at,
+              vr.visit_date, vr.visit_start_time, vr.visit_category, vr.status AS visit_status,
+              gp.pass_number
+       FROM notifications n
+       LEFT JOIN visit_requests vr ON vr.id = n.visit_request_id
+       LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
+       WHERE n.recipient_user_id = ? AND n.notification_type = 'DASHBOARD'
+       ORDER BY n.created_at DESC
+       LIMIT 20`,
+      [user.id]
+    );
+    return sendSuccess(res, rows, 'Notifications fetched successfully.');
+  } catch (err) {
+    console.error('[ApprovalController] getUserNotifications error:', err.message);
+    return sendSuccess(res, [], 'Empty notifications.');
+  }
+};
+
+module.exports = { getInbox, approveRequest, rejectRequest, getUserNotifications };

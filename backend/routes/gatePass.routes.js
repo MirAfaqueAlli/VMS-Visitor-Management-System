@@ -21,7 +21,7 @@ router.post(
 router.get(
   '/pass/:passNumber',
   protect,
-  authorize('super_admin', 'unit_admin', 'security', 'receptionist', 'unit_auditor', 'global_auditor'),
+  authorize('super_admin', 'unit_admin', 'security', 'receptionist', 'unit_auditor', 'global_auditor', 'employee'),
   ctrl.getPass
 );
 

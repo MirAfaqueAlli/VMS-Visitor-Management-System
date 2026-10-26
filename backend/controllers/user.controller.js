@@ -330,6 +330,11 @@ const updateUser = async (req, res) => {
 
     const targetUser = existing[0];
 
+    // Unit admins cannot edit their own details or unit admin details from user management
+    if (req.user.role_type === 'unit_admin' && (Number(id) === Number(req.user.id) || targetUser.role_type === 'unit_admin')) {
+      return sendError(res, 'Unit admins cannot edit their own details from user management.', 403);
+    }
+
     // Validate email format if provided
     if (email && email.trim()) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

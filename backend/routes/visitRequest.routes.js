@@ -27,13 +27,15 @@ const requestSchema = z.object({
   unit_id:          maybeNumber.optional(),
   target_unit_id:   maybeNumber.optional(), // EMPLOYEE_VISIT cross-unit: route request to host's unit DB
   visitor_id:       maybeNumber.optional(),
+  visitor_user_id:  maybeNumber.optional(),
+  visitor_unit_id:  maybeNumber.optional(),
   purpose:          z.string().min(3, 'Purpose must be at least 3 characters'),
   visit_date:       z.string().min(1, 'Visit date is required'),
   visit_start_time: z.string().optional().nullable(),
   visit_end_time:   z.string().optional().nullable(),
   accompanying_count: z.preprocess((v) => (v === '' || v === undefined || v === null) ? 0 : Number(v), z.number().default(0)),
   // Visitor details (inline or by ID)
-  visitor_phone:  z.string().optional().nullable(),
+  visitor_phone:  z.string().optional().nullable().refine(v => !v || v.replace(/\D/g, '').length === 10, { message: 'Mobile number must be exactly 10 digits' }),
   visitor_name:   z.string().optional().nullable(),
   visitor_email:  z.string().email('Invalid email').or(z.literal('')).optional().nullable().transform(v => v || null),
   // Vendor-specific
@@ -47,9 +49,20 @@ const requestSchema = z.object({
   force_create:   z.boolean().optional().default(false),
   // Companions
   companions: z.array(z.object({
-    full_name: z.string(),
+    full_name: z.string().min(1, 'Companion name is required'),
     id_type:   z.string().optional().nullable(),
     id_number: z.string().optional().nullable(),
+  }).superRefine((data, ctx) => {
+    if (data.id_type === 'AADHAAR') {
+      const clean = (data.id_number || '').replace(/[\s-]/g, '');
+      if (!/^\d{12}$/.test(clean)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Aadhaar number must be exactly 12 digits',
+          path: ['id_number'],
+        });
+      }
+    }
   })).optional().default([]),
 });
 

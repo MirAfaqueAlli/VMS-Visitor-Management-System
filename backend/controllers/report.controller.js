@@ -847,18 +847,19 @@ const getMetaEmployees = async (req, res) => {
   }
 };
 
-// â”€â”€ GET /api/reports/employee-wise â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── GET /api/reports/employee-wise ──────────────────────────────────────────
 /**
- * unit_admin / unit_auditor â†’ filter by dept_id and/or host_user_id within their unit.
+ * unit_admin / unit_auditor → filter by dept_id and/or host_user_id within their unit.
  * super_admin / global_auditor:
- *   - with unit_db â†’ scoped to that unit, dept_id + host_user_id filters work
- *   - without unit_db â†’ fans out across all units (date/type/search only)
+ *   - with unit_db → scoped to that unit, dept_id + host_user_id filters work
+ *   - without unit_db → fans out across all units (date/type/search/employee filters)
  */
 const getEmployeeWiseReport = async (req, res) => {
   try {
-    const { from, to, visitor_type, search, department_id, host_user_id, unit_db, page = 1, limit = 50 } = req.query;
-    const parsedLimit  = Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const { from, to, visitor_type, search, department_id, host_user_id, employee_code, employee_name, unit_db, page = 1, limit = 50 } = req.query;
+    const isExport = req.query.all === 'true' || req.query.export === 'true';
+    const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
+    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConditions = () => {
@@ -868,9 +869,11 @@ const getEmployeeWiseReport = async (req, res) => {
       if (visitor_type)  { conditions.push('vr.visit_category = ?'); params.push(visitor_type); }
       if (department_id) { conditions.push('vr.department_id = ?');  params.push(department_id); }
       if (host_user_id)  { conditions.push('vr.host_user_id = ?');   params.push(host_user_id); }
+      if (employee_code) { conditions.push('h.employee_code = ?');   params.push(employee_code); }
+      if (employee_name) { conditions.push('h.full_name LIKE ?');    params.push(`%${employee_name}%`); }
       if (search) {
-        conditions.push('(vr.visitor_name LIKE ? OR h.full_name LIKE ? OR vr.visitor_phone LIKE ?)');
-        params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        conditions.push('(vr.visitor_name LIKE ? OR h.full_name LIKE ? OR h.employee_code LIKE ? OR vr.visitor_phone LIKE ?)');
+        params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
       }
       return { conditions, params };
     };
@@ -881,7 +884,7 @@ const getEmployeeWiseReport = async (req, res) => {
         vr.visit_date, vr.visit_start_time, vr.visit_end_time,
         vr.visit_category, vr.purpose, vr.status,
         h.id AS host_id, h.full_name AS host_name, h.employee_code,
-        d.name AS department_name,
+        d.id AS department_id, d.name AS department_name,
         vr.created_at
       FROM visit_requests vr
       LEFT JOIN users h ON h.id = vr.host_user_id
@@ -900,12 +903,12 @@ const getEmployeeWiseReport = async (req, res) => {
           `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN departments d ON d.id = vr.department_id ${where}`, params
         );
         const [rows] = await pool.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: parseInt(page), limit: parsedLimit });
       }
-      // Fan-out (no dept/employee filter)
+      // Fan-out across all active units
       const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY vr.visit_date DESC`, params);
       let rows = [];
-      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name })));
+      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name, unit_db: r.unit_db })));
       rows.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
       return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
     }
@@ -924,20 +927,22 @@ const getEmployeeWiseReport = async (req, res) => {
   }
 };
 
-// â”€â”€ GET /api/reports/department-wise â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── GET /api/reports/department-wise ─────────────────────────────────────────
 const getDepartmentWiseReport = async (req, res) => {
   try {
-    const { from, to, visitor_type, department_id, unit_db, search, page = 1, limit = 50 } = req.query;
-    const parsedLimit  = Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const { from, to, visitor_type, department_id, department_name, unit_db, search, page = 1, limit = 50 } = req.query;
+    const isExport = req.query.all === 'true' || req.query.export === 'true';
+    const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
+    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConditions = () => {
       const conditions = [];
       const params     = [];
       buildDateWhere(conditions, params, from, to);
-      if (visitor_type)  { conditions.push('vr.visit_category = ?'); params.push(visitor_type); }
-      if (department_id) { conditions.push('vr.department_id = ?');  params.push(department_id); }
+      if (visitor_type)    { conditions.push('vr.visit_category = ?'); params.push(visitor_type); }
+      if (department_id)   { conditions.push('vr.department_id = ?');  params.push(department_id); }
+      if (department_name) { conditions.push('d.name LIKE ?');         params.push(`%${department_name}%`); }
       if (search) {
         conditions.push('(vr.visitor_name LIKE ? OR d.name LIKE ? OR vr.purpose LIKE ?)');
         params.push(`%${search}%`, `%${search}%`, `%${search}%`);
@@ -947,11 +952,11 @@ const getDepartmentWiseReport = async (req, res) => {
 
     const SELECT = `
       SELECT
-        vr.id, vr.visitor_name, vr.visitor_phone,
-        vr.visit_date, vr.visit_start_time,
+        vr.id, vr.visitor_name, vr.visitor_phone, vr.visitor_email,
+        vr.visit_date, vr.visit_start_time, vr.visit_end_time,
         vr.visit_category, vr.purpose, vr.status,
-        d.name AS department_name,
-        h.full_name AS host_name,
+        d.id AS department_id, d.name AS department_name,
+        h.id AS host_id, h.full_name AS host_name, h.employee_code,
         vr.created_at
       FROM visit_requests vr
       LEFT JOIN departments d ON d.id = vr.department_id
@@ -970,11 +975,11 @@ const getDepartmentWiseReport = async (req, res) => {
           `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
         );
         const [rows] = await pool.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: parseInt(page), limit: parsedLimit });
       }
       const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY vr.visit_date DESC`, params);
       let rows = [];
-      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name })));
+      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name, unit_db: r.unit_db })));
       rows.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
       return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
     }
@@ -992,12 +997,16 @@ const getDepartmentWiseReport = async (req, res) => {
   }
 };
 
-// â”€â”€ GET /api/reports/unit-wise â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── GET /api/reports/unit-wise ───────────────────────────────────────────────
 const getUnitWiseReport = async (req, res) => {
   try {
-    // office_type: UNIT | CORPORATE | TRAINING_CENTRE | OTHER (tender 1.1.3: "Units / Corporate / Training Centre wise")
-    const { from, to, visitor_type, unit_db, office_type } = req.query;
+    // office_type: UNIT | CORPORATE | TRAINING_CENTRE | OTHER
+    // details=true: returns detailed individual visits for the given unit_db
+    const { from, to, visitor_type, unit_db, office_type, details, page = 1, limit = 50 } = req.query;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
+    const isExport = req.query.all === 'true' || req.query.export === 'true';
+    const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
+    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
 
     const buildConds = () => {
       const conditions = []; const params = [];
@@ -1019,12 +1028,44 @@ const getUnitWiseReport = async (req, res) => {
       const unitsMeta = allUnits.map(u => ({ id: u.id, name: u.name, db_name: u.db_name, status: u.db_status, office_type: u.type || 'UNIT' }));
 
       if (unit_db) {
-        // Single unit: per-dept breakdown
         const scoped = await getScopedUnit(unit_db);
         if (!scoped) return sendError(res, 'Unit not found.', 404);
         const { pool, unitName } = scoped;
         const { conditions, params } = buildCondsAliased();
         const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+        // If details=true, return the actual individual visits for this unit
+        if (details === 'true' || req.query.format === 'details') {
+          const [[{ total }]] = await pool.query(
+            `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
+          );
+          const [rows] = await pool.query(
+            `SELECT
+               vr.id, vr.visitor_name, vr.visitor_phone, vr.visitor_email,
+               vr.visit_date, vr.visit_start_time, vr.visit_end_time,
+               vr.visit_category, vr.purpose, vr.status,
+               d.name AS department_name,
+               h.full_name AS host_name, h.employee_code,
+               vr.created_at
+             FROM visit_requests vr
+             LEFT JOIN departments d ON d.id = vr.department_id
+             LEFT JOIN users h ON h.id = vr.host_user_id
+             ${where}
+             ORDER BY vr.visit_date DESC
+             LIMIT ? OFFSET ?`,
+            [...params, parsedLimit, parsedOffset]
+          );
+          return sendSuccess(res, {
+            rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db, office_type: typeByDb[unit_db] || 'UNIT' })),
+            total: Number(total),
+            page: parseInt(page),
+            limit: parsedLimit,
+            units: unitsMeta,
+            unit_name: unitName,
+          });
+        }
+
+        // Default: per-dept breakdown
         const [rows] = await pool.query(
           `SELECT COALESCE(d.name, 'No Department') AS department_name, vr.visit_category, vr.status, COUNT(vr.id) AS count
            FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id
@@ -1055,9 +1096,39 @@ const getUnitWiseReport = async (req, res) => {
       return sendSuccess(res, { rows, units: unitsMeta });
     }
 
-    // Unit-level: dept breakdown (no unit filter)
+    // Unit-level
     const { conditions, params } = buildCondsAliased();
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    if (details === 'true' || req.query.format === 'details') {
+      const [[{ total }]] = await req.db.query(
+        `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
+      );
+      const [rows] = await req.db.query(
+        `SELECT
+           vr.id, vr.visitor_name, vr.visitor_phone, vr.visitor_email,
+           vr.visit_date, vr.visit_start_time, vr.visit_end_time,
+           vr.visit_category, vr.purpose, vr.status,
+           d.name AS department_name,
+           h.full_name AS host_name, h.employee_code,
+           vr.created_at
+         FROM visit_requests vr
+         LEFT JOIN departments d ON d.id = vr.department_id
+         LEFT JOIN users h ON h.id = vr.host_user_id
+         ${where}
+         ORDER BY vr.visit_date DESC
+         LIMIT ? OFFSET ?`,
+        [...params, parsedLimit, parsedOffset]
+      );
+      return sendSuccess(res, {
+        rows: rows.map(r => ({ ...r, unit_name: req.user.unit_name || 'My Unit' })),
+        total: Number(total),
+        page: parseInt(page),
+        limit: parsedLimit,
+      });
+    }
+
+    // Default: dept breakdown
     const [rows] = await req.db.query(
       `SELECT
          COALESCE(d.name, 'No Department') AS department_name,
@@ -1082,8 +1153,9 @@ const GATE_REJECTED_SQL = 'EXISTS (SELECT 1 FROM gate_rejections gr WHERE gr.vis
 const getRejectedReport = async (req, res) => {
   try {
     const { from, to, visitor_type, department_id, unit_db, search, status, page = 1, limit = 50 } = req.query;
-    const parsedLimit  = Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const isExport = req.query.all === 'true' || req.query.export === 'true';
+    const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
+    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConditions = () => {
@@ -1136,11 +1208,11 @@ const getRejectedReport = async (req, res) => {
           `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
         );
         const [rows] = await pool.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: parseInt(page), limit: parsedLimit });
       }
       const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY vr.visit_date DESC`, params);
       let rows = [];
-      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name })));
+      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name, unit_db: r.unit_db })));
       rows.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
       return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
     }
@@ -1277,8 +1349,9 @@ const getActiveExpectedReport = async (req, res) => {
 const getDetailedVisitHistory = async (req, res) => {
   try {
     const { from, to, visitor_type, status, department_id, unit_db, search, page = 1, limit = 50 } = req.query;
-    const parsedLimit  = Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const isExport = req.query.all === 'true' || req.query.export === 'true';
+    const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
+    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConditions = () => {
@@ -1320,11 +1393,11 @@ const getDetailedVisitHistory = async (req, res) => {
       `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN visit_logs vl ON vl.visit_request_id = vr.id AND vl.status = 'ACTIVE' ${where}`, params
         );
         const [rows] = await pool.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: parseInt(page), limit: parsedLimit });
       }
       const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY vr.visit_date DESC`, params);
       let rows = [];
-      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name })));
+      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name, unit_db: r.unit_db })));
       rows.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
       return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
     }
