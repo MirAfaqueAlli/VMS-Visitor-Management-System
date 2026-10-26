@@ -25,19 +25,29 @@
  */
 
 const jwt          = require('jsonwebtoken');
-const { normalisePhone, sendEmailCode, checkEmailCode, checkFirebasePhone } = require('../services/contactVerification.service');
+const {
+  normalisePhone, sendEmailCode, checkEmailCode, checkFirebasePhone, sendDevPhoneCode, checkDevPhoneCode,
+} = require('../services/contactVerification.service');
 const { sendSuccess, sendError } = require('../utils/response.util');
 
 const VISITOR_TOKEN_EXPIRY = '30m';
 const PHONE_TOKEN_EXPIRY   = '30m';
 
 // ── Send Phone OTP (Firebase sends the SMS itself from the browser) ───────────
-// Kept so the frontend flow has a "send" step that validates the number.
+// Validates the number. In development it also stands in for Firebase: the code
+// is printed to the backend log (no SMS, no reCAPTCHA).
 const sendPhoneOtp = async (req, res) => {
   try {
     const phone = normalisePhone(req.body.phone);
     if (phone.length !== 10) {
       return sendError(res, 'A valid 10-digit mobile number is required.', 400);
+    }
+    if (process.env.NODE_ENV !== 'production') {
+      const sent = await sendDevPhoneCode(phone);
+      if (sent.status === 'cooldown') {
+        return sendError(res, 'A code was sent recently. Please wait 60 seconds before requesting another.', 429);
+      }
+      return sendSuccess(res, {}, 'Development mode: the SMS code is printed in the backend log.', 200);
     }
     return sendSuccess(res, {}, 'Use the OTP sent to your phone.', 200);
   } catch (err) {
@@ -58,13 +68,18 @@ const sendPhoneOtp = async (req, res) => {
 const verifyFirebasePhone = async (req, res) => {
   try {
     const phone = normalisePhone(req.body.phone);
-    const { idToken } = req.body;
-    if (phone.length !== 10 || !idToken) return sendError(res, 'phone and idToken are required.', 400);
+    const { idToken, otp } = req.body;
+    if (phone.length !== 10 || !(idToken || otp)) return sendError(res, 'phone and idToken are required.', 400);
 
     // 400 rather than 401: the frontend treats any 401 as an expired staff session
-    const check = await checkFirebasePhone(idToken, phone);
-    if (check === 'invalid')  return sendError(res, 'Phone verification failed. Please try again.', 400);
-    if (check === 'mismatch') return sendError(res, 'Phone number mismatch. Please verify the correct number.', 400);
+    if (otp) {
+      // Development only: a code from send-phone-otp (always rejected in production)
+      if (!(await checkDevPhoneCode(phone, otp))) return sendError(res, 'Invalid or expired OTP. Please try again.', 400);
+    } else {
+      const check = await checkFirebasePhone(idToken, phone);
+      if (check === 'invalid')  return sendError(res, 'Phone verification failed. Please try again.', 400);
+      if (check === 'mismatch') return sendError(res, 'Phone number mismatch. Please verify the correct number.', 400);
+    }
 
     const phoneToken = jwt.sign(
       { purpose: 'PHONE_VERIFIED', phone },

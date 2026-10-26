@@ -44,8 +44,8 @@ function BrandPanel({ eyebrow, title, description, features }) {
       <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '40px 48px 32px' }}>
         {/* Organisation */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <img src="/logo.png" alt=""
-            style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.18)' }} />
+          <img src="/brand/vms-icon-white.png" alt=""
+            style={{ width: '52px', height: '52px', objectFit: 'contain' }} />
           <div>
             <p style={{ fontSize: '15px', fontWeight: 700, color: '#ffffff', lineHeight: 1.25 }}>{ORG_NAME}</p>
             <p style={{ fontSize: '11.5px', color: '#9fb3d1', marginTop: '3px', letterSpacing: '0.04em' }}>{ORG_TAGLINE}</p>
@@ -125,8 +125,8 @@ export default function AuthLayout({
         <div className="lg:hidden" style={{ background: NAVY_GRADIENT }}>
           <TricolourStrip height={3} />
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '14px 16px' }}>
-            <img src="/logo.png" alt=""
-              style={{ width: '36px', height: '36px', borderRadius: '9px', objectFit: 'cover' }} />
+            <img src="/brand/vms-icon-white.png" alt=""
+              style={{ width: '36px', height: '36px', objectFit: 'contain' }} />
             <div>
               <p style={{ color: '#ffffff', fontWeight: 700, fontSize: '13.5px', lineHeight: 1.2 }}>Visitor Management System</p>
               <p style={{ color: '#9fb3d1', fontSize: '11px', marginTop: '2px' }}>{ORG_NAME}</p>
@@ -136,6 +136,9 @@ export default function AuthLayout({
 
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'clamp(28px, 6vh, 64px) 24px' }}>
           <div style={{ width: '100%', maxWidth: `${maxWidth}px` }}>
+            {/* Product wordmark above the form (small screens show the navy header instead) */}
+            <img src="/brand/vms-logo-blue.png" alt="OHPC VMS" className="hidden lg:block"
+              style={{ height: '34px', width: 'auto', marginBottom: '28px' }} />
             {children}
           </div>
         </div>

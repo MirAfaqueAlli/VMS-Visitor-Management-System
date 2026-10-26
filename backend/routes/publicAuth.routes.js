@@ -12,11 +12,12 @@ const {
   publicVerifyEmailOtpSchema,
 } = require('../validators/schemas');
 
-// Firebase phone token verification
+// Firebase phone token verification (development: a logged code instead of the idToken)
 const verifyFirebasePhoneSchema = z.object({
   phone:   z.string().min(10, 'A valid phone number is required.'),
-  idToken: z.string().min(1,  'Firebase idToken is required.'),
-});
+  idToken: z.string().min(1).optional(),
+  otp:     z.string().regex(/^\d{6}$/, 'OTP must be exactly 6 digits.').optional(),
+}).refine((d) => d.idToken || d.otp, { message: 'Firebase idToken is required.' });
 
 // All public — no authentication middleware required
 router.post('/send-phone-otp',         validate(publicSendPhoneOtpSchema),    ctrl.sendPhoneOtp);

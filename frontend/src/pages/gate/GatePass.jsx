@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Printer, ArrowLeft, ShieldCheck } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
+import BrandLogo from '../../components/BrandLogo';
 
 export default function GatePass() {
  const { passNumber } = useParams();
@@ -62,6 +63,9 @@ export default function GatePass() {
 
   {/* Header — institutional letterhead */}
   <div className="flex flex-col items-center mb-8 relative z-10 border-b border-subtle pb-6">
+
+    {/* Product wordmark — black when printed */}
+    <div className="mb-4"><BrandLogo height={34} /></div>
 
     {/* Pass title — hero */}
     <h2 className="text-4xl font-black uppercase tracking-widest text-loud text-center mb-1">

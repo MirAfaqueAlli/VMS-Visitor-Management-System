@@ -69,8 +69,8 @@ export default function useWebNotification() {
 
     const notifOptions = {
       body,
-      icon:    '/favicon.svg',
-      badge:   '/favicon.svg',
+      icon:    '/icons/icon-192.png',
+      badge:   '/icons/badge-96.png',   // Android shows the badge as a white silhouette
       tag:     options.tag      ?? 'vms-notification',
       vibrate: options.vibrate  ?? [150, 50, 150],
       data:    options.data     ?? {},

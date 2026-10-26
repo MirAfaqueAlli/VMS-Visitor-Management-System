@@ -52,6 +52,44 @@ const getISTDateString = (d = new Date()) => {
  * the outcome in THEIR unit: dashboard + live socket event, and email unless they
  * already got the visitor email (same address). Never throws.
  */
+/** Last 10 digits, for comparing mobile numbers. */
+const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
+
+/**
+ * Approval email + SMS to the unit staff connected to the visit: the employee
+ * who raised it, the host and the unit admins. Skips the approver, and anyone
+ * who already got the visitor's own message (e.g. an employee visiting).
+ */
+async function notifyStaffOfApproval(db, request, { approver, passResult, visitorName, visitorEmail, visitorPhone }) {
+  const ids = [request.requester_user_id, request.host_user_id].filter(Boolean);
+  const [staff] = await db.query(
+    `SELECT id, full_name, email, phone FROM users
+     WHERE is_active = 1 AND deleted_at IS NULL AND id <> ?
+       AND (role_type = 'unit_admin'${ids.length ? ' OR id IN (?)' : ''})`,
+    ids.length ? [approver.id, ids] : [approver.id]
+  );
+
+  const who      = visitorName || 'Visitor';
+  const timeStr  = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
+  const passText = passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : '';
+  const sms      = `VMS: Visit of ${who} on ${request.visit_date}${timeStr} has been APPROVED by ${approver.full_name}.${passText}`;
+
+  await Promise.allSettled(staff.flatMap((s) => {
+    const sends = [];
+    if (s.email && s.email.toLowerCase() !== String(visitorEmail || '').toLowerCase()) {
+      const tmpl = emailService.visitApprovedStaffTemplate(
+        s.full_name, who, approver.full_name, request.visit_date, request.visit_start_time || null,
+        passResult?.pass_number || null, request.purpose || null
+      );
+      sends.push(sendNotification({ db, visitRequestId: request.id, recipientUserId: s.id, recipientEmail: s.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html }));
+    }
+    if (s.phone && last10(s.phone) !== last10(visitorPhone)) {
+      sends.push(sendNotification({ db, visitRequestId: request.id, recipientUserId: s.id, recipientPhone: s.phone, type: 'SMS', message: sms }));
+    }
+    return sends;
+  }));
+}
+
 async function notifyCrossUnitRequester(request, { approved, actorName, remarks = null, passResult = null }) {
   if (!request.cross_unit_requester_id || !request.requester_unit_id) return;
   try {
@@ -63,7 +101,7 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
     const requesterDbName = units[0].db_name;
     const requesterDb     = getPool(requesterDbName);
     const [[requester]] = await requesterDb.query(
-      'SELECT id, full_name, email FROM users WHERE id = ? AND is_active = 1 AND deleted_at IS NULL',
+      'SELECT id, full_name, email, phone FROM users WHERE id = ? AND is_active = 1 AND deleted_at IS NULL',
       [request.cross_unit_requester_id]
     );
     if (!requester) return;
@@ -75,6 +113,9 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
 
     // visit_request_id stays NULL: the request lives in the other unit's DB
     await sendNotification({ db: requesterDb, recipientUserId: requester.id, type: 'DASHBOARD', message });
+    if (requester.phone) {
+      await sendNotification({ db: requesterDb, recipientUserId: requester.id, recipientPhone: requester.phone, type: 'SMS', message: `VMS: ${message}` });
+    }
     emitToUser(requester.id, requesterDbName, approved ? 'visit:approved' : 'visit:rejected', {
       visit_request_id: request.id,
       visit_date:       request.visit_date,
@@ -368,6 +409,8 @@ const approveRequest = async (req, res) => {
         : []),
       // Dashboard — generic
       notify({ visitRequestId: request.id, type: 'DASHBOARD', message: `Visit request #${request.id} has been APPROVED by ${user.full_name}.` }),
+      // Email + SMS — requester, host and unit admins
+      notifyStaffOfApproval(req.db, request, { approver: user, passResult, visitorName, visitorEmail, visitorPhone }),
       // Cross-unit requester (lives in another unit's DB)
       notifyCrossUnitRequester(request, { approved: true, actorName: user.full_name, passResult }),
       // Audit log

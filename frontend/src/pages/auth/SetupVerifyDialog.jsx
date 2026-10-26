@@ -147,6 +147,11 @@ function ContactSection({ icon: Icon, title, target, state, code, onCode, onRese
               Development only — the email could not be sent. Code: <strong style={{ letterSpacing: "0.15em" }}>{state.devCode}</strong>
             </p>
           )}
+          {state.devNote && (
+            <p style={{ margin: "8px 0 0", fontSize: "11.5px", color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "6px", padding: "6px 8px" }}>
+              Development mode — no SMS is sent. The code is printed in the backend console.
+            </p>
+          )}
           <p style={{ margin: "8px 0 0", fontSize: "12px", color: "#64748b" }}>
             Didn&apos;t get the code?{" "}
             {waiting ? (

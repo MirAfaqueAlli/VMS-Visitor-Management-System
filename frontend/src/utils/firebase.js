@@ -33,4 +33,12 @@ if (import.meta.env.VITE_FIREBASE_TEST_MODE === 'true') {
   console.info('[Firebase] appVerificationDisabledForTesting = true (dev/test mode)');
 }
 
-export { auth };
+/**
+ * Development (`npm run dev`): mobile OTPs don't go through Firebase or reCAPTCHA.
+ * The backend generates the code and prints it in its console instead
+ * (POST …/send-phone-otp, then verify with { phone, otp }). The backend refuses
+ * this when NODE_ENV=production, so a production build always uses Firebase.
+ */
+const DEV_PHONE_OTP = import.meta.env.DEV;
+
+export { auth, DEV_PHONE_OTP };

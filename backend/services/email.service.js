@@ -183,6 +183,46 @@ const visitApprovedTemplate = (visitorName, hostName, visitDate, orgName, passNu
 };
 
 /**
+ * Template: approval notice to unit staff (the employee who raised the request,
+ * the host and the unit admins).
+ */
+const visitApprovedStaffTemplate = (staffName, visitorName, approverName, visitDate, visitTime = null, passNumber = null, purpose = null) => {
+  const displayDateTime = formatDateTime(visitDate, visitTime);
+  const subject = `[${process.env.APP_NAME || 'VMS'}] Visit approved: ${visitorName} on ${displayDateTime}`;
+  const row = (label, value, shaded) => value ? `
+          <tr${shaded ? ' style="background: #f1f3f4;"' : ''}>
+            <td style="padding: 12px; font-weight: bold; color: #333; width: 35%;">${label}</td>
+            <td style="padding: 12px; color: #555;">${escapeHtml(value)}</td>
+          </tr>` : '';
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9f9f9; border-radius: 8px; overflow: hidden;">
+      <div style="background: #0f9d58; padding: 24px 32px;">
+        <h1 style="color: #fff; margin: 0; font-size: 20px;">${process.env.APP_NAME || 'Visitor Management System'}</h1>
+      </div>
+      <div style="padding: 32px; background: #fff;">
+        <h2 style="color: #0f9d58; margin-top: 0;">✅ Visit Approved</h2>
+        <p style="color: #555;">Hello <strong>${escapeHtml(staffName)}</strong>,</p>
+        <p style="color: #555;">The following visit has been <strong style="color: #0f9d58;">approved</strong> by ${escapeHtml(approverName)}.</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+          ${row('Visitor', visitorName, true)}
+          ${row('Visit Date & Time', displayDateTime, false)}
+          ${row('Purpose', purpose, true)}
+          ${row('Gate Pass', passNumber, false)}
+        </table>
+        <a href="${escapeHtml(`${process.env.CLIENT_URL || 'http://localhost:5173'}/requests`)}"
+           style="display: inline-block; margin-top: 8px; padding: 12px 28px; background: #0f9d58; color: #fff; text-decoration: none; border-radius: 6px; font-weight: bold;">
+          View in VMS
+        </a>
+      </div>
+      <div style="padding: 16px 32px; background: #f1f3f4; text-align: center;">
+        <p style="color: #999; font-size: 12px; margin: 0;">This is an automated message. Please do not reply directly.</p>
+      </div>
+    </div>
+  `;
+  return { subject, html };
+};
+
+/**
  * Template: Rejection notice sent to visitor.
  */
 const visitRejectedTemplate = (visitorName, hostName, visitDate, reason, visitTime = null) => {
@@ -240,6 +280,51 @@ const otpTemplate = (otp, type = 'phone') => {
       </div>
       <div style="padding: 14px 28px; background: #f1f3f4; text-align: center;">
         <p style="color: #999; font-size: 11px; margin: 0;">This is an automated message. Please do not reply directly.</p>
+      </div>
+    </div>
+  `;
+  return { subject, html };
+};
+
+/**
+ * Template: visit-day reminder to staff (reminder.service) — the host / requester
+ * gets their own visits, a unit admin gets every visit in the unit.
+ * @param {Array<{visitor, time, host, pass}>} visits
+ */
+const staffVisitsTodayTemplate = (staffName, unitName, visits, forAdmin = false) => {
+  const n = visits.length;
+  const subject = `[${process.env.APP_NAME || 'VMS'}] Reminder: ${n} visit${n === 1 ? '' : 's'} today${forAdmin ? ` at ${unitName}` : ''}`;
+  const rows = visits.map((v, i) => `
+          <tr${i % 2 === 0 ? ' style="background: #f1f3f4;"' : ''}>
+            <td style="padding: 10px 12px; color: #333; white-space: nowrap;">${escapeHtml(v.time || '—')}</td>
+            <td style="padding: 10px 12px; color: #333; font-weight: bold;">${escapeHtml(v.visitor)}</td>
+            <td style="padding: 10px 12px; color: #555;">${escapeHtml(v.host)}</td>
+            <td style="padding: 10px 12px; color: #555; font-family: monospace;">${escapeHtml(v.pass || '—')}</td>
+          </tr>`).join('');
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #f9f9f9; border-radius: 8px; overflow: hidden;">
+      <div style="background: #1a73e8; padding: 24px 32px;">
+        <h1 style="color: #fff; margin: 0; font-size: 20px;">${process.env.APP_NAME || 'Visitor Management System'}</h1>
+      </div>
+      <div style="padding: 32px; background: #fff;">
+        <h2 style="color: #1a73e8; margin-top: 0;">📅 Visits today</h2>
+        <p style="color: #555;">Hello <strong>${escapeHtml(staffName)}</strong>,</p>
+        <p style="color: #555;">${forAdmin
+          ? `<strong>${n}</strong> approved visit${n === 1 ? ' is' : 's are'} scheduled today at ${escapeHtml(unitName)}:`
+          : `You have <strong>${n}</strong> approved visit${n === 1 ? '' : 's'} today:`}</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
+          <tr style="background: #1a73e8; color: #fff; text-align: left;">
+            <th style="padding: 10px 12px;">Time</th><th style="padding: 10px 12px;">Visitor</th>
+            <th style="padding: 10px 12px;">Host</th><th style="padding: 10px 12px;">Gate Pass</th>
+          </tr>${rows}
+        </table>
+        <a href="${escapeHtml(`${process.env.CLIENT_URL || 'http://localhost:5173'}/requests`)}"
+           style="display: inline-block; margin-top: 8px; padding: 12px 28px; background: #1a73e8; color: #fff; text-decoration: none; border-radius: 6px; font-weight: bold;">
+          View in VMS
+        </a>
+      </div>
+      <div style="padding: 16px 32px; background: #f1f3f4; text-align: center;">
+        <p style="color: #999; font-size: 12px; margin: 0;">This is an automated message. Please do not reply directly.</p>
       </div>
     </div>
   `;
@@ -346,10 +431,12 @@ module.exports = {
   passwordResetTemplate,
   visitReminderTemplate,
   pendingApprovalsReminderTemplate,
+  staffVisitsTodayTemplate,
   gatePassQrAttachment,
   GATE_PASS_QR_CID,
   visitRequestTemplate,
   visitApprovedTemplate,
+  visitApprovedStaffTemplate,
   visitRejectedTemplate,
   otpTemplate,
 };

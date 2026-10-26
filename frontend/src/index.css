@@ -1112,3 +1112,15 @@
     color: var(--color-text-loud);
   }
 }
+
+/* ── Brand wordmark (components/BrandLogo.jsx) ─────────────────────────────── */
+/* Blue on the light theme, white on the dark theme, black on paper.           */
+.brand-on-dark,
+.brand-print { display: none; }
+[data-theme="dark"] .brand-on-light { display: none; }
+[data-theme="dark"] .brand-on-dark  { display: block; }
+@media print {
+  .brand-on-light,
+  .brand-on-dark { display: none !important; }
+  .brand-print   { display: block !important; }
+}

@@ -21,8 +21,8 @@ self.addEventListener('push', (event) => {
   const title   = data.title ?? 'VMS — Visitor Management';
   const options = {
     body:    data.body    ?? '',
-    icon:    data.icon    ?? '/favicon.svg',
-    badge:   data.badge   ?? '/favicon.svg',
+    icon:    data.icon    ?? '/icons/icon-192.png',
+    badge:   data.badge   ?? '/icons/badge-96.png',
     tag:     data.tag     ?? 'vms-notification',
     data:    data.url     ? { url: data.url } : {},
     vibrate: [200, 100, 200],

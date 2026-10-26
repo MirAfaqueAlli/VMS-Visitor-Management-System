@@ -10,6 +10,7 @@ const {
   setupInitSchema,
   setupSendEmailOtpSchema,
   setupVerifyEmailOtpSchema,
+  setupSendPhoneOtpSchema,
   setupVerifyPhoneSchema,
 } = require('../validators/schemas');
 
@@ -24,6 +25,7 @@ router.get('/status', ctrl.getStatus);
 // these refuse with 409 once the system is initialized)
 router.post('/send-email-otp',   sendCodeLimiter, validate(setupSendEmailOtpSchema),   ctrl.sendEmailOtp);
 router.post('/verify-email-otp', verifyLimiter,   validate(setupVerifyEmailOtpSchema), ctrl.verifyEmailOtp);
+router.post('/send-phone-otp',   sendCodeLimiter, validate(setupSendPhoneOtpSchema),   ctrl.sendPhoneOtp);   // development only
 router.post('/verify-phone',     verifyLimiter,   validate(setupVerifyPhoneSchema),    ctrl.verifyPhone);
 
 // POST /api/setup — one-time init: creates org + super admin

@@ -5,7 +5,9 @@ const bcrypt = require('bcrypt');
 const { validatePassword } = require('../utils/passwordValidator.util');
 const jwt    = require('jsonwebtoken');
 const { centralPool } = require('../services/dbManager');
-const { sendEmailCode, checkEmailCode, checkFirebasePhone } = require('../services/contactVerification.service');
+const {
+  sendEmailCode, checkEmailCode, checkFirebasePhone, sendDevPhoneCode, checkDevPhoneCode,
+} = require('../services/contactVerification.service');
 const { sendSuccess, sendError } = require('../utils/response.util');
 
 const ALREADY_DONE = 'System is already initialized. Setup can only run once.';
@@ -22,8 +24,9 @@ async function setupClosed() {
   return orgCount > 0 || adminCount > 0;
 }
 
-// Setup's email codes are stored apart from the public visitor form's
+// Setup's codes are stored apart from the public visitor form's
 const setupEmailKey = (email) => `setup:${email}`;
+const setupPhoneKey = (phone) => `setup:${phone}`;
 
 /** The decoded proof token if it is valid and for `purpose`, else null. */
 const readProof = (token, purpose) => {
@@ -232,20 +235,46 @@ const verifyEmailOtp = async (req, res) => {
   }
 };
 
+// ── POST /api/setup/send-phone-otp (development only) ─────────────────────────
+/** Body: { phone } — logs a mobile code to the backend console instead of Firebase SMS. */
+const sendPhoneOtp = async (req, res) => {
+  try {
+    if (await setupClosed()) return sendError(res, ALREADY_DONE, 409);
+
+    const { phone } = req.body;
+    const sent = await sendDevPhoneCode(phone, setupPhoneKey(phone));
+    if (sent.status === 'disabled') return sendError(res, 'On this server mobile codes are sent by Firebase.', 400);
+    if (sent.status === 'cooldown') {
+      return sendError(res, 'A code was sent recently. Please wait 60 seconds before requesting another.', 429);
+    }
+    return sendSuccess(res, {}, 'Development mode: the SMS code is printed in the backend log.');
+  } catch (err) {
+    console.error('[Setup] sendPhoneOtp error:', err.message);
+    return sendError(res, 'Failed to send the verification code.', 500);
+  }
+};
+
 // ── POST /api/setup/verify-phone ──────────────────────────────────────────────
 /**
  * Body: { phone, idToken } → { phone_token } (proof for POST /api/setup)
  * Firebase sends and checks the SMS code in the browser; idToken is its proof.
+ * Development: { phone, otp } with the code from send-phone-otp instead.
  * Errors are 400, not 401 — the frontend treats a 401 as an expired session.
  */
 const verifyPhone = async (req, res) => {
   try {
     if (await setupClosed()) return sendError(res, ALREADY_DONE, 409);
 
-    const { phone, idToken } = req.body;
-    const check = await checkFirebasePhone(idToken, phone);
-    if (check === 'mismatch') return sendError(res, 'That code was for a different mobile number. Please request a new code.', 400);
-    if (check !== 'ok')       return sendError(res, 'Mobile verification failed. Please request a new code.', 400);
+    const { phone, idToken, otp } = req.body;
+    if (otp) {
+      if (!(await checkDevPhoneCode(setupPhoneKey(phone), otp))) {
+        return sendError(res, 'Incorrect or expired code. Please try again.', 400);
+      }
+    } else {
+      const check = await checkFirebasePhone(idToken, phone);
+      if (check === 'mismatch') return sendError(res, 'That code was for a different mobile number. Please request a new code.', 400);
+      if (check !== 'ok')       return sendError(res, 'Mobile verification failed. Please request a new code.', 400);
+    }
 
     const phoneToken = jwt.sign({ purpose: 'SETUP_PHONE_VERIFIED', phone }, process.env.JWT_SECRET, { expiresIn: PROOF_EXPIRY });
     return sendSuccess(res, { phone_token: phoneToken }, 'Mobile number verified.');
@@ -267,4 +296,4 @@ const initialize = async (req, res) => {
   }
 };
 
-module.exports = { getStatus, initialize, sendEmailOtp, verifyEmailOtp, verifyPhone };
+module.exports = { getStatus, initialize, sendEmailOtp, verifyEmailOtp, sendPhoneOtp, verifyPhone };

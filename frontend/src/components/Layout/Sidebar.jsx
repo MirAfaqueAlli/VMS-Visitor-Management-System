@@ -103,10 +103,10 @@ export default function Sidebar({ isOpen, onClose }) {
         <div
           className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 overflow-hidden"
         >
-          <img src="/logo.png" alt="VMS Logo" className="w-full h-full object-cover" />
+          <img src="/brand/vms-icon-blue.png" alt="OHPC VMS" className="w-full h-full object-contain" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-color font-semibold text-[13px] leading-none tracking-tight">VMS</p>
+          <p className="text-color font-semibold text-[13px] leading-none tracking-tight">OHPC VMS</p>
           <p className="text-[10px] mt-0.5 truncate" style={{ color: 'var(--sidebar-text)' }}>
             {isSuperAdmin
               ? (activeUnit ? `Managing: ${activeUnit.name}` : 'Super Admin — Central')

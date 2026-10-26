@@ -6,8 +6,9 @@ import {
   ArrowRight, RefreshCw, Loader2, Check,
 } from "lucide-react";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
-import { auth } from "../../utils/firebase";
+import { auth, DEV_PHONE_OTP } from "../../utils/firebase";
 import useCountdown from "../../hooks/useCountdown";
+import BrandLogo from "../../components/BrandLogo";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 
@@ -110,8 +111,8 @@ function Shell({ step, children }) {
       <div className="max-w-xl mx-auto relative z-10">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4 overflow-hidden">
-            <img src="/logo.png" alt="VMS Logo" className="w-full h-full object-contain" />
+          <div className="flex justify-center mb-5">
+            <BrandLogo height={42} />
           </div>
           <h1 className="text-3xl font-bold text-loud">
             Visitor <em className="italic text-accent">Pre-Registration</em>
@@ -193,6 +194,11 @@ export default function PublicRequest() {
 
   /** Sends the SMS code through Firebase. A fresh verifier each time — a stale one causes invalid-app-credential. */
   const sendFirebaseSms = async (phone) => {
+    // Development: no Firebase / reCAPTCHA — the backend prints the code in its log
+    if (DEV_PHONE_OTP) {
+      await apiClient.post("/public-auth/send-phone-otp", { phone });
+      return;
+    }
     clearRecaptcha();
     recaptchaVerifierRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' });
     try {
@@ -288,14 +294,16 @@ export default function PublicRequest() {
   //    and returns a short-lived phone_token
   const verifyPhone = async () => {
     if (phoneOtp.length !== 6) { toast.error("Enter the 6-digit phone OTP."); return; }
-    if (!confirmationResult)   { toast.error("No active phone OTP session. Please go back and try again."); return; }
+    if (!DEV_PHONE_OTP && !confirmationResult) { toast.error("No active phone OTP session. Please go back and try again."); return; }
     setPhoneVerifying(true);
     try {
-      const userCredential = await confirmationResult.confirm(phoneOtp);
-      const idToken        = await userCredential.user.getIdToken();
+      // Development: send the logged code itself instead of a Firebase idToken
+      const proof = DEV_PHONE_OTP
+        ? { otp: phoneOtp }
+        : { idToken: await (await confirmationResult.confirm(phoneOtp)).user.getIdToken() };
       const res = await apiClient.post("/public-auth/verify-firebase-phone", {
         phone: identity.visitor_phone.trim(),
-        idToken,
+        ...proof,
       });
       setPhoneToken(res.data?.data?.phone_token ?? null);
       setPhoneVerified(true);

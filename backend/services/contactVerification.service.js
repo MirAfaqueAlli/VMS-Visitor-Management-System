@@ -11,6 +11,10 @@
  *  - Mobile: Firebase Phone Auth sends and checks the SMS code in the browser,
  *    then gives the browser an idToken. We verify that token with firebase-admin
  *    (never trusting the browser) and compare its phone number.
+ *
+ * Development (NODE_ENV !== 'production'): every code is printed to the backend
+ * console, and mobile codes skip Firebase/reCAPTCHA entirely — they are stored
+ * like email codes and only logged (sendDevPhoneCode / checkDevPhoneCode).
  */
 
 const { auth: firebaseAuth } = require('../utils/firebaseAdmin');
@@ -19,6 +23,10 @@ const emailService = require('./email.service');
 const { hashOtp, generateOtp, MAX_OTP_ATTEMPTS } = require('../utils/crypto.util');
 
 const OTP_EXPIRY_MINUTES = parseInt(process.env.OTP_EXPIRY_MINUTES, 10) || 10;
+
+const isProduction = () => process.env.NODE_ENV === 'production';
+const logDevCode   = (channel, target, otp) =>
+  console.log(`\n========================================\n[DEV OTP] ${channel} code for ${target}: ${otp}\n========================================\n`);
 
 /** Mobile numbers are keyed and compared as their last 10 digits. */
 const normalisePhone = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
@@ -100,6 +108,7 @@ async function sendEmailCode(email, key = email) {
   if (await sentRecently(key, 'email')) return { status: 'cooldown' };
 
   const otp    = await storeOtp(key, 'email', generateOtp());
+  if (!isProduction()) logDevCode('Email', email, otp);
   const tmpl   = emailService.otpTemplate(otp, 'email');
   const result = await emailService.sendEmail({ to: email, subject: tmpl.subject, html: tmpl.html });
   if (result.success) return { status: 'sent' };
@@ -133,4 +142,23 @@ async function checkFirebasePhone(idToken, phone) {
   return 'ok';
 }
 
-module.exports = { normalisePhone, sendEmailCode, checkEmailCode, checkFirebasePhone };
+/**
+ * Development only — stands in for Firebase: stores a mobile code like an email
+ * code and prints it to the backend console (no SMS, no reCAPTCHA).
+ * @returns {Promise<{status: 'sent' | 'cooldown' | 'disabled'}>} 'disabled' in production
+ */
+async function sendDevPhoneCode(phone, key = normalisePhone(phone)) {
+  if (isProduction()) return { status: 'disabled' };
+  if (await sentRecently(key, 'phone')) return { status: 'cooldown' };
+  const otp = await storeOtp(key, 'phone', generateOtp());
+  logDevCode('SMS', phone, otp);
+  return { status: 'sent' };
+}
+
+/** Development only: checks a code from sendDevPhoneCode (always false in production). */
+const checkDevPhoneCode = async (key, otp) => !isProduction() && validateOtp(key, 'phone', otp);
+
+module.exports = {
+  normalisePhone, sendEmailCode, checkEmailCode, checkFirebasePhone,
+  sendDevPhoneCode, checkDevPhoneCode,
+};

@@ -7,12 +7,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RecaptchaVerifier, signInWithPhoneNumber, signOut } from 'firebase/auth';
 import apiClient from '../api/axios';
-import { auth } from '../utils/firebase';
+import { auth, DEV_PHONE_OTP } from '../utils/firebase';
 import { getApiErrorMessage } from '../utils/apiError';
 import useCountdown from './useCountdown';
 
 // status: idle → sending → sent → verifying → verified ("idle" + error = sending failed)
-const EMPTY = { target: '', status: 'idle', token: null, error: '', devCode: '' };
+// devNote: development only — the SMS code was printed in the backend log
+const EMPTY = { target: '', status: 'idle', token: null, error: '', devCode: '', devNote: false };
 
 const FIREBASE_ERRORS = {
   'auth/invalid-verification-code': 'Incorrect code. Please check the SMS and try again.',
@@ -58,6 +59,21 @@ export default function useSetupVerification() {
     setPhone({ ...EMPTY, target: number, status: 'sending' });
     confirmationRef.current = null;
     clearVerifier(verifierRef);
+
+    if (DEV_PHONE_OTP) {
+      // Development: no Firebase / reCAPTCHA — the code is in the backend log
+      try {
+        await apiClient.post('/setup/send-phone-otp', { phone: number });
+        setPhone({ ...EMPTY, target: number, status: 'sent', devNote: true });
+        startPhoneWait();
+      } catch (err) {
+        const recent = err?.response?.status === 429;   // the earlier code still works
+        setPhone({ ...EMPTY, target: number, status: recent ? 'sent' : 'idle', devNote: recent, error: getApiErrorMessage(err, 'Could not send the SMS code.') });
+        if (recent) startPhoneWait();
+      }
+      return;
+    }
+
     try {
       // #recaptcha-container lives in index.html, outside React
       verifierRef.current     = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' });
@@ -100,6 +116,20 @@ export default function useSetupVerification() {
 
   /** Checks the SMS code with Firebase, then the API; returns the proof token, or null. */
   const verifyPhone = async (code) => {
+    if (DEV_PHONE_OTP) {
+      if (phone.status !== 'sent') return null;
+      setPhone((s) => ({ ...s, status: 'verifying', error: '' }));
+      try {
+        const res   = await apiClient.post('/setup/verify-phone', { phone: phone.target, otp: code });
+        const token = res.data?.data?.phone_token;
+        setPhone((s) => ({ ...s, status: 'verified', token, devNote: false }));
+        return token;
+      } catch (err) {
+        setPhone((s) => ({ ...s, status: 'sent', error: getApiErrorMessage(err, 'Incorrect code. Please try again.') }));
+        return null;
+      }
+    }
+
     if (phone.status !== 'sent' || !confirmationRef.current) return null;
     setPhone((s) => ({ ...s, status: 'verifying', error: '' }));
     try {

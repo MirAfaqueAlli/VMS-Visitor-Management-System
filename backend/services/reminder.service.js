@@ -8,7 +8,10 @@
  *    host, time). Each visit is claimed via visit_requests.reminder_sent_at before
  *    sending, so a visitor is never reminded twice.
  *  - Hosts with PENDING requests for today or tomorrow get one dashboard + email
- *    reminder per day.
+ *    + SMS reminder per day.
+ *  - Staff get one SMS + email listing today's approved visits: the host and the
+ *    employee who raised each visit get theirs, unit admins get every visit in
+ *    the unit.
  *
  * Runs once per day, the first time the scheduler ticks after REMINDER_HOUR (IST,
  * default 7). A row in vms_central.scheduled_job_runs claims the day, so with
@@ -35,6 +38,65 @@ function istDateAndHour(d = new Date()) {
   return { date: `${parts.year}-${parts.month}-${parts.day}`, hour: parseInt(parts.hour, 10) };
 }
 
+/**
+ * One SMS + email per staff member listing today's approved visits: hosts and
+ * requesters get their own, unit admins get all of the unit's. A visit where the
+ * staff member is the visitor themself (employee visit) is left out of their list.
+ * Returns the number of people reminded.
+ */
+async function remindStaffOfTodaysVisits(db, unit) {
+  const [visits] = await db.query(
+    `SELECT vr.id, vr.host_user_id, vr.requester_user_id, vr.visitor_email,
+            COALESCE(vr.visitor_name, vr.company_name, 'Visitor') AS visitor,
+            vr.visit_start_time, h.full_name AS host_name, gp.pass_number
+     FROM visit_requests vr
+     JOIN users h ON h.id = vr.host_user_id
+     LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
+     WHERE vr.status = 'APPROVED' AND vr.visit_date = CURDATE()
+     ORDER BY vr.visit_start_time IS NULL, vr.visit_start_time`
+  );
+  if (!visits.length) return 0;
+
+  const ids = [...new Set(visits.flatMap(v => [v.host_user_id, v.requester_user_id]).filter(Boolean))];
+  const [staff] = await db.query(
+    `SELECT id, full_name, email, phone, role_type FROM users
+     WHERE is_active = 1 AND deleted_at IS NULL AND (role_type = 'unit_admin' OR id IN (?))`,
+    [ids]
+  );
+
+  let reminded = 0;
+  for (const s of staff) {
+    const isAdmin = s.role_type === 'unit_admin';
+    const mine = visits.filter(v =>
+      (isAdmin || v.host_user_id === s.id || v.requester_user_id === s.id)
+      && !(s.email && v.visitor_email && s.email.toLowerCase() === v.visitor_email.toLowerCase()));
+    if (!mine.length || (!s.email && !s.phone)) continue;
+
+    const list = mine.map(v => ({
+      visitor: v.visitor,
+      time:    v.visit_start_time ? String(v.visit_start_time).slice(0, 5) : null,
+      host:    v.host_name,
+      pass:    v.pass_number,
+    }));
+    const first = list[0];
+    const sms = list.length === 1
+      ? `VMS reminder: You have a visit today - ${first.visitor}${first.time ? ` at ${first.time}` : ''}${first.pass ? `. Gate Pass: ${first.pass}` : ''}.`
+      : isAdmin
+        ? `VMS reminder: ${list.length} approved visits are scheduled today at ${unit.name}. See VMS for details.`
+        : `VMS reminder: You have ${list.length} visits today: ${list.slice(0, 3).map(v => v.visitor).join(', ')}${list.length > 3 ? ' and more' : ''}. See VMS for details.`;
+
+    if (s.phone) {
+      await sendNotification({ db, recipientUserId: s.id, recipientPhone: s.phone, type: 'SMS', message: sms });
+    }
+    if (s.email) {
+      const tmpl = emailService.staffVisitsTodayTemplate(s.full_name, unit.name, list, isAdmin);
+      await sendNotification({ db, recipientUserId: s.id, recipientEmail: s.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
+    }
+    reminded++;
+  }
+  return reminded;
+}
+
 /** Sends today's reminders for every active unit. Returns counts. */
 async function runDailyReminders() {
   const [units] = await centralPool.query(
@@ -42,6 +104,7 @@ async function runDailyReminders() {
   );
   let visitorReminders = 0;
   let hostReminders    = 0;
+  let staffReminders   = 0;
 
   for (const unit of units) {
     const db = getPool(unit.db_name);
@@ -105,12 +168,15 @@ async function runDailyReminders() {
         }
         hostReminders++;
       }
+
+      // ── 3. Staff: today's approved visits (one message per person) ─────────
+      staffReminders += await remindStaffOfTodaysVisits(db, unit);
     } catch (err) {
       console.error(`[Reminders] Unit ${unit.db_name} failed:`, err.message);
     }
   }
 
-  return { visitorReminders, hostReminders };
+  return { visitorReminders, hostReminders, staffReminders };
 }
 
 /** Claims today's run (once per day across all processes) and runs it. */
@@ -129,7 +195,7 @@ async function tick() {
       'UPDATE scheduled_job_runs SET finished_at = NOW(), summary = ? WHERE job_name = ? AND run_date = ?',
       [JSON.stringify(summary), JOB_NAME, date]
     );
-    console.log(`[Reminders] ${date}: ${summary.visitorReminders} visitor and ${summary.hostReminders} host reminder(s) sent.`);
+    console.log(`[Reminders] ${date}: ${summary.visitorReminders} visitor, ${summary.hostReminders} pending-approval and ${summary.staffReminders} staff visit-day reminder(s) sent.`);
   } catch (err) {
     console.error('[Reminders] Run failed:', err.message);
   }

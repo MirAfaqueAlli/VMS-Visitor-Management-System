@@ -221,10 +221,16 @@ const setupVerifyEmailOtpSchema = z.object({
   otp:   z.string({ error: 'Enter the 6-digit code.' }).regex(/^\d{6}$/, 'Enter the 6-digit code.'),
 });
 
+const setupSendPhoneOtpSchema = z.object({
+  phone: indianMobileField,
+});
+
+// idToken from Firebase, or (development only) a code from send-phone-otp
 const setupVerifyPhoneSchema = z.object({
   phone:   indianMobileField,
-  idToken: z.string({ error: 'Firebase idToken is required.' }).min(1, 'Firebase idToken is required.'),
-});
+  idToken: z.string().min(1).optional(),
+  otp:     z.string().regex(/^\d{6}$/, 'Enter the 6-digit code.').optional(),
+}).refine((d) => d.idToken || d.otp, { message: 'Firebase idToken or otp is required.' });
 
 // ── Gate Schemas ──────────────────────────────────────────────────────────────
 
@@ -313,6 +319,7 @@ module.exports = {
   setupInitSchema,
   setupSendEmailOtpSchema,
   setupVerifyEmailOtpSchema,
+  setupSendPhoneOtpSchema,
   setupVerifyPhoneSchema,
   // Gate
   checkinSchema,
