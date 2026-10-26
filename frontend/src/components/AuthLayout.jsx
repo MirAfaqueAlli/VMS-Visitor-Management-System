@@ -22,7 +22,7 @@ export function TricolourStrip({ height = 4 }) {
 
 const DEFAULT_DESCRIPTION = 'Secure, pre-approved and fully audited visitor access for offices, power houses and secured premises.';
 const DEFAULT_FEATURES = [
-  [ShieldCheck,    'Two-step verified sign-in'],
+  [ShieldCheck,    'Secure, role-based sign-in'],
   [QrCode,         'QR-coded gate passes'],
   [ClipboardCheck, 'Complete entry & exit audit trail'],
 ];
