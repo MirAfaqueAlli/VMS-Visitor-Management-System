@@ -8,23 +8,16 @@ const jwt    = require('jsonwebtoken');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
-const { sendEmail, otpTemplate, passwordResetTemplate } = require('../services/email.service');
-const { hashOtp, generateOtp, MAX_OTP_ATTEMPTS } = require('../utils/crypto.util');
+const { sendEmail, passwordResetTemplate } = require('../services/email.service');
 
-// ── Login OTP sessions (vms_central.login_otp_sessions) ───────────────────────
-// Kept in the DB rather than process memory, so pending logins survive pm2
-// reloads and work across cluster workers. Only SHA-256 hashes are stored.
-const LOGIN_OTP_TTL_MINUTES = 10;
-
+// Password-reset tokens are stored only as SHA-256 hashes
 const hashToken = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
 
 // Compared against when the email/phone matches no account (same cost factor as real hashes)
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 12);
 
-// Purge old sessions and stale failure counters every 15 minutes
+// Purge stale failure counters every 15 minutes
 setInterval(() => {
-  centralPool.query('DELETE FROM login_otp_sessions WHERE expires_at < NOW() - INTERVAL 1 DAY')
-    .catch(err => console.error('[AuthController] login OTP cleanup failed:', err.message));
   centralPool.query(
     `DELETE FROM login_failures
      WHERE first_failed_at < NOW() - INTERVAL 1 DAY AND (locked_until IS NULL OR locked_until < NOW())`
@@ -119,6 +112,7 @@ const login = async (req, res) => {
     let user        = null;
     let unitDb      = 'central';
     let dbPool      = centralPool;
+    let unitName    = null;
 
     // ── Step 1: Check central DB (super_admin / global_auditor) ──────────────
     const [centralRows] = await centralPool.query(
@@ -166,6 +160,7 @@ const login = async (req, res) => {
 
       unitDb   = unit.db_name;
       dbPool   = getPool(unitDb);
+      unitName = unit.name;
 
       const [unitUserRows] = await dbPool.query(
         `SELECT u.id, u.role_type, u.full_name, u.email, u.phone, u.employee_code,
@@ -213,155 +208,9 @@ const login = async (req, res) => {
       return sendError(res, 'Your account has been deactivated. Please contact an administrator.', 401);
     }
 
-    // ── Step 4: Generate login OTP and send via email ─────────────────────────
-    const userEmail = user.email;
-    if (!userEmail) {
-      return sendError(res, 'No email address is associated with this account. Cannot send OTP.', 400);
-    }
-
-    // Rate-limit: allow max 1 send per 60 seconds per email
-    const [recentRows] = await centralPool.query(
-      `SELECT id FROM login_otp_sessions
-       WHERE email = ? AND created_at > NOW() - INTERVAL 60 SECOND LIMIT 1`,
-      [userEmail]
-    );
-    if (recentRows.length > 0) {
-      return sendError(res, 'OTP already sent. Please wait 60 seconds before requesting a new one.', 429);
-    }
-
-    // loginToken is an opaque random string, not a JWT — it can never be mistaken
-    // for a session token. Only its hash and the OTP's hash are stored.
-    const otpCode    = generateOtp();
-    const loginToken = crypto.randomBytes(32).toString('hex');
-
-    // A new login supersedes any earlier pending OTP for the same account
-    await centralPool.query(
-      'UPDATE login_otp_sessions SET is_used = TRUE WHERE user_id = ? AND unit_db = ? AND is_used = FALSE',
-      [user.id, unitDb]
-    );
-    await centralPool.query(
-      `INSERT INTO login_otp_sessions (token_hash, user_id, unit_db, email, otp_hash, expires_at)
-       VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE))`,
-      [hashToken(loginToken), user.id, unitDb, userEmail, hashOtp(otpCode), LOGIN_OTP_TTL_MINUTES]
-    );
-
-    // Send the OTP via email
-    const { subject, html } = otpTemplate(otpCode, 'email');
-    sendEmail({ to: userEmail, subject, html }).catch(() => {});
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`\n=========================================\n[Auth] 🔑 Dev Mode Login OTP for ${userEmail}: ${otpCode}\n=========================================\n`);
-    }
-    return sendSuccess(
-      res,
-      { loginToken, email: userEmail, requires_otp: true },
-      `OTP sent to ${userEmail}. Please verify to complete sign-in.`,
-      200
-    );
-  } catch (err) {
-    console.error('[AuthController] login error:', err.message);
-    return sendError(res, 'Login failed due to a server error.', 500);
-  }
-};
-
-// ── Verify Login OTP ──────────────────────────────────────────────────────────
-
-/**
- * POST /api/auth/verify-login-otp
- * Body: { loginToken, otp }
- * Validates the OTP against the in-memory store and issues the real session JWT.
- */
-const verifyLoginOtp = async (req, res) => {
-  try {
-    const { loginToken, otp } = req.body;
-    if (!loginToken || !otp) {
-      return sendError(res, 'loginToken and otp are required.', 400);
-    }
-
-    const [sessionRows] = await centralPool.query(
-      `SELECT id, user_id, unit_db, otp_hash, attempts, (expires_at < NOW()) AS expired
-       FROM login_otp_sessions
-       WHERE token_hash = ? AND is_used = FALSE
-       LIMIT 1`,
-      [hashToken(loginToken)]
-    );
-    if (sessionRows.length === 0) {
-      return sendError(res, 'OTP session not found or already used. Please log in again.', 401);
-    }
-    const session = sessionRows[0];
-
-    if (session.expired) {
-      await centralPool.query('UPDATE login_otp_sessions SET is_used = TRUE WHERE id = ?', [session.id]);
-      return sendError(res, 'OTP has expired. Please log in again.', 401);
-    }
-
-    // Count this attempt atomically *before* checking the code, so parallel
-    // guesses can't get past MAX_OTP_ATTEMPTS
-    const [claim] = await centralPool.query(
-      `UPDATE login_otp_sessions SET attempts = attempts + 1
-       WHERE id = ? AND is_used = FALSE AND attempts < ?`,
-      [session.id, MAX_OTP_ATTEMPTS]
-    );
-    if (claim.affectedRows === 0) {
-      return sendError(res, 'Too many incorrect attempts. Please log in again.', 401);
-    }
-
-    if (hashOtp(otp.trim()) !== session.otp_hash) {
-      const attemptsLeft = MAX_OTP_ATTEMPTS - (session.attempts + 1);
-      return sendError(
-        res,
-        attemptsLeft > 0
-          ? `Incorrect OTP. ${attemptsLeft} attempt(s) left.`
-          : 'Too many incorrect attempts. Please log in again.',
-        401
-      );
-    }
-
-    // OTP is correct — consume it (affectedRows guards against a parallel success)
-    const [consumed] = await centralPool.query(
-      'UPDATE login_otp_sessions SET is_used = TRUE WHERE id = ? AND is_used = FALSE',
-      [session.id]
-    );
-    if (consumed.affectedRows === 0) {
-      return sendError(res, 'OTP session not found or already used. Please log in again.', 401);
-    }
-
-    // Re-load the user — the account may have changed since the password step
-    const unitDb = session.unit_db;
-    const dbPool = unitDb === 'central' ? centralPool : getPool(unitDb);
-    let userRows;
-    let unitName = null;
-    if (unitDb === 'central') {
-      [userRows] = await centralPool.query(
-        `SELECT id, role_type, full_name, email, phone, employee_code,
-                is_active, last_login_at,
-                NULL AS department_id, NULL AS department_name,
-                NULL AS unit_id, NULL AS designation, NULL AS designation_id
-         FROM users
-         WHERE id = ? AND deleted_at IS NULL`,
-        [session.user_id]
-      );
-    } else {
-      [userRows] = await dbPool.query(
-        `SELECT u.id, u.role_type, u.full_name, u.email, u.phone, u.employee_code,
-                u.is_active, u.last_login_at,
-                u.department_id, u.unit_id, u.designation, u.designation_id,
-                d.name AS department_name
-         FROM users u
-         LEFT JOIN departments d ON d.id = u.department_id
-         WHERE u.id = ? AND u.deleted_at IS NULL`,
-        [session.user_id]
-      );
-      const [unitRows] = await centralPool.query('SELECT name FROM units WHERE db_name = ? LIMIT 1', [unitDb]);
-      unitName = unitRows[0]?.name || null;
-    }
-
-    const user = userRows[0];
-    if (!user || !user.is_active) {
-      return sendError(res, 'Your account has been deactivated. Please contact an administrator.', 401);
-    }
-
-    // Issue the real session JWT. auth_time = sign-in time, kept across refreshes
-    // so a session can't be extended past SESSION_MAX_HOURS (see refresh)
+    // ── Step 4: Issue the session ─────────────────────────────────────────────
+    // auth_time = sign-in time, kept across refreshes so a session can't be
+    // extended past SESSION_MAX_HOURS (see refresh)
     const payload = { userId: user.id, role: user.role_type, unit_db: unitDb, auth_time: Math.floor(Date.now() / 1000) };
     const token   = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '8h',
@@ -371,7 +220,6 @@ const verifyLoginOtp = async (req, res) => {
     dbPool.query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id])
       .catch(err => console.error('[AuthController] last_login_at update failed:', err.message));
 
-    // Audit log
     await logAudit({
       db:                 unitDb !== 'central' ? dbPool : null,
       isSuperAdminAction: unitDb === 'central',
@@ -385,15 +233,10 @@ const verifyLoginOtp = async (req, res) => {
       userAgent:          req.headers['user-agent'] || null,
     });
 
-    return sendSuccess(
-      res,
-      { token, user: sanitizeUser(user, unitDb, unitName) },
-      'Login successful.',
-      200
-    );
+    return sendSuccess(res, { token, user: sanitizeUser(user, unitDb, unitName) }, 'Login successful.', 200);
   } catch (err) {
-    console.error('[AuthController] verifyLoginOtp error:', err.message);
-    return sendError(res, 'OTP verification failed.', 500);
+    console.error('[AuthController] login error:', err.message);
+    return sendError(res, 'Login failed due to a server error.', 500);
   }
 };
 
@@ -624,12 +467,6 @@ const resetPassword = async (req, res) => {
     );
     if (updated.affectedRows === 0) return sendError(res, invalidLink, 400);
 
-    // Any half-finished login for this account is void too
-    await centralPool.query(
-      'UPDATE login_otp_sessions SET is_used = TRUE WHERE user_id = ? AND unit_db = ? AND is_used = FALSE',
-      [userId, unitDb]
-    );
-
     await logAudit({
       db:                 unitDb !== 'central' ? db : null,
       isSuperAdminAction: unitDb === 'central',
@@ -682,4 +519,4 @@ const refresh = async (req, res) => {
   }
 };
 
-module.exports = { login, verifyLoginOtp, getMe, changePassword, refresh, forgotPassword, resetPassword };
+module.exports = { login, getMe, changePassword, refresh, forgotPassword, resetPassword };

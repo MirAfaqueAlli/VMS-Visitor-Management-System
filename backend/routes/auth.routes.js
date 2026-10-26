@@ -13,7 +13,6 @@ const { authLimiter } = require('../middlewares/rateLimit.middleware');
 // ── Per-IP brute-force limits (per-account lockout is in auth.controller) ─────
 
 const loginLimiter  = authLimiter(20, 'Too many failed sign-in attempts from this network. Please try again in 15 minutes.');
-const otpLimiter    = authLimiter(30, 'Too many incorrect codes from this network. Please try again in 15 minutes.');
 // forgot-password always answers 200 (no account enumeration), so count every request
 const forgotLimiter = authLimiter(10, 'Too many password reset requests. Please try again in 15 minutes.', true);
 const resetLimiter  = authLimiter(10, 'Too many password reset attempts. Please try again in 15 minutes.');
@@ -23,11 +22,6 @@ const loginSchema = z.object({
   password: z.string({ required_error: 'Password is required.' }).min(1, 'Password cannot be empty.'),
   unit_code: z.string().trim().optional(),
   unit_id: z.any().optional(),
-});
-
-const verifyLoginOtpSchema = z.object({
-  loginToken: z.string({ required_error: 'Login token is required.' }).min(1),
-  otp: z.string({ required_error: 'OTP is required.' }).regex(/^\d{6}$/, 'OTP must be exactly 6 digits.'),
 });
 
 const changePasswordSchema = z.object({
@@ -46,7 +40,6 @@ const resetPasswordSchema = z.object({
 });
 
 router.post('/login',             loginLimiter, validate(loginSchema),          authController.login);
-router.post('/verify-login-otp',  otpLimiter,   validate(verifyLoginOtpSchema), authController.verifyLoginOtp);
 router.get ('/me',                protect,                           authController.getMe);
 router.post('/refresh',           protect,                           authController.refresh);
 router.put ('/change-password',   protect, validate(changePasswordSchema), authController.changePassword);

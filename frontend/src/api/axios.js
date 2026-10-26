@@ -90,9 +90,8 @@ apiClient.interceptors.response.use(
     // it can be displayed.
     const isLoginEndpoint      = error.config?.url?.includes("/auth/login");
     const isRefreshEndpoint    = error.config?.url?.includes("/auth/refresh");
-    const isVerifyOtpEndpoint  = error.config?.url?.includes("/auth/verify-login-otp");
 
-    if (error.response?.status === 401 && !isLoginEndpoint && !isRefreshEndpoint && !isVerifyOtpEndpoint) {
+    if (error.response?.status === 401 && !isLoginEndpoint && !isRefreshEndpoint) {
       localStorage.removeItem("vms_token");
       localStorage.removeItem("vms_user");
       localStorage.removeItem("vms_active_unit");

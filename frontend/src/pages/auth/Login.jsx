@@ -4,7 +4,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Mail, Lock, Eye, EyeOff, Building2, ChevronDown,
   AlertCircle, CheckCircle2, ShieldCheck, ArrowLeft,
-  KeyRound, RefreshCw,
 } from 'lucide-react';
 import useAuth from '../../hooks/useAuth';
 import apiClient from '../../api/axios';
@@ -88,7 +87,7 @@ function UnitDropdown({ value, units, loading, onChange, inputStyle }) {
 
 /* -- Main Login Component -------------------------------------------------- */
 export default function Login() {
-  const { login, verifyLoginOtp } = useAuth();
+  const { login } = useAuth();
   const navigate     = useNavigate();
   const { unitCode } = useParams();
 
@@ -102,13 +101,8 @@ export default function Login() {
   const [lockedUnit,   setLockedUnit]   = useState(null);
   const [codeStatus,   setCodeStatus]   = useState('idle');
 
-  // -- Step 2 (OTP) state
+  // -- Step: 1 = sign in, 3 = forgot password
   const [step,        setStep]        = useState(1);
-  const [loginToken,  setLoginToken]  = useState('');
-  const [maskedEmail, setMaskedEmail] = useState('');
-  const [otp,         setOtp]         = useState(['', '', '', '', '', '']);
-  const [resendTimer, setResendTimer] = useState(0);
-  const otpRefs = useRef([]);
 
   // -- Step 3 (forgot password) state
   const [forgotSent, setForgotSent] = useState(false);
@@ -116,13 +110,6 @@ export default function Login() {
   // -- Shared state
   const [isLoading, setIsLoading] = useState(false);
   const [error,     setError]     = useState('');
-
-  // Resend countdown
-  useEffect(() => {
-    if (resendTimer <= 0) return;
-    const t = setTimeout(() => setResendTimer(s => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [resendTimer]);
 
   useEffect(() => {
     if (!unitCode) return;
@@ -166,80 +153,10 @@ export default function Login() {
     if (!isGlobalContext && !unitId) { setError('Please select your unit / branch first.'); return; }
     setIsLoading(true);
     try {
-      const data = await login(email, password, isGlobalContext ? '' : unitId);
-      setLoginToken(data.loginToken);
-      setMaskedEmail(data.email);
-      setOtp(['', '', '', '', '', '']);
-      setResendTimer(60);
-      setStep(2);
-      setTimeout(() => otpRefs.current[0]?.focus(), 100);
-    } catch (err) {
-      setError(getApiErrorMessage(err, 'Invalid credentials. Please try again.'));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // -- OTP input handling
-  const handleOtpChange = (index, value) => {
-    const digit = value.replace(/\D/g, '').slice(-1);
-    const next = [...otp];
-    next[index] = digit;
-    setOtp(next);
-    if (digit && index < 5) otpRefs.current[index + 1]?.focus();
-  };
-
-  const handleOtpKeyDown = (index, e) => {
-    if (e.key === 'Backspace') {
-      if (otp[index]) {
-        const next = [...otp]; next[index] = ''; setOtp(next);
-      } else if (index > 0) {
-        otpRefs.current[index - 1]?.focus();
-      }
-    }
-  };
-
-  const handleOtpPaste = (e) => {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    const next = [...otp];
-    for (let i = 0; i < pasted.length; i++) next[i] = pasted[i];
-    setOtp(next);
-    otpRefs.current[Math.min(pasted.length, 5)]?.focus();
-  };
-
-  // -- Step 2 submit
-  const handleOtpSubmit = async (e) => {
-    e.preventDefault();
-    const code = otp.join('');
-    if (code.length < 6) { setError('Please enter all 6 digits of the OTP.'); return; }
-    setError('');
-    setIsLoading(true);
-    try {
-      await verifyLoginOtp(loginToken, code);
+      await login(email, password, isGlobalContext ? '' : unitId);
       navigate('/dashboard', { replace: true });
     } catch (err) {
-      setError(getApiErrorMessage(err, 'Invalid OTP. Please try again.'));
-      setOtp(['', '', '', '', '', '']);
-      setTimeout(() => otpRefs.current[0]?.focus(), 50);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // -- Resend OTP
-  const handleResend = async () => {
-    if (resendTimer > 0) return;
-    setError('');
-    setIsLoading(true);
-    try {
-      const data = await login(email, password, isGlobalContext ? '' : unitId);
-      setLoginToken(data.loginToken);
-      setOtp(['', '', '', '', '', '']);
-      setResendTimer(60);
-      setTimeout(() => otpRefs.current[0]?.focus(), 50);
-    } catch (err) {
-      setError(getApiErrorMessage(err, 'Failed to resend OTP.'));
+      setError(getApiErrorMessage(err, 'Invalid credentials. Please try again.'));
     } finally {
       setIsLoading(false);
     }
@@ -477,130 +394,6 @@ export default function Login() {
                 </a>
               </p>
             )}
-          </>
-        )}
-
-        {/* STEP 2: OTP Verification */}
-        {step === 2 && (
-          <>
-            <button
-              onClick={() => { setStep(1); setError(''); setOtp(['','','','','','']); }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '5px',
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: '#64748b', fontSize: '12px', padding: '0 0 20px 0',
-                fontFamily: 'Inter, system-ui, sans-serif',
-              }}
-            >
-              <ArrowLeft size={13} strokeWidth={2} /> Back to sign in
-            </button>
-
-            <div style={{ marginBottom: '24px' }}>
-              <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Check your email</h2>
-              <p style={{ fontSize: '13px', color: '#64748b', marginTop: '39px', lineHeight: 1.6 }}>
-                We sent a 6-digit verification code to  <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e3a8a', marginTop: '2px' }}>{maskedEmail}</span>
-              </p>
-             
-            </div>
-
-            <form onSubmit={handleOtpSubmit}>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', width: '100%' }}>
-                {otp.map((digit, i) => (
-                  <input
-                    key={i}
-                    ref={el => { otpRefs.current[i] = el; }}
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={1}
-                    value={digit}
-                    onChange={e => handleOtpChange(i, e.target.value)}
-                    onKeyDown={e => handleOtpKeyDown(i, e)}
-                    onPaste={i === 0 ? handleOtpPaste : undefined}
-                    style={{
-                      flex: '1 1 0px',
-                      minWidth: 0,
-                      height: '48px',
-                      textAlign: 'center',
-                      fontSize: '20px',
-                      fontWeight: 700,
-                      color: '#0f172a',
-                      border: `2px solid ${digit ? '#3b82f6' : '#e2e8f0'}`,
-                      borderRadius: '10px',
-                      background: digit ? 'rgba(59,130,246,0.04)' : '#f8fafc',
-                      outline: 'none',
-                      transition: 'border-color 150ms, box-shadow 150ms',
-                      fontFamily: 'Inter, system-ui, sans-serif',
-                      padding: 0,
-                    }}
-                    onFocus={e => { e.target.style.borderColor = '#3b82f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.12)'; }}
-                    onBlur={e => { e.target.style.boxShadow = 'none'; if (!e.target.value) e.target.style.borderColor = '#e2e8f0'; }}
-                  />
-                ))}
-              </div>
-
-              {error && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  padding: '10px 14px', borderRadius: '8px', marginBottom: '16px',
-                  background: '#fef2f2', border: '1.5px solid #fca5a5', color: '#dc2626', fontSize: '12px',
-                }}>
-                  <AlertCircle size={13} style={{ flexShrink: 0 }} />
-                  {error}
-                </div>
-              )}
-
-              <button
-                id="otp-verify-btn"
-                type="submit"
-                disabled={isLoading || otp.join('').length < 6}
-                style={{
-                  width: '100%', padding: '12px', borderRadius: '10px', border: 'none',
-                  background: '#13315c', color: 'white',
-                  fontSize: '14px', fontWeight: 700,
-                  cursor: (isLoading || otp.join('').length < 6) ? 'not-allowed' : 'pointer',
-                  opacity: (isLoading || otp.join('').length < 6) ? 0.6 : 1,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  boxShadow: '0 4px 14px rgba(19,49,92,0.25)',
-                  transition: 'opacity 150ms',
-                  fontFamily: 'Inter, system-ui, sans-serif',
-                  letterSpacing: '0.02em', marginBottom: '14px',
-                }}
-              >
-                {isLoading ? (
-                  <>
-                    <span className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin"
-                      style={{ borderColor: 'rgba(255,255,255,0.4)', borderTopColor: 'white' }} />
-                    Verifying...
-                  </>
-                ) : 'Verify & Sign In'}
-              </button>
-            </form>
-
-            <div style={{ textAlign: 'center', marginTop: '4px' }}>
-              <span style={{ fontSize: '12px', color: '#64748b' }}>Didn't receive it? </span>
-              {resendTimer > 0 ? (
-                <span style={{ fontSize: '12px', color: '#94a3b8' }}>Resend in {resendTimer}s</span>
-              ) : (
-                <button
-                  onClick={handleResend}
-                  disabled={isLoading}
-                  style={{
-                    background: 'none', border: 'none', cursor: 'pointer',
-                    color: '#3b82f6', fontSize: '12px', fontWeight: 600,
-                    display: 'inline-flex', alignItems: 'center', gap: '4px',
-                    fontFamily: 'Inter, system-ui, sans-serif',
-                    textDecoration: 'underline',
-                  }}
-                >
-                  <RefreshCw size={11} strokeWidth={2} /> Resend OTP
-                </button>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', marginTop: '16px' }}>
-              <ShieldCheck size={11} style={{ color: '#94a3b8' }} />
-              <span style={{ fontSize: '11px', color: '#94a3b8' }}>Code expires in 10 minutes</span>
-            </div>
           </>
         )}
 
