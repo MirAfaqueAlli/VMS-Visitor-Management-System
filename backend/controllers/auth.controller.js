@@ -114,8 +114,15 @@ const login = async (req, res) => {
     let dbPool      = centralPool;
     let unitName    = null;
 
-    // ── Step 1: Check central DB (super_admin / global_auditor) ──────────────
-    const [centralRows] = await centralPool.query(
+    // The sign-in page's choice decides where the account is looked up, so the
+    // same email/phone can be a central account AND a unit account (e.g. a super
+    // admin who is also a unit admin):
+    //   "Central / Global" (no unit) → central users only
+    //   a unit selected               → that unit's users only
+    const unitSelected = !!(unitId || unit_code);
+
+    // ── Step 1: Central sign-in (super_admin / global_auditor) ───────────────
+    const [centralRows] = unitSelected ? [[]] : await centralPool.query(
       `SELECT id, role_type, full_name, email, phone, employee_code,
               password_hash, is_active, last_login_at,
               NULL AS department_id, NULL AS department_name,
@@ -131,10 +138,8 @@ const login = async (req, res) => {
       dbPool = centralPool;
     }
 
-    // ── Step 2: Not in central → search unit DB by unit_id or unit_code ────────
-    // With no unit selected ("Central / Global" sign-in) there is nothing more to
-    // look up: user stays null and the attempt fails as invalid credentials below.
-    if (!user && (unitId || unit_code)) {
+    // ── Step 2: Unit sign-in → search the selected unit's DB ──────────────────
+    if (unitSelected) {
       let unitRows;
       if (unitId) {
         [unitRows] = await centralPool.query(
@@ -372,15 +377,15 @@ const forgotPassword = async (req, res) => {
     const email  = req.body.email.trim();
     const unitId = req.body.unit_id ? parseInt(req.body.unit_id, 10) : null;
 
-    // Same lookup order as login: central users first, then the selected unit
+    // Same rule as login: a selected unit → that unit's account, otherwise central
     let user   = null;
     let unitDb = 'central';
-    const [centralRows] = await centralPool.query(
-      'SELECT id, email, is_active FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1', [email]
-    );
-    if (centralRows.length > 0) {
-      user = centralRows[0];
-    } else if (unitId) {
+    if (!unitId) {
+      const [centralRows] = await centralPool.query(
+        'SELECT id, email, is_active FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1', [email]
+      );
+      user = centralRows[0] || null;
+    } else {
       const [unitRows] = await centralPool.query(
         "SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = 'ACTIVE' LIMIT 1", [unitId]
       );

@@ -1,18 +1,11 @@
+// frontend/src/pages/approvals/ApprovalInbox.jsx
+// Visit requests waiting for the signed-in host's (or unit admin's) decision,
+// shown as one plain list. Neutral colours; the accent marks only the main action.
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  CheckCircle2,
-  Clock,
-  User,
-  Calendar,
-  Briefcase,
-  Inbox,
-  Check,
-  X,
-  ChevronDown,
-  Loader2,
-  AlertTriangle,
-  Eye,
+  Check, X, Loader2, AlertTriangle, Eye, Phone, CalendarDays, Clock, UserRound,
+  Building2, FileText, RefreshCw, CornerDownRight,
 } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
@@ -25,82 +18,69 @@ const nonotifcationlight = "/No Notifications Bell Illustration.png";
 const nonotifcationdark = "/Dark 3D Notification Bell Illustration.png";
 
 const CATEGORY_LABELS = {
-  EMPLOYEE_VISIT: "Employee Visit",
+  EMPLOYEE_VISIT: "Employee visit",
   VENDOR:         "Vendor",
   SPOT:           "Walk-in",
-  PERSONAL_VISIT: "Personal Visit",
+  PERSONAL_VISIT: "Personal visit",
 };
+
+// Desktop column layout shared by the header row and every item row
+const COLUMNS = "md:grid md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.4fr)_minmax(0,1fr)_auto] md:items-center md:gap-6";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function timeAgo(dateStr) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
+  if (!dateStr) return "—";
+  const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
   if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins} minute${mins > 1 ? "s" : ""} ago`;
+  if (mins < 60) return `${mins} min ago`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} hour${hrs > 1 ? "s" : ""} ago`;
+  if (hrs < 24) return `${hrs} hr${hrs > 1 ? "s" : ""} ago`;
   const days = Math.floor(hrs / 24);
   return `${days} day${days > 1 ? "s" : ""} ago`;
 }
 
 function formatDate(dateStr) {
   if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString("en-GB", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
+  return new Date(dateStr).toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
 }
 
-// ── Schedule Conflict Modal ────────────────────────────────────────────────────
+const initials = (name) =>
+  String(name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+
+const Meta = ({ icon: Icon, children }) => (
+  <span className="inline-flex items-center gap-1.5 min-w-0">
+    <Icon size={13} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--color-text-faint)" }} />
+    <span className="truncate">{children}</span>
+  </span>
+);
+
+// ── Schedule conflict dialog ───────────────────────────────────────────────────
 function ConflictModal({ conflict, onContinue, onGoBack, loading }) {
   if (!conflict) return null;
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-overlay backdrop-blur-sm" onClick={onGoBack} />
-      <div
-        className="relative w-full max-w-md rounded-xl shadow-2xl border border-subtle animate-fade-in overflow-hidden"
-        style={{ background: "var(--color-bg-card)" }}
-      >
-        <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-subtle">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: "#fef9c3" }}>
-              <AlertTriangle size={18} strokeWidth={2} style={{ color: "#d97706" }} />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-loud leading-tight">Schedule Conflict Detected</h2>
-              <p className="text-xs text-faint mt-0.5">Review the conflicts below before proceeding</p>
-            </div>
+      <div role="dialog" aria-modal="true" aria-labelledby="conflict-title"
+        className="relative w-full max-w-md vms-card rounded-lg shadow-2xl animate-fade-in overflow-hidden">
+        <div className="flex items-start gap-3 px-6 pt-5 pb-4" style={{ borderBottom: "1px solid var(--color-border)" }}>
+          <AlertTriangle size={18} strokeWidth={2} className="mt-0.5 shrink-0" style={{ color: "var(--color-warning)" }} />
+          <div className="flex-1">
+            <h2 id="conflict-title" className="text-[15px] font-semibold text-loud">Schedule conflict</h2>
+            <p className="text-xs text-faint mt-0.5">The host already has a visit at this time.</p>
           </div>
-          <button onClick={onGoBack} className="text-faint hover:text-loud transition-colors">
-            <X size={16} strokeWidth={2} />
+          <button onClick={onGoBack} className="text-faint hover:text-loud transition-colors" aria-label="Close">
+            <X size={16} />
           </button>
         </div>
-        <div className="px-6 py-5">
-          <div className="rounded-lg px-5 py-4 mb-5" style={{ background: "#fff7ed", border: "1px solid #fed7aa" }}>
-            <p className="text-[11px] font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5" style={{ color: "#ef4444" }}>
-              <span className="inline-block w-2 h-2 rounded-full" style={{ background: "#ef4444" }} />
-              Host is already busy
-            </p>
-            <p className="text-sm text-loud leading-snug">
-              <strong>{conflict.visitor_name}</strong> is already visiting the host during{" "}
-              <strong>{conflict.time_window}</strong>.
-            </p>
-          </div>
-          <p className="text-xs text-faint leading-relaxed">
-            You can go back and adjust the time, or continue anyway to override the conflict.
-          </p>
+        <div className="px-6 py-5 text-[13px] text-loud leading-relaxed">
+          <strong>{conflict.visitor_name}</strong> is already visiting the host during <strong>{conflict.time_window}</strong>.
+          <p className="text-xs text-faint mt-3">Go back to leave the request pending, or approve it anyway.</p>
         </div>
         <div className="flex items-center gap-3 px-6 pb-5">
-          <button onClick={onGoBack} disabled={loading} className="flex-1 btn-secondary text-sm font-medium py-2.5 disabled:opacity-60">
-            Go Back
-          </button>
-          <button
-            onClick={onContinue}
-            disabled={loading}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 disabled:opacity-60"
-            style={{ background: "#2563eb", color: "#fff" }}
-          >
-            {loading ? <Loader2 size={14} strokeWidth={2} className="animate-spin" /> : <AlertTriangle size={14} strokeWidth={2} />}
-            Continue Anyway
+          <button onClick={onGoBack} disabled={loading} className="flex-1 btn-secondary justify-center">Go back</button>
+          <button onClick={onContinue} disabled={loading} className="flex-1 btn-primary justify-center">
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            Approve anyway
           </button>
         </div>
       </div>
@@ -108,14 +88,17 @@ function ConflictModal({ conflict, onContinue, onGoBack, loading }) {
   );
 }
 
-// ── Individual Approval Card ───────────────────────────────────────────────────
-function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
-  const navigate                  = useNavigate();
-  const [mode, setMode]           = useState(null);
-  const [remarks, setRemarks]     = useState("");
-  const [remarkError, setRemarkError] = useState("");
-  const [submitting, setSubmitting]   = useState(false);
+// ── One request in the list ────────────────────────────────────────────────────
+function ApprovalRow({ item, isUnitAdmin, onActionSuccess }) {
+  const navigate                        = useNavigate();
+  const [mode,         setMode]         = useState(null);   // null | 'approve' | 'reject'
+  const [remarks,      setRemarks]      = useState("");
+  const [remarkError,  setRemarkError]  = useState("");
+  const [submitting,   setSubmitting]   = useState(false);
   const [conflictData, setConflictData] = useState(null);
+
+  const name = item.visitor_name || item.requester_name || "Unknown visitor";
+  const time = item.visit_start_time ? ` · ${String(item.visit_start_time).slice(0, 5)}` : "";
 
   const doApprove = async (forceApprove = false) => {
     setSubmitting(true);
@@ -124,7 +107,7 @@ function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
         remarks: remarks.trim() || undefined,
         force_approve: forceApprove || undefined,
       });
-      toast.success("Request approved. Gate pass emailed to visitor.");
+      toast.success("Request approved. The gate pass has been sent to the visitor.");
       setConflictData(null);
       onActionSuccess(item.visit_request_id);
     } catch (err) {
@@ -148,10 +131,8 @@ function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
     if (mode === "approve") { await doApprove(false); return; }
     setSubmitting(true);
     try {
-      await apiClient.put(`/approvals/${item.visit_request_id}/reject`, {
-        remarks: remarks.trim() || undefined,
-      });
-      toast.success("Request rejected successfully.");
+      await apiClient.put(`/approvals/${item.visit_request_id}/reject`, { remarks: remarks.trim() || undefined });
+      toast.success("Request rejected.");
       onActionSuccess(item.visit_request_id);
     } catch (err) {
       toast.error(err.response?.data?.message || "Failed to reject request.");
@@ -160,10 +141,11 @@ function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
     }
   };
 
+  const openMode = (m) => { setMode(m); setRemarks(""); setRemarkError(""); };
   const handleCancel = () => { setMode(null); setRemarks(""); setRemarkError(""); };
 
   return (
-    <>
+    <li style={{ borderBottom: "1px solid var(--color-border)", background: mode ? "var(--color-bg-primary)" : undefined }}>
       <ConflictModal
         conflict={conflictData}
         loading={submitting}
@@ -171,145 +153,124 @@ function ApprovalCard({ item, isUnitAdmin, onActionSuccess }) {
         onContinue={() => doApprove(true)}
       />
 
-      <div className="vms-card rounded-md p-6 transition-all duration-500 hover:shadow-hover hover:shadow-card" style={{border:'none !important'}}>
-        {/* Top Row */}
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-          {/* Left: avatar + details */}
-          <div className="flex items-start gap-4 min-w-0 flex-1">
-            <div className="w-11 h-11 rounded-full bg-lightColor flex items-center justify-center shrink-0">
-              <User strokeWidth={1.5} className="w-5 h-5 text-muted" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2 mb-1">
-                <h3 className="font-semibold text-loud text-lg leading-tight truncate">
-                  {item.visitor_name || item.requester_name || "Unknown Visitor"}
-                </h3>
-                <span
-                  className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
-                  style={{ background: "var(--color-info-bg)", color: "var(--color-info)" }}
-                >
-                  {CATEGORY_LABELS[item.visit_category] ?? item.visit_category ?? "Visit"}
-                </span>
-              </div>
-              {item.visitor_phone && (
-                <p className="text-xs text-faint mt-0.5 mb-1">📞 {item.visitor_phone}</p>
-              )}
-              {isUnitAdmin && item.host_name && (
-                <p className="text-xs text-muted mt-1 mb-2 font-medium flex items-center gap-1.5">
-                  <User strokeWidth={1.5} className="w-3.5 h-3.5 text-accent" />
-                  <span>Host: <strong className="text-loud">{item.host_name}</strong>{" "}
-                    {item.department_name && <span className="text-faint">({item.department_name})</span>}
-                  </span>
-                </p>
-              )}
-              <p className="text-muted text-sm leading-relaxed line-clamp-2 mb-3">
-                {item.purpose || "No purpose specified."}
-              </p>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
-                <span className="flex items-center gap-1">
-                  <Calendar strokeWidth={1.5} className="w-3.5 h-3.5" />
-                  {formatDate(item.visit_date)}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock strokeWidth={1.5} className="w-3.5 h-3.5" />
-                  {timeAgo(item.assigned_at)}
-                </span>
-                {item.requester_name && (
-                  <span className="flex items-center gap-1">
-                    <Briefcase strokeWidth={1.5} className="w-3.5 h-3.5" />
-                    via {item.requester_name}
-                  </span>
-                )}
-              </div>
-            </div>
+      <div className={`px-5 py-4 space-y-3 md:space-y-0 ${COLUMNS}`}>
+        {/* Visitor */}
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-semibold shrink-0"
+            style={{ background: "var(--color-bg-primary)", color: "var(--color-text-muted)", border: "1px solid var(--color-border)" }}>
+            {initials(name)}
+          </span>
+          <div className="min-w-0">
+            <p className="text-[14px] font-semibold text-loud truncate">{name}</p>
+            <p className="text-[12px] flex items-center gap-3 flex-wrap" style={{ color: "var(--color-text-muted)" }}>
+              <span>{CATEGORY_LABELS[item.visit_category] ?? item.visit_category ?? "Visit"}</span>
+              {item.visitor_phone && <Meta icon={Phone}>{item.visitor_phone}</Meta>}
+            </p>
           </div>
-
-          {/* Right: buttons */}
-          {!mode && (
-            <div className="flex sm:flex-col items-center gap-2 sm:shrink-0 w-full sm:w-auto">
-              {/* View Details — navigates directly to the detailed request page */}
-              <button
-                onClick={() => navigate(`/requests/${item.visit_request_id}`)}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 btn-secondary text-xs text-accent hover:border-accent transition-all duration-300"
-              >
-                <Eye className="w-3.5 h-3.5" /> Details
-              </button>
-              <button
-                onClick={() => setMode("approve")}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 btn-secondary/30 hover:bg-accent hover:text-white transition-all duration-300"
-              >
-                <Check strokeWidth={2} className="w-3.5 h-3.5" /> Approve
-              </button>
-              <button
-                onClick={() => setMode("reject")}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 btn-secondary/40 hover:bg-accent hover:text-white transition-all duration-300"
-              >
-                <X strokeWidth={2} className="w-3.5 h-3.5" /> Reject
-              </button>
-            </div>
-          )}
         </div>
 
-        {/* Inline Expansion Panel */}
-        {mode && (
-          <div className="mt-5 pt-5 border-t border-subtle animate-fade-in">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-2 h-2 rounded-full bg-accent" />
-              <p className="text-sm font-semibold text-loud capitalize">
-                {mode === "approve" ? "Confirm Approval" : "Confirm Rejection"}{" "}
-                <span className="font-normal text-faint">
-                  {mode === "approve" ? "— remarks are optional" : "— remarks are required"}
-                </span>
-              </p>
-            </div>
-            <textarea
-              rows={3}
-              value={remarks}
-              onChange={(e) => { setRemarks(e.target.value); setRemarkError(""); }}
-              placeholder={
-                mode === "approve"
-                  ? 'Add optional remarks (e.g., "Meeting room 2B confirmed")…'
-                  : "State the reason for rejection (required)…"
-              }
-              className={`w-full px-4 py-3 rounded-md bg-bg-primary border text-sm text-loud placeholder-muted resize-none focus:outline-none focus:ring-2 transition-all duration-300 ${
-                remarkError
-                  ? "border-warning/70 focus:ring-warning/30"
-                  : "border-subtle focus:ring-accent/30 focus:border-border"
-              }`}
-            />
-            {remarkError && <p className="mt-1.5 text-xs text-warning">{remarkError}</p>}
-            <div className="flex items-center gap-3 mt-4">
-              <button onClick={handleConfirm} disabled={submitting} className="flex items-center gap-2 btn-primary">
-                {submitting ? (
-                  <Loader2 strokeWidth={2} className="w-3.5 h-3.5 animate-spin" />
-                ) : mode === "approve" ? (
-                  <Check strokeWidth={2} className="w-3.5 h-3.5" />
-                ) : (
-                  <X strokeWidth={2} className="w-3.5 h-3.5" />
-                )}
-                {submitting ? "Processing…" : `Confirm ${mode === "approve" ? "Approval" : "Rejection"}`}
-              </button>
-              <button
-                onClick={handleCancel}
-                disabled={submitting}
-                className="flex items-center gap-1.5 btn-secondary text-muted hover:bg-bg-primary hover:border-border transition-all duration-300 disabled:opacity-60"
-              >
-                <ChevronDown strokeWidth={1.5} className="w-3.5 h-3.5 rotate-90" />
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
+        {/* Visit */}
+        <div className="min-w-0 text-[12.5px] space-y-1" style={{ color: "var(--color-text-muted)" }}>
+          <div className="text-loud font-medium"><Meta icon={CalendarDays}>{formatDate(item.visit_date)}{time}</Meta></div>
+          <div title={item.purpose || undefined}><Meta icon={FileText}>{item.purpose || "No purpose given"}</Meta></div>
+        </div>
+
+        {/* Host / received */}
+        <div className="min-w-0 text-[12.5px] space-y-1" style={{ color: "var(--color-text-muted)" }}>
+          {isUnitAdmin && item.host_name && (
+            <div><Meta icon={UserRound}>{item.host_name}{item.department_name ? `, ${item.department_name}` : ""}</Meta></div>
+          )}
+          {item.requester_name && item.requester_name !== name && (
+            <div><Meta icon={Building2}>Raised by {item.requester_name}</Meta></div>
+          )}
+          <div><Meta icon={Clock}>Received {timeAgo(item.assigned_at)}</Meta></div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-2 md:justify-end">
+          <button
+            onClick={() => navigate(`/requests/${item.visit_request_id}`)}
+            className="btn-secondary px-2.5 text-[12px]"
+            title="View details"
+            aria-label={`View details for ${name}`}
+          >
+            <Eye size={14} />
+            <span className="md:hidden xl:inline">Details</span>
+          </button>
+          <button
+            onClick={() => openMode("reject")}
+            disabled={submitting}
+            className="btn-secondary px-3 text-[12px]"
+            style={mode === "reject" ? { borderColor: "var(--color-text)", color: "var(--color-text)" } : undefined}
+          >
+            <X size={14} /> Reject
+          </button>
+          <button onClick={() => openMode("approve")} disabled={submitting} className="btn-primary px-3 text-[12px]">
+            <Check size={14} /> Approve
+          </button>
+        </div>
       </div>
-    </>
+
+      {/* Remarks + confirm */}
+      {mode && (
+        <div className="px-5 pb-4 md:pl-[4.25rem] animate-fade-in">
+          <label htmlFor={`remarks-${item.visit_request_id}`}
+            className="flex items-center gap-1.5 text-[12px] font-semibold text-loud mb-1.5">
+            <CornerDownRight size={13} style={{ color: "var(--color-text-faint)" }} />
+            {mode === "approve" ? "Approve this request" : "Reject this request"}
+            <span className="font-normal" style={{ color: "var(--color-text-faint)" }}>
+              — {mode === "approve" ? "remarks are optional" : "a reason is required"}
+            </span>
+          </label>
+          <textarea
+            id={`remarks-${item.visit_request_id}`}
+            rows={2}
+            autoFocus
+            value={remarks}
+            onChange={(e) => { setRemarks(e.target.value); setRemarkError(""); }}
+            placeholder={mode === "approve" ? "e.g. Meeting room 2B is booked" : "Reason for rejecting the request"}
+            className="vms-input resize-none"
+            style={remarkError ? { borderColor: "var(--color-error)" } : undefined}
+            aria-invalid={!!remarkError}
+          />
+          {remarkError && (
+            <p className="mt-1.5 text-[12px] flex items-center gap-1" style={{ color: "var(--color-error)" }}>
+              <AlertTriangle size={12} /> {remarkError}
+            </p>
+          )}
+          <div className="flex items-center gap-2 mt-3">
+            <button onClick={handleConfirm} disabled={submitting} className="btn-primary text-[12.5px]">
+              {submitting ? <Loader2 size={14} className="animate-spin" /> : mode === "approve" ? <Check size={14} /> : <X size={14} />}
+              {submitting ? "Saving…" : mode === "approve" ? "Confirm approval" : "Confirm rejection"}
+            </button>
+            <button onClick={handleCancel} disabled={submitting} className="btn-secondary text-[12.5px]">Cancel</button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }
 
-// ── Main Page ──────────────────────────────────────────────────────────────────
+function SkeletonRow() {
+  const bar = (w) => <div className="h-3 rounded animate-pulse" style={{ width: w, background: "var(--color-border)" }} />;
+  return (
+    <li className={`px-5 py-4 space-y-3 md:space-y-0 ${COLUMNS}`} style={{ borderBottom: "1px solid var(--color-border)" }}>
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-full animate-pulse" style={{ background: "var(--color-border)" }} />
+        <div className="space-y-2">{bar(130)}{bar(80)}</div>
+      </div>
+      <div className="space-y-2">{bar(150)}{bar(110)}</div>
+      <div className="space-y-2">{bar(100)}{bar(80)}</div>
+      <div className="flex gap-2 md:justify-end">{bar(60)}{bar(70)}</div>
+    </li>
+  );
+}
+
+// ── Page ───────────────────────────────────────────────────────────────────────
 export default function ApprovalInbox() {
-  const { user }     = useAuth();
-  const { theme }    = useTheme();
-  const isUnitAdmin  = user?.role_type === "unit_admin";
+  const { user }    = useAuth();
+  const { theme }   = useTheme();
+  const isUnitAdmin = user?.role_type === "unit_admin";
   const [items,      setItems]      = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [page,       setPage]       = useState(1);
@@ -358,7 +319,7 @@ export default function ApprovalInbox() {
       });
     }
     setTotalCount((n) => n + 1);
-    toast.success("New visit request received!", { icon: "📋", duration: 5000 });
+    toast.success("New visit request received.", { duration: 5000 });
   }, [page]);
 
   /* Socket: own approve/reject from another view */
@@ -368,55 +329,21 @@ export default function ApprovalInbox() {
   }, []);
 
   return (
-    <div className=" animate-fade-in">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+    <div className="max-w-7xl mx-auto animate-fade-in">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-6 gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold text-loud">
-              Approval <em className="italic">Inbox</em>
-            </h1>
-            {!loading && totalCount > 0 && (
-              <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-accent text-white text-xs font-bold">
-                {totalCount}
-              </span>
-            )}
-          </div>
+          <h1 className="text-xl font-bold text-loud">Approvals</h1>
         </div>
-        <button
-          onClick={fetchInbox}
-          disabled={loading}
-          className="flex items-center gap-2 btn-secondary text-muted text-sm hover:bg-bg-primary hover:border-border transition-all duration-300 disabled:opacity-50"
-        >
-          {loading ? (
-            <Loader2 strokeWidth={1.5} className="w-4 h-4 animate-spin" />
-          ) : (
-            <Inbox strokeWidth={1.5} className="w-4 h-4" />
-          )}
-          Refresh
+        <button onClick={fetchInbox} disabled={loading} className="btn-secondary text-[12.5px]">
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
         </button>
       </div>
 
-      {/* Content */}
-      {loading ? (
-        <div className="space-y-4">
-          {[1, 2, 3].map((n) => (
-            <div key={n} className="vms-card rounded-md p-6 animate-pulse" >
-              <div className="flex items-start gap-4">
-                <div className="w-11 h-11 rounded-full bg-border" />
-                <div className="flex-1 space-y-3">
-                  <div className="h-4 bg-border rounded-full w-1/3" />
-                  <div className="h-3 bg-border rounded-full w-2/3" />
-                  <div className="h-3 bg-border rounded-full w-1/2" />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : items.length === 0 ? (
+      {/* Nothing pending: the original illustrated empty state */}
+      {!loading && items.length === 0 ? (
         <div className="vms-card rounded-md py-20 flex flex-col items-center justify-center text-center gap-5 border-none">
           <div className="w-80 h-80 rounded-full  flex items-center justify-center">
-            
             <img
               className="w-full h-full object-contain"
               src={theme === "dark" ? nonotifcationdark : nonotifcationlight}
@@ -433,22 +360,37 @@ export default function ApprovalInbox() {
           </div>
         </div>
       ) : (
-        <div className="space-y-4">
-          {items.map((item) => (
-            <ApprovalCard
-              key={item.visit_request_id}
-              item={item}
-              isUnitAdmin={isUnitAdmin}
-              onActionSuccess={handleActionSuccess}
-            />
-          ))}
-          <Pagination
-            page={page}
-            totalPages={totalPages}
-            totalCount={totalCount}
-            onPageChange={(p) => setPage(p)}
-          />
+      <div className="vms-card rounded-lg overflow-hidden">
+        {/* Column headings (desktop) */}
+        <div className={`hidden ${COLUMNS} px-5 py-2.5 text-[10.5px] font-semibold uppercase tracking-wider`}
+          style={{ color: "var(--color-text-faint)", background: "var(--color-bg-primary)", borderBottom: "1px solid var(--color-border)" }}>
+          <span>Visitor</span>
+          <span>Visit</span>
+          <span>Host / received</span>
+          <span className="text-right">Decision</span>
         </div>
+
+        {loading ? (
+          <ul>{[1, 2, 3, 4].map((n) => <SkeletonRow key={n} />)}</ul>
+        ) : (
+          <ul>
+            {items.map((item) => (
+              <ApprovalRow
+                key={item.visit_request_id}
+                item={item}
+                isUnitAdmin={isUnitAdmin}
+                onActionSuccess={handleActionSuccess}
+              />
+            ))}
+          </ul>
+        )}
+
+        {!loading && items.length > 0 && (
+          <div className="px-5 pb-4">
+            <Pagination page={page} totalPages={totalPages} totalCount={totalCount} onPageChange={setPage} />
+          </div>
+        )}
+      </div>
       )}
     </div>
   );

@@ -9,6 +9,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Filter,
+  ArrowUpRight,
+  Layers,
+  QrCode,
+  User,
 } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
@@ -33,10 +37,12 @@ export default function RequestList() {
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
 
-  // Only unit gate staff can view the gate pass / create requests
-  // (super_admin is read-only inside a unit — the API enforces the same)
+  // Role permissions
   const canViewPass = ['security', 'unit_admin', 'receptionist'].includes(user?.role_type);
   const canCreate   = ['unit_admin', 'employee', 'security', 'receptionist'].includes(user?.role_type);
+
+  // Tabs: 'as_host' (Visitors to Me), 'as_visitor' (My Visits as Visitor), 'all' (All)
+  const [activeTab, setActiveTab] = useState(user?.role_type === "employee" ? "as_host" : "all");
 
   // Filters
   const [statusFilter, setStatusFilter] = useState("");
@@ -61,10 +67,9 @@ export default function RequestList() {
     try {
       setLoading(true);
       const params = { page, limit };
+      if (activeTab && activeTab !== "all") params.tab = activeTab;
       if (statusFilter) params.status = statusFilter;
       if (dateFilter) params.visit_date = dateFilter;
-      // Note: Search by name isn't explicitly in backend requirements for this endpoint,
-      // but passing it in case it's supported or we filter client-side later if needed.
       if (debouncedSearch) params.search = debouncedSearch;
 
       const response = await apiClient.get("/visit-requests", { params });
@@ -77,7 +82,7 @@ export default function RequestList() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, dateFilter, debouncedSearch]);
+  }, [page, activeTab, statusFilter, dateFilter, debouncedSearch]);
 
   useEffect(() => {
     fetchRequests();
@@ -103,6 +108,48 @@ export default function RequestList() {
       </div>
 
       <div className="vms-card rounded-md p-6 mb-8 ">
+        {/* Tab Switcher */}
+        <div className="flex items-center gap-2 mb-6 border-b border-subtle pb-4 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => { setActiveTab("as_host"); setPage(1); }}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer ${
+              activeTab === "as_host"
+                ? "bg-accent text-white shadow-sm shadow-accent/20"
+                : "bg-bg-primary text-muted hover:text-loud hover:bg-bg-subtle border border-subtle"
+            }`}
+          >
+            <UserCheck className="w-3.5 h-3.5" />
+            <span>Visitors to Me</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setActiveTab("as_visitor"); setPage(1); }}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer ${
+              activeTab === "as_visitor"
+                ? "bg-accent text-white shadow-sm shadow-accent/20"
+                : "bg-bg-primary text-muted hover:text-loud hover:bg-bg-subtle border border-subtle"
+            }`}
+          >
+            <ArrowUpRight className="w-3.5 h-3.5" />
+            <span>My Visits (As Visitor)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setActiveTab("all"); setPage(1); }}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer ${
+              activeTab === "all"
+                ? "bg-accent text-white shadow-sm shadow-accent/20"
+                : "bg-bg-primary text-muted hover:text-loud hover:bg-bg-subtle border border-subtle"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>All Requests</span>
+          </button>
+        </div>
+
         {/* Filters */}
         <div className="flex flex-col md:flex-row gap-4 mb-6 pb-6 border-b border-subtle">
           <div className="flex-1 relative">
@@ -186,7 +233,11 @@ export default function RequestList() {
                     colSpan="5"
                     className="text-center py-12 text-faint italic"
                   >
-                    No visit requests found.
+                    {activeTab === 'as_visitor'
+                      ? 'No visit requests found where you are the visitor.'
+                      : activeTab === 'as_host'
+                      ? 'No visitor requests to you found.'
+                      : 'No visit requests found.'}
                   </td>
                 </tr>
               ) : (
@@ -196,28 +247,45 @@ export default function RequestList() {
                     className="border-b border-subtle hover:bg-bg-primary/50 transition-colors duration-300"
                   >
                     <td className="py-4 px-4">
-                      <div className="font-medium text-loud">
-                        {request.visitor_name || request.company_name || "N/A"}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <div className="font-medium text-loud">
+                          {request.visitor_name || request.company_name || "N/A"}
+                        </div>
+                        {request.my_role === 'VISITOR' && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 border border-emerald-300/50">
+                            You (Visitor)
+                          </span>
+                        )}
                       </div>
                       {request.visitor_phone && (
                         <div className="text-xs text-faint mt-0.5">{request.visitor_phone}</div>
                       )}
-                      <div className="mt-1">
+                      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                         <span
                           className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
                           style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
                         >
                           {getCategoryLabel(request)}
                         </span>
+                        {request._cross_unit_id && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-300/40">
+                            Cross-Unit
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="py-4 px-4">
-                      <div className="text-loud flex items-center gap-1.5">
+                      <div className="text-loud flex items-center gap-1.5 flex-wrap">
                         <UserCheck
-                          className="w-4 h-4 text-accent"
+                          className="w-4 h-4 text-accent shrink-0"
                           strokeWidth={1.5}
                         />
-                        {request.Host?.full_name || request.host_name || "N/A"}
+                        <span>{request.Host?.full_name || request.host_name || "N/A"}</span>
+                        {request.my_role === 'HOST' && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300 border border-blue-300/50">
+                            You (Host)
+                          </span>
+                        )}
                       </div>
                       <div className="text-sm text-muted mt-1 pl-5.5">
                         {request.Department?.name ||
@@ -244,15 +312,17 @@ export default function RequestList() {
                     </td>
                     <td className="py-4 px-4 text-right">
                       <div className="flex justify-end gap-2">
-                        {canViewPass && request.status === "APPROVED" &&
+                        {(canViewPass || request.my_role === 'VISITOR' || user?.role_type === 'employee') &&
+                          request.status === "APPROVED" &&
                           request.pass_number && (
                             <button
                               onClick={() =>
                                 navigate(`/gate/pass/${request.pass_number}`)
                               }
-                              className="inline-flex items-center justify-center px-3 h-8 rounded-full bg-mixed-bg text-accent hover:bg-accent hover:text-white transition-colors duration-300 text-xs font-semibold uppercase tracking-wider"
+                              className="inline-flex items-center gap-1 justify-center px-3 h-8 rounded-full bg-mixed-bg text-accent hover:bg-accent hover:text-white transition-colors duration-300 text-xs font-semibold uppercase tracking-wider"
                               title="View Gate Pass"
                             >
+                              <QrCode className="w-3.5 h-3.5" />
                               Pass
                             </button>
                           )}

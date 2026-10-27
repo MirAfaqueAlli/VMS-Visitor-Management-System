@@ -223,6 +223,56 @@ const visitApprovedStaffTemplate = (staffName, visitorName, approverName, visitD
 };
 
 /**
+ * Template: Confirmation sent to employee who was hosted as a visitor by another employee.
+ */
+const employeeHostedVisitTemplate = (visitorName, hostName, visitDate, orgName = '', passNumber = null, qrCodeUrl = null, visitTime = null) => {
+  const displayDateTime = formatDateTime(visitDate, visitTime);
+  const subject = `[${process.env.APP_NAME || 'VMS'}] You have been hosted for a visit by ${hostName}`;
+
+  const gatePassSection = passNumber ? `
+        <div style="margin: 28px 0; padding: 20px; background: #f0faf5; border: 2px solid #0f9d58; border-radius: 8px; text-align: center;">
+          <h3 style="color: #0f9d58; margin: 0 0 8px 0;">🎫 Your Gate Pass</h3>
+          <p style="font-size: 22px; font-weight: bold; color: #1a1a1a; margin: 0 0 4px 0; letter-spacing: 2px;">${escapeHtml(passNumber)}</p>
+          <p style="color: #555; font-size: 13px; margin: 0 0 16px 0;">Show this pass or QR code to security at the gate</p>
+          ${qrCodeUrl ? `<img src="${escapeHtml(qrCodeUrl)}" alt="Gate Pass QR Code" style="width: 160px; height: 160px; display: block; margin: 0 auto;" />` : ''}
+        </div>` : '';
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9f9f9; border-radius: 8px; overflow: hidden;">
+      <div style="background: #0f9d58; padding: 24px 32px;">
+        <h1 style="color: #fff; margin: 0; font-size: 20px;">${process.env.APP_NAME || 'Visitor Management System'}</h1>
+      </div>
+      <div style="padding: 32px; background: #fff;">
+        <h2 style="color: #0f9d58; margin-top: 0;">🎫 You Have Been Hosted for a Visit!</h2>
+        <p style="color: #555;">Hello <strong>${escapeHtml(visitorName)}</strong>,</p>
+        <p style="color: #555;"><strong>${escapeHtml(hostName)}</strong> has hosted you as a visitor for an upcoming visit. Your visit request is confirmed and your gate pass has been generated.</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+          <tr style="background: #f1f3f4;">
+            <td style="padding: 12px; font-weight: bold; color: #333; width: 35%;">Hosted By</td>
+            <td style="padding: 12px; color: #555;">${escapeHtml(hostName)}</td>
+          </tr>
+          <tr>
+            <td style="padding: 12px; font-weight: bold; color: #333;">Visit Date & Time</td>
+            <td style="padding: 12px; color: #555;">${escapeHtml(displayDateTime)}</td>
+          </tr>
+          ${orgName ? `
+          <tr style="background: #f1f3f4;">
+            <td style="padding: 12px; font-weight: bold; color: #333;">Unit / Location</td>
+            <td style="padding: 12px; color: #555;">${escapeHtml(orgName)}</td>
+          </tr>` : ''}
+        </table>
+        ${gatePassSection}
+        <p style="color: #555;">Please present your gate pass to security when you arrive at the gate.</p>
+      </div>
+      <div style="padding: 16px 32px; background: #f1f3f4; text-align: center;">
+        <p style="color: #999; font-size: 12px; margin: 0;">This is an automated message. Please do not reply directly.</p>
+      </div>
+    </div>
+  `;
+  return { subject, html };
+};
+
+/**
  * Template: Rejection notice sent to visitor.
  */
 const visitRejectedTemplate = (visitorName, hostName, visitDate, reason, visitTime = null) => {
@@ -437,6 +487,7 @@ module.exports = {
   visitRequestTemplate,
   visitApprovedTemplate,
   visitApprovedStaffTemplate,
+  employeeHostedVisitTemplate,
   visitRejectedTemplate,
   otpTemplate,
 };

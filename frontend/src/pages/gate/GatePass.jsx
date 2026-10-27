@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { Printer, ArrowLeft, ShieldCheck } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
@@ -8,13 +8,16 @@ import BrandLogo from '../../components/BrandLogo';
 export default function GatePass() {
  const { passNumber } = useParams();
  const navigate = useNavigate();
+ // ?unit_id= when the pass belongs to another unit (an employee hosted there)
+ const [searchParams] = useSearchParams();
+ const unitId = searchParams.get("unit_id");
  const [passData, setPassData] = useState(null);
  const [loading, setLoading] = useState(true);
 
  useEffect(() => {
  const fetchPass = async () => {
  try {
- const response = await apiClient.get(`/passes/pass/${passNumber}`);
+ const response = await apiClient.get(`/passes/pass/${passNumber}`, { params: unitId ? { unit_id: unitId } : undefined });
  setPassData(response.data.data);
  } catch (error) {
  toast.error("Failed to load gate pass");
@@ -24,7 +27,7 @@ export default function GatePass() {
  }
  };
  fetchPass();
- }, [passNumber, navigate]);
+ }, [passNumber, unitId, navigate]);
 
  if (loading) {
  return (

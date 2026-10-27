@@ -53,15 +53,19 @@ export default function NotificationManager() {
     notify(title, body, makeOpts('visit-request-new', '/approvals'));
   }, [notify]), [notify]);
 
-  // ── Request approved ────────────────────────────────────────────────────
-  // Received by: employee who initiated the visit (or security for SPOT)
+  // ── Request approved or hosted ──────────────────────────────────────────
+  // Received by: employee who initiated the visit (or employee who was hosted, or security for SPOT)
   useSocketEvent('visit:approved', useCallback((data) => {
-    const isSpot = data.visit_category === 'SPOT';
-    const title  = isSpot ? '✅ Spot Visit Approved' : '✅ Visit Approved';
-    const body   = isSpot
-      ? `The spot visit you initiated has been approved${data.approved_by ? ` by ${data.approved_by}` : ''}.`
-      : `Your visit on ${data.visit_date ?? ''} has been approved${data.approved_by ? ` by ${data.approved_by}` : ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`;
-    notify(title, body, makeOpts('visit-approved', requestLink(data)));
+    const isSpot   = data.visit_category === 'SPOT';
+    const isHosted = data.is_hosted;
+    const title  = isHosted ? '🎫 You Were Hosted for a Visit' : isSpot ? '✅ Spot Visit Approved' : '✅ Visit Approved';
+    const body   = isHosted
+      ? `${data.approved_by || data.host_name || 'A colleague'} has hosted you as a visitor for a visit on ${data.visit_date ?? ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`
+      : isSpot
+        ? `The spot visit you initiated has been approved${data.approved_by ? ` by ${data.approved_by}` : ''}.`
+        : `Your visit on ${data.visit_date ?? ''} has been approved${data.approved_by ? ` by ${data.approved_by}` : ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`;
+    const targetUrl = data.pass_number ? `/passes/pass/${data.pass_number}` : requestLink(data);
+    notify(title, body, makeOpts('visit-approved', targetUrl));
   }, [notify]), [notify]);
 
   // ── Request rejected ────────────────────────────────────────────────────

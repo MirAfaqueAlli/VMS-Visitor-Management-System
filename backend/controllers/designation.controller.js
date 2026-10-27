@@ -58,20 +58,25 @@ const bulkCreateDesignations = async (req, res) => {
       const name = rawName.trim();
       if (!name) continue;
 
-      try {
-        const [result] = await req.db.query(
-          `INSERT INTO designations (department_id, name, is_active, created_at, updated_at)
-           VALUES (?, ?, 1, NOW(), NOW())`,
-          [department_id, name]
-        );
-        created.push({ id: result.insertId, name, department_id });
-      } catch (insertErr) {
-        if (insertErr.code === 'ER_DUP_ENTRY') {
-          skipped.push(name); // already exists — skip
-        } else {
-          throw insertErr;
-        }
+      // The table has no unique key on (department_id, name), so match by name
+      // (case-insensitive): an active one is a duplicate, a removed one is restored
+      const [[existing]] = await req.db.query(
+        'SELECT id, is_active FROM designations WHERE department_id = ? AND LOWER(name) = LOWER(?) ORDER BY is_active DESC LIMIT 1',
+        [department_id, name]
+      );
+      if (existing?.is_active) { skipped.push(name); continue; }
+      if (existing) {
+        await req.db.query('UPDATE designations SET is_active = 1, updated_at = NOW() WHERE id = ?', [existing.id]);
+        created.push({ id: existing.id, name, department_id });
+        continue;
       }
+
+      const [result] = await req.db.query(
+        `INSERT INTO designations (department_id, name, is_active, created_at, updated_at)
+         VALUES (?, ?, 1, NOW(), NOW())`,
+        [department_id, name]
+      );
+      created.push({ id: result.insertId, name, department_id });
     }
 
     await logAudit({

@@ -215,9 +215,10 @@ export default function Sidebar({ isOpen, onClose }) {
         ) : (
           <>
             <SectionLabel>Main Menu</SectionLabel>
-            {unitNavItems.map(({ label, icon, path, roles }) => {
+            {unitNavItems.map(({ label, icon, path, roles, end }) => {
               if (roles && !hasRole(...roles)) return null;
-              return <NavItem key={path} label={label} icon={icon} path={path} onClick={onClose} />;
+              // `end`: /admin (User Management) must not also light up on /admin/departments
+              return <NavItem key={path} label={label} icon={icon} path={path} end={end} onClick={onClose} />;
             })}
             {isUnitAdmin && (
               <>

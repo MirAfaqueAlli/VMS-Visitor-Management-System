@@ -9,7 +9,6 @@ import {
   Check,
   X,
   Plus,
-  UserPlus,
   ClipboardList,
   Activity,
   Users,
@@ -335,7 +334,7 @@ function SecurityDashboard() {
             Gate <em className="italic">Actions</em>
           </h2>
           <p className="text-faint text-sm mt-1">
-            Register a visitor or log a walk-in instantly.
+            Log a walk-in visit instantly.
           </p>
         </div>
         <div className="flex gap-3 flex-wrap">
@@ -345,13 +344,6 @@ function SecurityDashboard() {
           >
             <Plus strokeWidth={1.5} size={15} />
             Spot Walk-in
-          </button>
-          <button
-            onClick={() => navigate("/visitors/new")}
-            className="btn-secondary text-accent text-sm uppercase tracking-widest hover:bg-mixed-bg transition-colors duration-300 flex items-center gap-2"
-          >
-            <UserPlus strokeWidth={1.5} size={15} />
-            New Visitor
           </button>
         </div>
       </div>

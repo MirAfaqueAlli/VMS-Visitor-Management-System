@@ -1,5 +1,5 @@
 // frontend/src/components/Layout/Navbar.jsx
-import { Bell, Check, X, ClipboardList, ChevronRight, Clock, Menu, Sun, Moon, BellOff } from 'lucide-react';
+import { Bell, Check, X, ClipboardList, ChevronRight, Clock, Menu, Sun, Moon, BellOff, CheckCircle } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import apiClient from '../../api/axios';
@@ -13,6 +13,8 @@ import useWebNotification from '../../hooks/useWebNotification';
 // Roles that have an approvals inbox (same as the /approvals route guard in App.jsx).
 // The bell only shows that inbox, so other roles don't get a bell at all.
 const APPROVER_ROLES = ['unit_admin', 'employee'];
+// Central users live outside the unit DBs, so they have no unit notifications
+const CENTRAL_ROLES  = ['super_admin', 'global_auditor'];
 
 const PAGE_NAMES = {
   '/dashboard':    'Dashboard',
@@ -42,7 +44,7 @@ function fmtDate(d) {
 }
 
 /* ── Notification Panel ─────────────────────────────────────────────────── */
-function NotificationPanel({ notifications, loading, onAction, onClose, navigate }) {
+function NotificationPanel({ notifications, loading, onAction, onClose, navigate, canApprove }) {
   const [activeAction, setActiveAction] = useState(null); // { id, mode, remarks }
 
   const startAction = (id, mode) => setActiveAction({ id, mode, remarks: '' });
@@ -96,12 +98,14 @@ function NotificationPanel({ notifications, loading, onAction, onClose, navigate
             </span>
           )}
         </div>
-        <button
-          onClick={() => { navigate('/approvals'); onClose(); }}
-          style={{ fontSize: '11px', color: 'var(--color-accent)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-        >
-          View All <ChevronRight size={11} />
-        </button>
+        {canApprove && (
+          <button
+            onClick={() => { navigate('/approvals'); onClose(); }}
+            style={{ fontSize: '11px', color: 'var(--color-accent)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+          >
+            View All <ChevronRight size={11} />
+          </button>
+        )}
       </div>
 
       {/* Body */}
@@ -159,29 +163,77 @@ function NotificationPanel({ notifications, loading, onAction, onClose, navigate
                     <div
                       style={{
                         width: '32px', height: '32px', borderRadius: '8px', flexShrink: 0,
-                        background: 'rgba(26,115,233,0.12)',
+                        background: n.is_informational ? 'rgba(34,197,94,0.12)' : 'rgba(26,115,233,0.12)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                       }}
                     >
-                      <ClipboardList size={14} strokeWidth={1.8} style={{ color: 'var(--color-accent)' }} />
+                      {n.is_informational ? (
+                        <CheckCircle size={14} strokeWidth={2} style={{ color: '#22c55e' }} />
+                      ) : (
+                        <ClipboardList size={14} strokeWidth={1.8} style={{ color: 'var(--color-accent)' }} />
+                      )}
                     </div>
 
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text)', marginBottom: '2px', lineHeight: 1.3 }}>
-                        Approval Request
+                        {n.is_hosted ? 'Hosted Visit' : n.is_informational ? (n.title || 'Visit Notification') : 'Approval Request'}
                       </p>
                       <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', lineHeight: 1.4, marginBottom: '4px' }}>
-                        <strong>{n.visitor_name ?? 'Visitor'}</strong>
-                        {n.company_name ? ` · ${n.company_name}` : ''}
+                        {n.is_hosted ? (
+                          <span>Hosted by <strong>{n.visitor_name}</strong></span>
+                        ) : (
+                          <>
+                            <strong>{n.visitor_name ?? 'Visitor'}</strong>
+                            {n.company_name ? ` · ${n.company_name}` : ''}
+                          </>
+                        )}
                       </p>
+                      {n.message && n.is_informational && (
+                        <p style={{ fontSize: '11px', color: 'var(--color-text)', marginBottom: '4px', lineHeight: 1.3 }}>
+                          {n.message}
+                        </p>
+                      )}
                       <p style={{ fontSize: '11px', color: 'var(--color-text-faint)' }}>
                         {CATEGORY_LABELS[n.visit_category] ?? n.visit_category}
                         {n.visit_date ? ` · ${fmtDate(n.visit_date)}` : ''}
                         {n.visit_start_time ? ` at ${n.visit_start_time}` : ''}
                       </p>
+                      {n.pass_number && (
+                        <p style={{ fontSize: '11px', color: 'var(--color-accent)', fontWeight: 600, marginTop: '2px' }}>
+                          🎫 Gate Pass: {n.pass_number}
+                        </p>
+                      )}
 
-                      {/* Inline approve / reject */}
-                      {isActive ? (
+                      {/* Action buttons */}
+                      {n.is_informational ? (
+                        <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
+                          {n.pass_number ? (
+                            <button
+                              onClick={() => { navigate(`/passes/pass/${n.pass_number}${n.cross_unit_id ? `?unit_id=${n.cross_unit_id}` : ''}`); onClose(); }}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+                                padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', border: 'none',
+                                background: 'var(--color-accent)', color: '#fff',
+                              }}
+                            >
+                              View Gate Pass
+                            </button>
+                          ) : n.visit_request_id ? (
+                            <button
+                              onClick={() => { navigate(`/requests/${n.visit_request_id}${n.cross_unit_id ? `?unit_id=${n.cross_unit_id}` : ''}`); onClose(); }}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+                                padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', border: 'none',
+                                background: 'var(--color-accent)', color: '#fff',
+                              }}
+                            >
+                              View Details
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : isActive ? (
                         <div style={{ marginTop: '8px' }}>
                           <textarea
                             rows={2}
@@ -275,8 +327,8 @@ function NotificationPanel({ notifications, loading, onAction, onClose, navigate
         )}
       </div>
 
-      {/* Footer */}
-      {notifications.length > 0 && (
+      {/* Footer — the Approvals page exists only for approvers */}
+      {canApprove && notifications.length > 0 && (
         <div
           style={{
             padding: '10px 16px',
@@ -312,30 +364,68 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
   const [panelOpen,      setPanelOpen]      = useState(false);
   const [panelLoading,   setPanelLoading]   = useState(false);
 
-  const canApprove = APPROVER_ROLES.includes(user?.role_type || user?.role);
+  const role       = user?.role_type || user?.role;
+  const canApprove = APPROVER_ROLES.includes(role);
+  const hasBell    = !CENTRAL_ROLES.includes(role);   // central users have no unit notifications
+
+  // Informational notifications have no read flag in the DB, so the badge counts
+  // only those newer than the last time this user opened the panel
+  const seenKey  = `vms_notif_seen_${user?.unit_db}_${user?.id}`;
+  const markSeen = () => { try { localStorage.setItem(seenKey, String(Date.now())); } catch { /* storage blocked */ } };
 
   const prevCountRef  = useRef(0);
   const bellRef       = useRef(null);
   const panelRef      = useRef(null);
 
-  /* ── Fetch inbox ─────────────────────────────────────────────────────── */
+  /* ── Fetch inbox & notifications ─────────────────────────────────────── */
   const fetchInbox = useCallback(async (showLoading = false) => {
-    if (!canApprove) return;
-
+    if (!hasBell) return;
     if (showLoading) setPanelLoading(true);
     try {
-      const res   = await apiClient.get('/approvals/inbox');
-      // Inbox is now paginated — response shape: { items: [], pagination: {} }
-      const items = res.data?.data?.items ?? res.data?.data ?? [];
-      if (items.length > prevCountRef.current) {
-        toast.success('New visit request waiting for your approval!', { icon: '🔔', duration: 5000 });
+      const promises = [apiClient.get('/approvals/notifications').catch(() => ({ data: { data: [] } }))];
+      if (canApprove) {
+        promises.push(apiClient.get('/approvals/inbox').catch(() => ({ data: { data: { items: [] } } })));
       }
-      prevCountRef.current = items.length;
-      setNotifCount(items.length);
-      setNotifications(items);
+      const results = await Promise.allSettled(promises);
+      let notifList = [];
+      let inboxList = [];
+
+      if (results[0].status === 'fulfilled') {
+        const rawNotifs = results[0].value.data?.data ?? [];
+        notifList = rawNotifs.map(n => ({
+          id: `notif-${n.id}`,
+          visit_request_id: n.visit_request_id,
+          is_hosted: n.message?.toLowerCase().includes('hosted you'),
+          is_informational: true,
+          action: 'APPROVED',
+          title: n.message?.toLowerCase().includes('hosted you') ? 'Hosted as Visitor' : 'Visit Notification',
+          visitor_name: n.subject || (n.message?.toLowerCase().includes('hosted you') ? 'Host' : 'VMS'),
+          visit_category: n.visit_category || 'EMPLOYEE_VISIT',
+          visit_date: n.visit_date,
+          visit_start_time: n.visit_start_time,
+          pass_number: n.pass_number,
+          message: n.message,
+          assigned_at: n.created_at,
+        }));
+      }
+
+      if (canApprove && results[1]?.status === 'fulfilled') {
+        inboxList = results[1].value.data?.data?.items ?? results[1].value.data?.data ?? [];
+        if (inboxList.length > prevCountRef.current) {
+          toast.success('New visit request waiting for your approval!', { icon: '🔔', duration: 5000 });
+        }
+        prevCountRef.current = inboxList.length;
+      }
+
+      let seenAt = 0;
+      try { seenAt = Number(localStorage.getItem(seenKey)) || 0; } catch { /* storage blocked */ }
+      const unseen = notifList.filter(n => new Date(n.assigned_at).getTime() > seenAt).length;
+
+      setNotifCount(inboxList.length + unseen);
+      setNotifications([...inboxList, ...notifList]);
     } catch { /* silent */ }
     finally { if (showLoading) setPanelLoading(false); }
-  }, [canApprove]);
+  }, [canApprove, hasBell, seenKey]);
 
   /* Initial load only — socket keeps it live after that */
   useEffect(() => {
@@ -355,13 +445,17 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
     });
   }, []);
 
-  /* Socket: my request was APPROVED — notify the requester (Employee A) */
+  /* Socket: my request was APPROVED or I was HOSTED — notify the user */
   useSocketEvent('visit:approved', (data) => {
-    const by   = data.approved_by  ? ` by ${data.approved_by}`  : '';
+    const by   = data.approved_by || data.host_name ? ` by ${data.approved_by || data.host_name}` : '';
     const date = data.visit_date   ? ` on ${data.visit_date}`   : '';
     const pass = data.pass_number  ? ` · Gate Pass: ${data.pass_number}` : '';
+    const msg  = data.is_hosted
+      ? `🎫 ${data.approved_by || data.host_name || 'A colleague'} hosted you as a visitor${date}.${pass}`
+      : `✅ Your visit request${date} was approved${by}.${pass}`;
+
     toast.success(
-      `✅ Your visit request${date} was approved${by}.${pass}`,
+      msg,
       {
         duration: 10000,
         style: {
@@ -375,10 +469,33 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
           padding: '14px 16px',
           cursor: 'pointer',
         },
-        icon: '✅',
-        id: `approved-${data.visit_request_id}`,
+        icon: data.is_hosted ? '🎫' : '✅',
+        id: `approved-${data.visit_request_id || Date.now()}`,
       }
     );
+
+    // Push into notifications panel
+    setNotifications(prev => {
+      const nid = data.visit_request_id ?? Date.now();
+      if (prev.some(n => (n.visit_request_id ?? n.id) === nid)) return prev;
+      return [{
+        id: `socket-${nid}`,
+        visit_request_id: data.visit_request_id,
+        is_hosted: data.is_hosted,
+        is_informational: true,
+        action: 'APPROVED',
+        title: data.is_hosted ? 'Hosted as Visitor' : 'Visit Approved',
+        visitor_name: data.host_name || data.approved_by || 'Host',
+        visit_category: data.visit_category || 'EMPLOYEE_VISIT',
+        visit_date: data.visit_date,
+        visit_start_time: data.visit_start_time,
+        pass_number: data.pass_number,
+        cross_unit_id: data.cross_unit_id ?? null,   // request lives in another unit's DB
+        message: data.message || msg,
+        assigned_at: new Date().toISOString(),
+      }, ...prev];
+    });
+    setNotifCount(prev => prev + 1);
   }, []);
 
   /* Socket: my request was REJECTED — notify the requester (Employee A) */
@@ -466,7 +583,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
   const togglePanel = () => {
     const next = !panelOpen;
     setPanelOpen(next);
-    if (next) fetchInbox(true);
+    if (next) { markSeen(); fetchInbox(true); }
   };
 
   /* ── Page title ───────────────────────────────────────────────────────── */
@@ -585,7 +702,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
         </button>
 
         {/* Bell button + dropdown wrapper — position:relative so the panel stays within viewport */}
-        {canApprove && (
+        {hasBell && (
         <div style={{ position: 'relative' }}>
           <button
             ref={bellRef}
@@ -628,6 +745,7 @@ export default function Navbar({ onMenuToggle, onBannerChange }) {
                 onAction={handleAction}
                 onClose={() => setPanelOpen(false)}
                 navigate={navigate}
+                canApprove={canApprove}
               />
             </div>
           )}

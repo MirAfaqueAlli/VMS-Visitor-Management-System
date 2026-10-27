@@ -1,6 +1,6 @@
 // frontend/src/pages/super/UnitManagement.jsx
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Building2, Users, Layers, CheckCircle, AlertCircle, Globe, Search } from 'lucide-react';
+import { Plus, X, Building2, Users, Layers, CheckCircle, AlertCircle, Globe, Search, Power, RotateCcw, Ban } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
@@ -17,6 +17,9 @@ const EMPTY_ADMIN = {
   full_name: '', email: '', phone: '', password: '', employee_code: '',
 };
 
+/** Suggested employee code for a unit's first admin, e.g. unit H1 → H1-ADM-001. */
+const defaultAdminCode = (unitCode) => (unitCode ? `${unitCode}-ADM-001` : '');
+
 const STATUS_COLORS = {
   ACTIVE:       { bg: '#f0fdf4', text: '#15803d', dot: '#22c55e' },
   PROVISIONING: { bg: '#fefce8', text: '#a16207', dot: '#eab308' },
@@ -32,12 +35,19 @@ export default function UnitManagement() {
   const [unitForm,     setUnitForm]     = useState(EMPTY_UNIT);
   const [adminForm,    setAdminForm]    = useState(EMPTY_ADMIN);
   const [includeAdmin, setIncludeAdmin] = useState(true);
+  // false → the admin's employee code follows the unit code; true once typed by hand
+  const [empCodeEdited, setEmpCodeEdited] = useState(false);
   const [search,       setSearch]       = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page,         setPage]         = useState(1);
   const [totalPages,   setTotalPages]   = useState(1);
   const [totalCount,   setTotalCount]   = useState(0);
   const limit = 10;
+
+  // Deactivate / reactivate confirmation: { unit, action: 'deactivate' | 'reactivate' }
+  const [statusChange, setStatusChange] = useState(null);
+  const [confirmCode,  setConfirmCode]  = useState('');
+  const [changing,     setChanging]     = useState(false);
 
   // Debounce search
   useEffect(() => {
@@ -51,6 +61,27 @@ export default function UnitManagement() {
   const handleManageUnit = (unit) => {
     setActiveUnit({ id: unit.id, name: unit.name, db_name: unit.db_name });
     toast.success(`Switched to: ${unit.name}`);
+  };
+
+  const openStatusChange = (unit, action) => { setConfirmCode(''); setStatusChange({ unit, action }); };
+
+  const handleStatusChange = async () => {
+    const { unit, action } = statusChange;
+    setChanging(true);
+    try {
+      if (action === 'deactivate') {
+        await apiClient.delete(`/units/${unit.id}`);
+        if (activeUnit?.id === unit.id) setActiveUnit(null);   // stop managing a closed unit
+        toast.success(`${unit.name} has been deactivated.`);
+      } else {
+        await apiClient.post(`/units/${unit.id}/reactivate`);
+        toast.success(`${unit.name} is active again.`);
+      }
+      setStatusChange(null);
+      fetchUnits();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, `Failed to ${action} the unit.`));
+    } finally { setChanging(false); }
   };
 
   const fetchUnits = useCallback(async () => {
@@ -73,6 +104,7 @@ export default function UnitManagement() {
     setUnitForm(EMPTY_UNIT);
     setAdminForm(EMPTY_ADMIN);
     setIncludeAdmin(true);
+    setEmpCodeEdited(false);
     setIsOpen(true);
   };
   const close = () => setIsOpen(false);
@@ -137,11 +169,12 @@ export default function UnitManagement() {
         </div>
 
         {/* Stats row */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
             { label: 'Total Units',  value: totalCount,                                          icon: Building2,    color: 'var(--color-text-loud)' },
             { label: 'Active',       value: units.filter(u => u.db_status === 'ACTIVE').length,  icon: CheckCircle,  color: '#22c55e' },
-            { label: 'Provisioning', value: units.filter(u => u.db_status !== 'ACTIVE').length,  icon: AlertCircle,  color: '#eab308' },
+            { label: 'Deactivated',  value: units.filter(u => u.db_status === 'SUSPENDED').length, icon: Ban,        color: '#ef4444' },
+            { label: 'Provisioning', value: units.filter(u => !['ACTIVE', 'SUSPENDED'].includes(u.db_status)).length, icon: AlertCircle, color: '#eab308' },
           ].map(({ label, value, icon: Icon, color }) => (
             <div key={label} className="vms-card p-4 flex items-center gap-3">
               <div className="w-9 h-9 rounded flex items-start justify-center" >
@@ -224,7 +257,7 @@ export default function UnitManagement() {
                       style={{ background: sc.bg, color: sc.text }}
                     >
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: sc.dot }} />
-                      {unit.db_status}
+                      {unit.db_status === 'SUSPENDED' ? 'DEACTIVATED' : unit.db_status}
                     </span>
                   </div>
 
@@ -257,10 +290,25 @@ export default function UnitManagement() {
                           {activeUnit?.id === unit.id ? 'Managing' : 'Manage'}
                         </button>
                       )}
-                      {unit.db_status === 'ACTIVE'
-                        ? <CheckCircle size={12} style={{ color: '#22c55e' }} />
-                        : <AlertCircle size={12} style={{ color: '#ef4444' }} />
-                      }
+                      {unit.db_status === 'ACTIVE' ? (
+                        <button
+                          onClick={() => openStatusChange(unit, 'deactivate')}
+                          title="Deactivate unit"
+                          className="px-2 py-0.5 text-[10px] font-semibold rounded transition-all flex items-center gap-1 bg-red-500/10 text-red-600 border border-red-500/20 hover:bg-red-500 hover:text-white"
+                        >
+                          <Power size={10} /> Deactivate
+                        </button>
+                      ) : unit.db_status === 'SUSPENDED' ? (
+                        <button
+                          onClick={() => openStatusChange(unit, 'reactivate')}
+                          title="Reactivate unit"
+                          className="px-2 py-0.5 text-[10px] font-semibold rounded transition-all flex items-center gap-1 bg-green-500/10 text-green-600 border border-green-500/20 hover:bg-green-500 hover:text-white"
+                        >
+                          <RotateCcw size={10} /> Reactivate
+                        </button>
+                      ) : (
+                        <AlertCircle size={12} style={{ color: '#eab308' }} />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -278,6 +326,67 @@ export default function UnitManagement() {
         )}
       </div>
 
+      {/* Deactivate / reactivate confirmation */}
+      {statusChange && (() => {
+        const { unit, action } = statusChange;
+        const deactivating = action === 'deactivate';
+        const codeOk = !deactivating || confirmCode.trim().toUpperCase() === String(unit.code).toUpperCase();
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }}
+            onClick={() => !changing && setStatusChange(null)}>
+            <div role="dialog" aria-modal="true" aria-labelledby="unit-status-title"
+              className="vms-card w-full max-w-md p-6 animate-fade-in" onClick={e => e.stopPropagation()}>
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ background: deactivating ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)' }}>
+                  {deactivating ? <Power size={18} style={{ color: '#ef4444' }} /> : <RotateCcw size={18} style={{ color: '#22c55e' }} />}
+                </div>
+                <div className="min-w-0">
+                  <h2 id="unit-status-title" className="text-[15px] font-bold" style={{ color: 'var(--color-text)' }}>
+                    {deactivating ? 'Deactivate' : 'Reactivate'} {unit.name}?
+                  </h2>
+                  <p className="font-mono text-[11px]" style={{ color: 'var(--color-text-faint)' }}>{unit.code}</p>
+                </div>
+              </div>
+
+              {deactivating ? (
+                <ul className="mt-4 space-y-1.5 text-[12.5px] list-disc pl-5" style={{ color: 'var(--color-text-muted)' }}>
+                  <li>All {unit.user_count ?? 0} user(s) of this unit are signed out and can no longer sign in.</li>
+                  <li>The unit disappears from the sign-in page and the public visitor form.</li>
+                  <li><strong>Nothing is deleted.</strong> Visit records, gate passes and audit logs are kept for reports and archiving, and you can reactivate the unit at any time.</li>
+                </ul>
+              ) : (
+                <p className="mt-4 text-[12.5px]" style={{ color: 'var(--color-text-muted)' }}>
+                  The unit&apos;s users can sign in again, and it reappears on the sign-in page and the public visitor form. All its existing data is still there.
+                </p>
+              )}
+
+              {deactivating && (
+                <div className="mt-4">
+                  <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>
+                    Type the unit code <span className="font-mono" style={{ color: 'var(--color-text)' }}>{unit.code}</span> to confirm
+                  </label>
+                  <input className={`${inputCls} font-mono uppercase`} value={confirmCode} autoFocus
+                    onChange={e => setConfirmCode(e.target.value)} placeholder={unit.code} />
+                </div>
+              )}
+
+              <div className="flex gap-3 mt-6">
+                <button className="btn-secondary flex-1" onClick={() => setStatusChange(null)} disabled={changing}>Cancel</button>
+                <button
+                  className="btn-primary flex-1"
+                  onClick={handleStatusChange}
+                  disabled={changing || !codeOk}
+                  style={deactivating ? { background: '#dc2626', borderColor: '#dc2626' } : undefined}
+                >
+                  {changing ? 'Please wait…' : deactivating ? 'Deactivate unit' : 'Reactivate unit'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Backdrop — outside page div so it covers the full viewport */}
       {isOpen && (
         <div
@@ -292,7 +401,7 @@ export default function UnitManagement() {
         className="fixed right-0 top-0 h-full z-50 flex flex-col"
         style={{
           width: 'min(600px, 100vw)',
-          background: 'var(--color-bg-secondary)',
+          background: 'var(--color-bg-primary)',   // fields are bg-secondary, so they stand out
           borderLeft: '1px solid var(--color-border)',
           boxShadow: isOpen ? '-8px 0 32px rgba(0,0,0,0.15)' : 'none',
           transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
@@ -340,7 +449,11 @@ export default function UnitManagement() {
                   <input
                     className={`${inputCls} font-mono`}
                     value={unitForm.code}
-                    onChange={e => setUnitForm(f => ({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '') }))}
+                    onChange={e => {
+                      const code = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+                      setUnitForm(f => ({ ...f, code }));
+                      if (!empCodeEdited) setAdminForm(f => ({ ...f, employee_code: defaultAdminCode(code) }));
+                    }}
                     placeholder="e.g. HQ"
                   />
                 </div>
@@ -408,7 +521,13 @@ export default function UnitManagement() {
                   </div>
                   <div>
                     <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Employee Code *</label>
-                    <input className={`${inputCls} font-mono`} value={adminForm.employee_code} onChange={setAdmin('employee_code')} placeholder="HQ-ADM-001" required={includeAdmin} />
+                    <input className={`${inputCls} font-mono`} value={adminForm.employee_code}
+                      onChange={e => {
+                        const value = e.target.value;
+                        setAdminForm(f => ({ ...f, employee_code: value }));
+                        setEmpCodeEdited(value.trim() !== '');   // cleared → follow the unit code again
+                      }}
+                      placeholder={defaultAdminCode(unitForm.code) || 'HQ-ADM-001'} required={includeAdmin} />
                   </div>
                 </div>
                 <div>

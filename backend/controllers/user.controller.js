@@ -330,6 +330,11 @@ const updateUser = async (req, res) => {
 
     const targetUser = existing[0];
 
+    // Unit admins cannot edit their own details or unit admin details from user management
+    if (req.user.role_type === 'unit_admin' && (Number(id) === Number(req.user.id) || targetUser.role_type === 'unit_admin')) {
+      return sendError(res, 'Unit admins cannot edit their own details from user management.', 403);
+    }
+
     // Validate email format if provided
     if (email && email.trim()) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -440,4 +445,42 @@ const deactivateUser = async (req, res) => {
   }
 };
 
-module.exports = { listUsers, listHosts, getUserById, createUser, updateUser, deactivateUser };
+// ── Next employee code ────────────────────────────────────────────────────────
+// Middle part of a suggested code, by role: H1-EMP-003, H1-SEC-001, …
+const ROLE_CODE_PART = {
+  employee: 'EMP', security: 'SEC', receptionist: 'REC', unit_auditor: 'AUD', unit_admin: 'ADM',
+};
+
+/**
+ * GET /api/users/next-employee-code?role_type=employee
+ * Suggests the next free code for a new user: <UNIT CODE>-<ROLE>-<NNN>. Only a
+ * suggestion — employee_code stays editable, and its UNIQUE key still applies.
+ */
+const getNextEmployeeCode = async (req, res) => {
+  try {
+    const part = ROLE_CODE_PART[req.query.role_type] || 'EMP';
+
+    // The unit this request is for: a unit admin's own, or the one a super admin manages
+    const unitDb = req.unitDbName || req.user.unit_db;
+    const [[unit]] = await centralPool.query('SELECT code FROM units WHERE db_name = ? LIMIT 1', [unitDb]);
+    if (!unit) return sendError(res, 'Select a unit first.', 400);
+
+    const prefix = `${unit.code}-${part}-`;
+    // Deleted users count too: the UNIQUE key covers every row
+    const [rows] = await req.db.query(
+      'SELECT employee_code FROM users WHERE employee_code LIKE ?', [`${prefix.replace(/[\\%_]/g, '\\$&')}%`]   // _ and % are LIKE wildcards
+    );
+    const used = rows
+      .map(r => r.employee_code.slice(prefix.length))
+      .filter(rest => /^\d+$/.test(rest))
+      .map(Number);
+    const next = (used.length ? Math.max(...used) : 0) + 1;
+
+    return sendSuccess(res, { employee_code: `${prefix}${String(next).padStart(3, '0')}` });
+  } catch (err) {
+    console.error('[UserController] getNextEmployeeCode error:', err.message);
+    return sendError(res, 'Could not suggest an employee code.', 500);
+  }
+};
+
+module.exports = { listUsers, listHosts, getUserById, createUser, updateUser, deactivateUser, getNextEmployeeCode };

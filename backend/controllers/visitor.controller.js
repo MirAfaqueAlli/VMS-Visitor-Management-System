@@ -264,13 +264,12 @@ const liftBlacklist = async (req, res) => {
 const lookupVisitorByPhone = async (req, res) => {
   try {
     const { phone, unit_id } = req.query;
-    if (!phone || phone.trim().length < 5) {
-      return sendError(res, 'phone query param is required (min 5 digits).', 400);
+    const cleaned = (phone || '').trim().replace(/\D/g, '');
+    if (cleaned.length !== 10) {
+      return sendError(res, 'A valid 10-digit mobile number is required.', 400);
     }
 
-    // Normalize: strip non-digits, use last 10 for fuzzy match
-    const cleaned = phone.trim().replace(/\D/g, '');
-    const last10  = cleaned.length >= 10 ? cleaned.slice(-10) : cleaned;
+    const last10 = cleaned;
 
     // Resolve the correct DB pool.
     // super_admin tokens use the centralPool — fall back to unit DB via unit_id param.

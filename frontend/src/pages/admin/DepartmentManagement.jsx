@@ -1,6 +1,6 @@
 // frontend/src/pages/admin/DepartmentManagement.jsx
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Trash2, Tag } from 'lucide-react';
+import { Plus, X, Trash2, Tag, RotateCcw } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import { getApiErrorMessage } from '../../utils/apiError';
@@ -18,6 +18,10 @@ export default function DepartmentManagement() {
   const [form,       setForm]       = useState(EMPTY);
   const [saving,     setSaving]     = useState(false);
   const [desigInput, setDesigInput] = useState('');
+  // Edit only: the department's saved designations, and the ones marked for removal
+  const [existingDesigs, setExistingDesigs] = useState([]);
+  const [removedIds,     setRemovedIds]     = useState([]);
+  const [desigLoading,   setDesigLoading]   = useState(false);
   const [page,       setPage]       = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
@@ -38,25 +42,50 @@ export default function DepartmentManagement() {
 
   useEffect(() => { fetchDepts(); }, [fetchDepts]);
 
-  const openAdd  = () => { setEditDept(null); setForm(EMPTY); setDesigInput(''); setIsOpen(true); };
+  const openAdd  = () => {
+    setEditDept(null); setForm(EMPTY); setDesigInput('');
+    setExistingDesigs([]); setRemovedIds([]);
+    setIsOpen(true);
+  };
   const openEdit = (d) => {
     setEditDept(d);
     setForm({ name: d.name, code: d.code, description: d.description ?? '', designations: [] });
     setDesigInput('');
+    setExistingDesigs([]); setRemovedIds([]);
     setIsOpen(true);
+    setDesigLoading(true);
+    apiClient.get('/designations', { params: { department_id: d.id } })
+      .then(res => setExistingDesigs(res.data?.data ?? []))
+      .catch(() => toast.error('Could not load the designations.'))
+      .finally(() => setDesigLoading(false));
   };
   const close = () => { setIsOpen(false); setEditDept(null); };
 
   const handleChange = (e) => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
 
   // ── Designation tag input ──────────────────────────────────────────────────
+  const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+
   const addDesignation = () => {
     const val = desigInput.trim();
     if (!val) return;
-    if (form.designations.includes(val)) { toast.error(`"${val}" already added.`); return; }
+    // Re-adding a saved one that was marked for removal just keeps it
+    const removedMatch = existingDesigs.find(d => removedIds.includes(d.id) && sameName(d.name, val));
+    if (removedMatch) {
+      setRemovedIds(ids => ids.filter(id => id !== removedMatch.id));
+      setDesigInput('');
+      return;
+    }
+    const taken = form.designations.some(n => sameName(n, val))
+      || existingDesigs.some(d => !removedIds.includes(d.id) && sameName(d.name, val));
+    if (taken) { toast.error(`"${val}" already added.`); return; }
     setForm(f => ({ ...f, designations: [...f.designations, val] }));
     setDesigInput('');
   };
+
+  /** Marks a saved designation for removal on save (click again to keep it). */
+  const toggleRemoveExisting = (id) =>
+    setRemovedIds(ids => (ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]));
 
   const removeDesignation = (name) =>
     setForm(f => ({ ...f, designations: f.designations.filter(d => d !== name) }));
@@ -77,7 +106,27 @@ export default function DepartmentManagement() {
           code: form.code.toUpperCase(),
           description: form.description,
         });
-        toast.success('Department updated.');
+
+        // Designation changes: add the new ones, then remove the marked ones
+        // (a removal is refused while users still hold that designation)
+        const problems = [];
+        if (form.designations.length > 0) {
+          try {
+            await apiClient.post('/designations/bulk', { department_id: editDept.id, names: form.designations });
+          } catch (err) {
+            problems.push(getApiErrorMessage(err, 'New designations could not be added.'));
+          }
+        }
+        for (const id of removedIds) {
+          const name = existingDesigs.find(d => d.id === id)?.name ?? 'Designation';
+          try {
+            await apiClient.delete(`/designations/${id}`);
+          } catch (err) {
+            problems.push(`${name}: ${getApiErrorMessage(err, 'could not be removed.')}`);
+          }
+        }
+        if (problems.length) toast.error(`Department saved, but:\n${problems.join('\n')}`, { duration: 7000 });
+        else toast.success('Department updated.');
       } else {
         await apiClient.post('/departments', {
           name:         form.name,
@@ -258,7 +307,7 @@ export default function DepartmentManagement() {
               Department Name *
             </label>
             <input
-              className="w-full btn-secondary text-loud text-sm placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-border transition-all duration-300"
+              className="vms-input"
               name="name"
               value={form.name}
               onChange={handleChange}
@@ -272,7 +321,7 @@ export default function DepartmentManagement() {
               Code *
             </label>
             <input
-              className="w-full btn-secondary text-loud text-sm font-mono placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-border transition-all duration-300"
+              className="vms-input font-mono"
               name="code"
               value={form.code}
               onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))}
@@ -286,7 +335,7 @@ export default function DepartmentManagement() {
               Description
             </label>
             <textarea
-              className="w-full btn-secondary text-loud text-sm placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-border transition-all duration-300 resize-none"
+              className="vms-input resize-none"
               rows={3}
               name="description"
               value={form.description}
@@ -295,9 +344,8 @@ export default function DepartmentManagement() {
             />
           </div>
 
-          {/* Designations — only on Add */}
-          {!editDept && (
-            <div>
+          {/* Designations — on Add and on Edit */}
+          <div>
               <label className="block text-xs font-semibold text-muted uppercase tracking-widest mb-1">
                 Designations
               </label>
@@ -305,9 +353,43 @@ export default function DepartmentManagement() {
                 Type a designation and press{' '}
                 <kbd style={{ background: 'var(--color-border)', padding: '0 4px', borderRadius: 3, fontSize: 10 }}>Enter</kbd>
                 {' '}to add. Click a chip to remove.
+                {editDept && ' Changes are applied when you save.'}
               </p>
 
-              {/* Chips */}
+              {/* Saved designations (edit) — click to mark for removal, click again to keep */}
+              {editDept && (
+                desigLoading ? (
+                  <p className="text-[11px] mb-2" style={{ color: 'var(--color-text-faint)' }}>Loading designations…</p>
+                ) : existingDesigs.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {existingDesigs.map(d => {
+                      const removed = removedIds.includes(d.id);
+                      return (
+                        <span
+                          key={d.id}
+                          onClick={() => toggleRemoveExisting(d.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] cursor-pointer select-none transition-opacity hover:opacity-70"
+                          style={removed ? {
+                            background: 'var(--color-danger-bg, #fef2f2)', color: 'var(--color-error, #dc2626)',
+                            borderRadius: 'var(--radius-sm)', border: '1px dashed var(--color-error, #dc2626)',
+                            textDecoration: 'line-through',
+                          } : {
+                            background: 'var(--color-info-bg)', color: 'var(--color-info)',
+                            borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-info)',
+                          }}
+                          title={removed ? 'Will be removed on save — click to keep' : 'Click to remove'}
+                        >
+                          <Tag size={10} />
+                          {d.name}
+                          {removed ? <RotateCcw size={10} /> : <X size={10} />}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+
+              {/* New designations (not saved yet) */}
               {form.designations.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {form.designations.map(name => (
@@ -334,7 +416,7 @@ export default function DepartmentManagement() {
               {/* Input row */}
               <div className="flex gap-2">
                 <input
-                  className="flex-1 btn-secondary text-loud text-sm placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/30 transition-all duration-300"
+                  className="vms-input flex-1"
                   value={desigInput}
                   onChange={e => setDesigInput(e.target.value)}
                   onKeyDown={handleDesigKeyDown}
@@ -349,8 +431,7 @@ export default function DepartmentManagement() {
                   Add
                 </button>
               </div>
-            </div>
-          )}
+          </div>
         </div>
 
         {/* Footer */}

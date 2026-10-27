@@ -12,6 +12,7 @@ const { isSuperAdmin, isUnitAdmin, isEmployee, canViewFullIdNumbers } = require(
 const { emitToUser, emitToUnitSecurity } = require('../socket/socketManager');
 const { encryptField, decryptRows } = require('../utils/crypto.util');
 const { getSignedFileUrl }          = require('../utils/s3.util');
+const { gatePassMediaUrl }          = require('../services/whatsapp.service');
 
 // IST date helper (mirrors the one in approval.controller.js)
 const getISTDateString = (d = new Date()) =>
@@ -142,11 +143,12 @@ const getActiveUnitPool = async (unitId) => {
 const lookupVisitorByPhone = async (req, res) => {
   try {
     const { phone } = req.query;
-    if (!phone) return sendError(res, 'phone query param is required.', 400);
+    const cleaned = (phone || '').trim().replace(/\D/g, '');
+    if (cleaned.length !== 10) return sendError(res, 'A valid 10-digit mobile number is required.', 400);
 
     const [rows] = await req.db.query(
-      'SELECT id, full_name, email, phone, address, visitor_type FROM visitors WHERE phone = ?',
-      [phone.trim()]
+      'SELECT id, full_name, email, phone, address, visitor_type FROM visitors WHERE phone = ? OR phone LIKE ?',
+      [cleaned, `%${cleaned}`]
     );
 
     if (rows.length === 0) return sendSuccess(res, { found: false }, 'Visitor not found.');
@@ -172,6 +174,8 @@ const createRequest = async (req, res) => {
     const {
       visit_category,
       visitor_id,
+      visitor_user_id,
+      visitor_unit_id,
       host_user_id,
       department_id,
       unit_id,
@@ -210,7 +214,10 @@ const createRequest = async (req, res) => {
     let db = req.db;
     let isCrossUnit    = false;  // true when EMPLOYEE_VISIT routes to a different unit's DB
     let crossUnitDbName = null;  // db_name of the target unit (cross-unit only)
-    if (typeCode === 'EMPLOYEE_VISIT' && target_unit_id && (!req.user?.unit_id || parseInt(target_unit_id) !== parseInt(req.user.unit_id))) {
+    if (typeCode === 'EMPLOYEE_VISIT' && target_unit_id) {
+      if (req.user?.unit_id && parseInt(target_unit_id) === parseInt(req.user.unit_id)) {
+        return sendError(res, 'Target unit cannot be your own unit for an inter-unit employee visit.', 400);
+      }
       const { centralPool, getPool } = require('../services/dbManager');
       const [unitRows] = await centralPool.query(
         'SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = "ACTIVE"',
@@ -472,9 +479,19 @@ const createRequest = async (req, res) => {
     // ── Insert companions ─────────────────────────────────────────────────────
     if (Array.isArray(companions) && companions.length > 0) {
       for (const c of companions) {
+        let idNumber = c.id_number || null;
+        if (c.id_type === 'AADHAAR') {
+          const cleanAadhaar = (idNumber || '').replace(/[\s-]/g, '');
+          if (!/^\d{12}$/.test(cleanAadhaar)) {
+            await conn.rollback();
+            conn.release();
+            return sendError(res, `Companion "${c.full_name || 'Companion'}" Aadhaar number must be exactly 12 digits.`, 400);
+          }
+          idNumber = cleanAadhaar;
+        }
         await conn.query(
           `INSERT INTO request_companions (visit_request_id, full_name, id_type, id_number, created_at) VALUES (?, ?, ?, ?, NOW())`,
-          [visitRequestId, c.full_name, c.id_type || null, encryptField(c.id_number || null)]   // encrypt before storing
+          [visitRequestId, c.full_name, c.id_type || null, encryptField(idNumber)]   // encrypt before storing
         );
       }
     }
@@ -565,7 +582,171 @@ const createRequest = async (req, res) => {
         }
         await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `${myName} wants to visit you on ${visit_date}${timeStr}. Please approve or reject.` });
       } else {
-        await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Employee visit for ${resolvedVisitorName || 'colleague'} on ${visit_date}${timeStr} auto-approved. Gate pass generated.` });
+        // Host created an employee visit hosting someone (auto-approved with gate pass)
+        // 1. Notify host on dashboard
+        await notify({
+          visitRequestId,
+          recipientUserId: requester_user_id,
+          type: 'DASHBOARD',
+          message: `Employee visit for ${resolvedVisitorName || 'colleague'} on ${visit_date}${timeStr} auto-approved. Gate pass generated.`
+        });
+
+        // 2. Resolve visitor employee user & their DB
+        let visitorUser = null;
+        let visitorDb = req.db;
+        let visitorDbName = req.user?.unit_db;
+
+        if (visitor_unit_id) {
+          try {
+            const [uRows] = await centralPool.query(
+              'SELECT id, name, db_name FROM units WHERE id = ? AND is_active = 1',
+              [parseInt(visitor_unit_id, 10)]
+            );
+            if (uRows.length > 0) {
+              visitorDbName = uRows[0].db_name;
+              visitorDb = getPool(visitorDbName);
+            }
+          } catch (_) {}
+        }
+
+        if (visitor_user_id && visitorDb) {
+          try {
+            const [vuRows] = await visitorDb.query(
+              'SELECT id, full_name, email, phone, unit_id FROM users WHERE id = ? AND deleted_at IS NULL',
+              [parseInt(visitor_user_id, 10)]
+            );
+            if (vuRows.length > 0) visitorUser = vuRows[0];
+          } catch (_) {}
+        }
+
+        if (!visitorUser && resolvedVisitorEmail) {
+          if (visitorDb) {
+            try {
+              const [vuRows] = await visitorDb.query(
+                'SELECT id, full_name, email, phone, unit_id FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1',
+                [resolvedVisitorEmail]
+              );
+              if (vuRows.length > 0) visitorUser = vuRows[0];
+            } catch (_) {}
+          }
+          if (!visitorUser) {
+            try {
+              const [allUnits] = await centralPool.query('SELECT id, name, db_name FROM units WHERE is_active = 1');
+              for (const u of allUnits) {
+                try {
+                  const p = getPool(u.db_name);
+                  const [vuRows] = await p.query(
+                    'SELECT id, full_name, email, phone, unit_id FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1',
+                    [resolvedVisitorEmail]
+                  );
+                  if (vuRows.length > 0) {
+                    visitorUser = vuRows[0];
+                    visitorDbName = u.db_name;
+                    visitorDb = p;
+                    break;
+                  }
+                } catch (_) {}
+              }
+            } catch (_) {}
+          }
+        }
+
+        const effectiveVisitorName  = resolvedVisitorName || visitorUser?.full_name || 'Colleague';
+        const effectiveVisitorEmail = resolvedVisitorEmail || visitorUser?.email;
+        const effectiveVisitorPhone = resolvedVisitorPhone || visitorUser?.phone;
+        const hostName = host?.full_name || req.user?.full_name || 'Your Colleague';
+        const passNum  = passResult?.pass_number || null;
+
+        // Resolve host unit name if possible
+        let hostUnitName = '';
+        try {
+          const uIdToQuery = req.user?.unit_id || unit_id;
+          if (uIdToQuery) {
+            const [huRows] = await centralPool.query('SELECT name FROM units WHERE id = ?', [uIdToQuery]);
+            if (huRows.length > 0) hostUnitName = huRows[0].name;
+          }
+        } catch (_) {}
+
+        // Send Email to visitor with inline QR code gate pass
+        if (effectiveVisitorEmail) {
+          try {
+            const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
+            const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
+            const tmpl = emailService.employeeHostedVisitTemplate(
+              effectiveVisitorName,
+              hostName,
+              visit_date,
+              hostUnitName,
+              passNum,
+              qrCodeSrc,
+              visit_start_time || null
+            );
+            await sendNotification({
+              db: visitorDb || db,
+              visitRequestId: (visitorDb === db) ? visitRequestId : null,
+              recipientUserId: visitorUser?.id || null,
+              recipientEmail: effectiveVisitorEmail,
+              type: 'EMAIL',
+              subject: tmpl.subject,
+              message: tmpl.html,
+              attachments: qrAttachment ? [qrAttachment] : null,
+            });
+          } catch (mailErr) {
+            console.error('[VisitRequestController] Failed to send email to hosted visitor:', mailErr.message);
+          }
+        }
+
+        // Send SMS to visitor
+        if (effectiveVisitorPhone) {
+          try {
+            await sendNotification({
+              db: visitorDb || db,
+              visitRequestId: (visitorDb === db) ? visitRequestId : null,
+              recipientUserId: visitorUser?.id || null,
+              recipientPhone: effectiveVisitorPhone,
+              type: 'SMS',
+              whatsappMedia: await gatePassMediaUrl(passResult?.qr_code_path),
+              message: `VMS: ${hostName} has hosted you as a visitor on ${visit_date}${timeStr}.${passNum ? ` Gate Pass: ${passNum}` : ''}`,
+            });
+          } catch (smsErr) {
+            console.error('[VisitRequestController] Failed to send SMS to hosted visitor:', smsErr.message);
+          }
+        }
+
+        // Send In-App DASHBOARD Notification & Socket event to visitor
+        if (visitorUser?.id) {
+          const dashMsg = `${hostName} has hosted you as a visitor for a visit on ${visit_date}${timeStr}.${passNum ? ` Gate Pass: ${passNum}` : ''}`;
+          try {
+            await sendNotification({
+              db: visitorDb || db,
+              visitRequestId: (visitorDb === db) ? visitRequestId : null,
+              recipientUserId: visitorUser.id,
+              type: 'DASHBOARD',
+              message: dashMsg,
+            });
+          } catch (dashErr) {
+            console.error('[VisitRequestController] Failed to save in-app notification for hosted visitor:', dashErr.message);
+          }
+
+          if (visitorDbName) {
+            try {
+              emitToUser(visitorUser.id, visitorDbName, 'visit:approved', {
+                visit_request_id: visitRequestId,
+                visit_date,
+                visit_start_time: visit_start_time || null,
+                visit_category: 'EMPLOYEE_VISIT',
+                approved_by: hostName,
+                host_name: hostName,
+                pass_number: passNum,
+                is_hosted: true,
+                cross_unit_id: req.user?.unit_id || unit_id || null,
+                message: dashMsg,
+              });
+            } catch (sockErr) {
+              console.error('[VisitRequestController] Failed to emit socket to hosted visitor:', sockErr.message);
+            }
+          }
+        }
       }
     } else if (typeCode === 'VENDOR') {
       if (vendor_email) {
@@ -577,6 +758,7 @@ const createRequest = async (req, res) => {
       }
       if (resolvedVisitorPhone) {
         await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS',
+          whatsappMedia: await gatePassMediaUrl(passResult?.qr_code_path),
           message: `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}` });
       }
       await notify({ visitRequestId, type: 'DASHBOARD', message: `Vendor visit scheduled: ${company_name || 'Unknown'} on ${visit_date}${timeStr}.` });
@@ -602,6 +784,7 @@ const createRequest = async (req, res) => {
       }
       if (resolvedVisitorPhone) {
         await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS',
+          whatsappMedia: await gatePassMediaUrl(passResult?.qr_code_path),
           message: `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} has been APPROVED.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}` });
       }
       await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Your personal visit request for ${resolvedVisitorName || 'Guest'} on ${visit_date}${timeStr} is auto-approved. Gate pass generated.` });
@@ -687,8 +870,17 @@ const getRequest = async (req, res) => {
     if (crossUnitId) {
       db = await getActiveUnitPool(crossUnitId);
       if (!db) return sendError(res, 'Visit request not found.', 404);
-      crossUnitScope = ' AND vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?';
+      const xScopeOr = ['(vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?)'];
       params.push(req.user.id, req.user.unit_id);
+      if (req.user.email) {
+        xScopeOr.push('vr.visitor_email = ?');
+        params.push(req.user.email);
+      }
+      if (req.user.phone) {
+        xScopeOr.push('vr.visitor_phone = ?');
+        params.push(req.user.phone);
+      }
+      crossUnitScope = ` AND (${xScopeOr.join(' OR ')})`;
     }
 
     const [rows] = await db.query(
@@ -707,8 +899,15 @@ const getRequest = async (req, res) => {
 
     const request = rows[0];
 
-    // Employees may only open requests they host or raised (404 so IDs can't be probed)
-    if (!crossUnitId && isEmployee(req.user) && request.host_user_id !== req.user.id && request.requester_user_id !== req.user.id) {
+    // Employees may only open requests they host, raised, or where they are the visitor (404 so IDs can't be probed)
+    const isVisitor = (
+      (!crossUnitId && request.requester_user_id === req.user.id && request.host_user_id !== req.user.id) ||
+      (req.user.email && request.visitor_email && request.visitor_email.toLowerCase() === req.user.email.toLowerCase()) ||
+      (req.user.phone && request.visitor_phone && request.visitor_phone === req.user.phone)
+    );
+    const isHost = !crossUnitId && request.host_user_id === req.user.id;
+
+    if (!crossUnitId && isEmployee(req.user) && !isHost && !isVisitor && request.requester_user_id !== req.user.id) {
       return sendError(res, 'Visit request not found.', 404);
     }
 
@@ -751,6 +950,7 @@ const getRequest = async (req, res) => {
 
     return sendSuccess(res, {
       ...request,
+      my_role: isHost ? 'HOST' : 'VISITOR',
       qr_code_path: await getSignedFileUrl(request.qr_code_path), // private bucket → signed link
       companions,
       approval_history: approvalRows,
@@ -769,7 +969,7 @@ const getRequest = async (req, res) => {
 // ── listRequests ──────────────────────────────────────────────────────────────
 const listRequests = async (req, res) => {
   try {
-    const { status, visit_date, department_id, visitor_phone } = req.query;
+    const { status, visit_date, department_id, visitor_phone, search, tab } = req.query;
     const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const offset = (page - 1) * limit;
@@ -778,25 +978,61 @@ const listRequests = async (req, res) => {
     const params     = [];
     const isEmployee = req.user.role_type === 'employee';
 
-    // Scope by role
-    if (isEmployee) {
-      conditions.push('(vr.host_user_id = ? OR vr.requester_user_id = ?)');
-      params.push(req.user.id, req.user.id);
+    // Scope by role & tab ('as_host' = visits to me, 'as_visitor' = visits where I am the visitor)
+    if (tab === 'as_host') {
+      conditions.push('vr.host_user_id = ?');
+      params.push(req.user.id);
+    } else if (tab === 'as_visitor') {
+      const visOr = ['(vr.requester_user_id = ? AND vr.host_user_id != ?)' ];
+      const visParams = [req.user.id, req.user.id];
+      if (req.user.email) {
+        visOr.push('(vr.visitor_email = ? AND vr.host_user_id != ?)');
+        visParams.push(req.user.email, req.user.id);
+      }
+      if (req.user.phone) {
+        visOr.push('(vr.visitor_phone = ? AND vr.host_user_id != ?)');
+        visParams.push(req.user.phone, req.user.id);
+      }
+      conditions.push(`(${visOr.join(' OR ')})`);
+      params.push(...visParams);
+    } else if (isEmployee) {
+      // Default / 'all' for employees: both hosted visits and visitor visits
+      const empOr = [
+        'vr.host_user_id = ?',
+        'vr.requester_user_id = ?'
+      ];
+      const empParams = [req.user.id, req.user.id];
+      if (req.user.email) {
+        empOr.push('vr.visitor_email = ?');
+        empParams.push(req.user.email);
+      }
+      if (req.user.phone) {
+        empOr.push('vr.visitor_phone = ?');
+        empParams.push(req.user.phone);
+      }
+      conditions.push(`(${empOr.join(' OR ')})`);
+      params.push(...empParams);
     }
 
-    // unit_admin and super_admin see all (req.db already scoped to their unit)
+    // unit_admin and super_admin see all when no tab specified (req.db already scoped to their unit)
 
     if (status)        { conditions.push('vr.status = ?');           params.push(status); }
     if (visit_date)    { conditions.push('vr.visit_date = ?');        params.push(visit_date); }
     if (department_id) { conditions.push('vr.department_id = ?');     params.push(department_id); }
     if (visitor_phone) { conditions.push('vr.visitor_phone LIKE ?');  params.push(`%${visitor_phone}%`); }
+    if (search && search.trim()) {
+      conditions.push('(vr.visitor_name LIKE ? OR vr.visitor_phone LIKE ? OR h.full_name LIKE ? OR vr.company_name LIKE ? OR gp.pass_number LIKE ?)');
+      const like = `%${search.trim()}%`;
+      params.push(like, like, like, like, like);
+    }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const SELECT_COLS = `
-      vr.id, vr.visit_date, vr.visit_start_time, vr.status, vr.request_source,
+      vr.id, vr.visit_date, vr.visit_start_time, vr.visit_end_time, vr.status, vr.request_source,
       vr.purpose, vr.accompanying_count, vr.created_at, vr.visit_category,
-      vr.visitor_name, vr.visitor_phone, vr.company_name, vr.force_created,
+      vr.visitor_name, vr.visitor_phone, vr.visitor_email, vr.company_name, vr.force_created,
+      vr.host_user_id, vr.requester_user_id,
       h.full_name AS host_name,
       d.name      AS department_name,
       gp.pass_number`;
@@ -804,8 +1040,9 @@ const listRequests = async (req, res) => {
     // Employees' lists merge rows from several unit DBs (see fan-out below). To page
     // the merged list correctly, fetch the first offset+limit rows from every source,
     // merge-sort them, then slice out the requested page.
-    const fetchLimit  = isEmployee ? offset + limit : limit;
-    const fetchOffset = isEmployee ? 0 : offset;
+    const shouldFanOut = (isEmployee || tab === 'as_visitor') && tab !== 'as_host' && req.user.unit_id;
+    const fetchLimit  = shouldFanOut ? offset + limit : limit;
+    const fetchOffset = shouldFanOut ? 0 : offset;
 
     const [rows] = await req.db.query(
       `SELECT ${SELECT_COLS}
@@ -819,17 +1056,13 @@ const listRequests = async (req, res) => {
     );
 
     const [[{ total: ownTotal }]] = await req.db.query(
-      `SELECT COUNT(*) AS total FROM visit_requests vr ${whereClause}`, params
+      `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id ${whereClause}`, params
     );
 
-    // ── Cross-unit fan-out for employees ────────────────────────────────────────────────
-    // When an employee visits someone in another unit, the request is stored in
-    // that unit's DB (not theirs). Fan out to make those requests visible here.
-    // Matched on cross_unit_requester_id + requester_unit_id — user ids alone are
-    // only unique within a unit, so requester_user_id would match other people.
+    // ── Cross-unit fan-out for employees / visitor visits ────────────────────────────────────────────────
     let crossUnitRows  = [];
     let crossUnitTotal = 0;
-    if (isEmployee && req.user.unit_id) {
+    if (shouldFanOut) {
       try {
         const [activeUnits] = await centralPool.query(
           `SELECT u.id, u.db_name FROM units u
@@ -839,13 +1072,28 @@ const listRequests = async (req, res) => {
         await Promise.all(activeUnits.map(async (unit) => {
           try {
             const otherDb  = getPool(unit.db_name);
+            const xOr = ['(vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?)'];
+            const xOrParams = [req.user.id, req.user.unit_id];
+            if (req.user.email) {
+              xOr.push('vr.visitor_email = ?');
+              xOrParams.push(req.user.email);
+            }
+            if (req.user.phone) {
+              xOr.push('vr.visitor_phone = ?');
+              xOrParams.push(req.user.phone);
+            }
             const xConds   = [
-              'vr.cross_unit_requester_id = ?', 'vr.requester_unit_id = ?',
+              `(${xOr.join(' OR ')})`,
               `vr.visit_category = 'EMPLOYEE_VISIT'`,
             ];
-            const xParams  = [req.user.id, req.user.unit_id];
+            const xParams  = [...xOrParams];
             if (status)     { xConds.push('vr.status = ?');     xParams.push(status); }
             if (visit_date) { xConds.push('vr.visit_date = ?'); xParams.push(visit_date); }
+            if (search && search.trim()) {
+              xConds.push('(vr.visitor_name LIKE ? OR vr.visitor_phone LIKE ? OR h.full_name LIKE ? OR vr.company_name LIKE ? OR gp.pass_number LIKE ?)');
+              const like = `%${search.trim()}%`;
+              xParams.push(like, like, like, like, like);
+            }
             const xWhere = `WHERE ${xConds.join(' AND ')}`;
             const [xRows] = await otherDb.query(
               `SELECT ${SELECT_COLS}
@@ -858,7 +1106,7 @@ const listRequests = async (req, res) => {
               [...xParams, fetchLimit]
             );
             const [[{ total: xTotal }]] = await otherDb.query(
-              `SELECT COUNT(*) AS total FROM visit_requests vr ${xWhere}`, xParams
+              `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id ${xWhere}`, xParams
             );
             // _cross_unit_id lets the frontend open the row via ?unit_id=
             crossUnitRows.push(...xRows.map(r => ({ ...r, _cross_unit_id: unit.id })));
@@ -872,7 +1120,16 @@ const listRequests = async (req, res) => {
       new Date(b.created_at) - new Date(a.created_at)
     );
     const total    = Number(ownTotal) + crossUnitTotal;
-    const pageRows = isEmployee ? allRows.slice(offset, offset + limit) : allRows;
+    const rawPageRows = shouldFanOut ? allRows.slice(offset, offset + limit) : allRows;
+
+    // Attach `my_role` ('HOST' or 'VISITOR') so frontend can display role badges and actions
+    const pageRows = rawPageRows.map(r => {
+      const isHost = !r._cross_unit_id && Number(r.host_user_id) === Number(req.user.id);
+      return {
+        ...r,
+        my_role: isHost ? 'HOST' : 'VISITOR',
+      };
+    });
 
     return sendSuccess(res, {
       requests:   pageRows,

@@ -4,6 +4,7 @@
 const { centralPool, getPool } = require('./dbManager');
 const emailService = require('./email.service');
 const smsService   = require('./sms.service');
+const whatsapp     = require('./whatsapp.service');
 
 /**
  * Inserts a notification record and delivers it via the appropriate channel.
@@ -19,11 +20,15 @@ const smsService   = require('./sms.service');
  * @param {number|null}  opts.recipientUserId
  * @param {string|null}  opts.recipientEmail
  * @param {string|null}  opts.recipientPhone
- * @param {'EMAIL'|'SMS'|'DASHBOARD'} opts.type
+ * @param {'EMAIL'|'SMS'|'WHATSAPP'|'DASHBOARD'} opts.type
  * @param {string|null}  opts.subject
  * @param {string}       opts.message
  * @param {object[]|null} opts.attachments    — EMAIL only: nodemailer attachments (e.g. inline QR image)
+ * @param {string|null}  opts.whatsappMedia   — image / PDF link sent with the WhatsApp copy (e.g. gate-pass QR)
  * @returns {Promise<{ success: boolean }>}
+ *
+ * Every SMS is also sent on WhatsApp (as its own WHATSAPP notification row) when
+ * Wishper is configured — see whatsapp.service.
  */
 const sendNotification = async ({
   db                = null,
@@ -35,6 +40,7 @@ const sendNotification = async ({
   subject           = null,
   message,
   attachments       = null,
+  whatsappMedia     = null,
 }) => {
   // ── 1. Resolve which DB pool to write the notification into ─────────────────
   let unitDb = db;
@@ -97,6 +103,12 @@ const sendNotification = async ({
       if (!result.success) throw new Error(result.error);
       deliverySuccess = true;
 
+    } else if (type === 'WHATSAPP') {
+      if (!recipientPhone) throw new Error('recipientPhone required for WHATSAPP notifications');
+      const result = await whatsapp.sendWhatsApp(recipientPhone, message, { mediaUrl: whatsappMedia });
+      if (!result.success) throw new Error(result.error);
+      deliverySuccess = true;
+
     } else if (type === 'DASHBOARD') {
       deliverySuccess = true; // Read directly from DB — mark sent immediately
     }
@@ -123,6 +135,14 @@ const sendNotification = async ({
     } catch (updateErr) {
       console.error('[NotificationService] Failed to update notification status:', updateErr.message);
     }
+  }
+
+  // ── 4. WhatsApp copy of every SMS (its own row, so each channel is tracked) ──
+  if (type === 'SMS' && recipientPhone && whatsapp.isWhatsAppConfigured()) {
+    await sendNotification({
+      db: unitDb, visitRequestId, recipientUserId, recipientPhone,
+      type: 'WHATSAPP', subject, message, whatsappMedia,
+    });
   }
 
   return { success: deliverySuccess };

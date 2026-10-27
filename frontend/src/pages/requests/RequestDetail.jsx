@@ -290,9 +290,14 @@ export default function RequestDetail() {
   // so no host/admin actions or pass view on it.
   const isCrossUnit = !!request.cross_unit;
   // super_admin is read-only inside a unit (no approve/reject/block/pass) — API enforces the same.
-  // isHost also excludes central users: their id is from vms_central, not this unit.
-  const canViewPass = !isCrossUnit && ['security', 'receptionist', 'unit_admin'].includes(role);
   const isHost      = !isCrossUnit && role !== 'super_admin' && String(request.host_user_id) === String(user?.id);
+  const isVisitor   = request.my_role === 'VISITOR' || (!isHost && (
+    String(request.requester_user_id) === String(user?.id) ||
+    (user?.email && request.visitor_email?.toLowerCase() === user.email.toLowerCase()) ||
+    (user?.phone && request.visitor_phone === user.phone)
+  ));
+  const canViewPass = (!isCrossUnit && ['security', 'receptionist', 'unit_admin'].includes(role)) ||
+                      (request.status === 'APPROVED' && request.pass_number && (isVisitor || role === 'employee'));
   const isAdmin     = !isCrossUnit && role === 'unit_admin';
   const canApprove  = (isHost || isAdmin) && request.status === 'PENDING';
   const isBlocked   = !!request.host_block_id;
@@ -320,6 +325,16 @@ export default function RequestDetail() {
             <h1 className="text-[16px] font-bold" style={{ color: 'var(--color-text)' }}>Request #{request.id}</h1>
             <StatusBadge status={request.status} />
             <StatusBadge status={request.visit_category} />
+            {isVisitor && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                You are the Visitor
+              </span>
+            )}
+            {isHost && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-300 dark:border-blue-700">
+                You are the Host
+              </span>
+            )}
             {(request.force_created === 1 || request.force_created === true) && (
               <span
                 className="text-[10px] px-2 py-0.5 rounded font-medium"

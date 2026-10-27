@@ -124,6 +124,8 @@ const router = createBrowserRouter([
             children: [{ index: true, element: <S><NewRequest /></S> }],
           },
           { path: "requests/:id", element: <S><RequestDetail /></S> },
+          { path: "gate/pass/:passNumber",   element: <S><GatePass /></S> },
+          { path: "passes/pass/:passNumber", element: <S><GatePass /></S> },
 
           // Approvals
           {

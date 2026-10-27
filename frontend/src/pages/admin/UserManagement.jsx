@@ -47,9 +47,12 @@ function UserSlideOver({
   };
   const [form,       setForm]       = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+  // false → employee code is the API's suggestion (follows the role); true once typed by hand
+  const [codeEdited, setCodeEdited] = useState(false);
   // isEdit already declared above
 
   useEffect(() => {
+    setCodeEdited(false);
     if (editUser) {
       setForm({
         full_name:      editUser.full_name || "",
@@ -66,6 +69,19 @@ function UserSlideOver({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editUser, isOpen]);
+
+  // New user: fill in the next free employee code for the chosen role (e.g. H1-EMP-003)
+  useEffect(() => {
+    if (!isOpen || isEdit || codeEdited) return;
+    let cancelled = false;
+    apiClient.get('/users/next-employee-code', { params: { role_type: form.role_type } })
+      .then(res => {
+        const code = res.data?.data?.employee_code;
+        if (!cancelled && code) setForm(f => ({ ...f, employee_code: code }));
+      })
+      .catch(() => { /* no suggestion — the field stays editable */ });
+    return () => { cancelled = true; };
+  }, [isOpen, isEdit, codeEdited, form.role_type]);
 
   // Roles that don't belong to any department
   const NO_DEPT_ROLES = ['security', 'receptionist', 'unit_auditor'];
@@ -261,7 +277,13 @@ function UserSlideOver({
           {!isEdit && (
             <div>
               <label className={labelCls}>Employee Code *</label>
-              <input className={inputCls} value={form.employee_code} onChange={set("employee_code")} placeholder="EMP-001" required autoComplete="off" />
+              <input className={inputCls} value={form.employee_code}
+                onChange={e => {
+                  const value = e.target.value;
+                  setForm(f => ({ ...f, employee_code: value }));
+                  setCodeEdited(value.trim() !== '');   // cleared → use the suggestion again
+                }}
+                placeholder="EMP-001" required autoComplete="off" />
             </div>
           )}
 
@@ -482,7 +504,14 @@ export default function UserManagement() {
   const openCreate = () => {
     setEditUser(null); setDesignations([]); setPanelOpen(true);
   };
-  const openEdit   = (u) => { setEditUser(u); setPanelOpen(true); };
+  const openEdit = (u) => {
+    if (u.role_type === "unit_admin" || u.id === currentUser?.id) {
+      toast.error("Unit Admin details cannot be edited here.");
+      return;
+    }
+    setEditUser(u);
+    setPanelOpen(true);
+  };
 
   const roleFilters = [
     { label: "All",          value: "" },
@@ -601,7 +630,14 @@ export default function UserManagement() {
                             <span className="text-loud font-semibold text-sm">{u.full_name?.charAt(0) ?? "?"}</span>
                           </div>
                           <div>
-                            <p className="font-medium text-loud text-sm">{u.full_name}</p>
+                            <p className="font-medium text-loud text-sm flex items-center gap-1.5">
+                              <span>{u.full_name}</span>
+                              {u.id === currentUser?.id && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-accent/10 text-accent">
+                                  You
+                                </span>
+                              )}
+                            </p>
                             <p className="text-xs text-faint flex items-center gap-1 mt-0.5">
                               <Mail strokeWidth={1.5} className="w-3 h-3" /> {u.email}
                             </p>
@@ -630,14 +666,20 @@ export default function UserManagement() {
                         {deactivatingId === u.id ? (
                           <DeactivateConfirm userId={u.id} userName={u.full_name} onConfirm={handleDeactivate} onCancel={() => setDeactivatingId(null)} />
                         ) : (
-                          <div className="flex justify-end gap-2">
-                            <button onClick={() => openEdit(u)} title="Edit user" className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300">
-                              <Edit2 strokeWidth={1.5} className="w-3.5 h-3.5" />
-                            </button>
+                          <div className="flex justify-end items-center gap-2">
+                            {/* Unit admin cannot edit their own details or unit admin details */}
+                            {!(u.role_type === "unit_admin" || u.id === currentUser?.id) && (
+                              <button onClick={() => openEdit(u)} title="Edit user" className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300">
+                                <Edit2 strokeWidth={1.5} className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             {u.is_active && u.id !== currentUser?.id && (
                               <button onClick={() => setDeactivatingId(u.id)} title="Deactivate user" className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300">
                                 <UserX strokeWidth={1.5} className="w-3.5 h-3.5" />
                               </button>
+                            )}
+                            {(u.role_type === "unit_admin" || u.id === currentUser?.id) && (!u.is_active || u.id === currentUser?.id) && (
+                              <span className="text-xs text-faint italic px-2">—</span>
                             )}
                           </div>
                         )}

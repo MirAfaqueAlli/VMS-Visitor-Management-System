@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     recipient_user_id INT          NULL,
     recipient_email   VARCHAR(100),
     recipient_phone   VARCHAR(20),
-    notification_type ENUM('SMS','EMAIL','DASHBOARD') NOT NULL,
+    notification_type ENUM('SMS','EMAIL','DASHBOARD','WHATSAPP') NOT NULL,
     subject           VARCHAR(200),
     message           TEXT         NOT NULL,
     status            ENUM('PENDING','SENT','FAILED') DEFAULT 'PENDING',

@@ -12,6 +12,9 @@ const { approveSchema, rejectSchema } = require('../validators/schemas');
 // Inbox: any authenticated user who can be a host + auditors
 router.get('/inbox', protect, authorize('super_admin', 'unit_admin', 'employee', 'unit_auditor', 'global_auditor'), ctrl.getInbox);
 
+// Notifications for logged-in user
+router.get('/notifications', protect, ctrl.getUserNotifications);
+
 // Approve / Reject: host or unit_admin. Central users (super_admin) oversee units
 // but don't take operational decisions inside them (segregation of duties) —
 // and their ids aren't valid actors in a unit DB (approved_by / acted_by_user_id).

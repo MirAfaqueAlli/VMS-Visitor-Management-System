@@ -19,6 +19,7 @@ router.get('/',    protect, authorize('super_admin', 'global_auditor'), ctrl.lis
 router.get('/:id', protect, authorize('super_admin', 'global_auditor'), ctrl.getUnitById);
 router.post('/',   protect, authorize('super_admin'), validate(createUnitSchema), ctrl.createUnit);
 router.put('/:id', protect, authorize('super_admin'), validate(updateUnitSchema), ctrl.updateUnit);
-router.delete('/:id', protect, authorize('super_admin'),                ctrl.deactivateUnit);
+router.delete('/:id', protect, authorize('super_admin'),                ctrl.deactivateUnit);   // deactivate (never a hard delete)
+router.post('/:id/reactivate', protect, authorize('super_admin'),       ctrl.reactivateUnit);
 
 module.exports = router;

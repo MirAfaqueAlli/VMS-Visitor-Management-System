@@ -84,7 +84,16 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
       visit_date:       request.visit_date,
       visitor_name:     request.resolved_visitor_name,
     };
-    const qrCodePath = await generateQRCode(qrData, passNumber);
+    // The QR image lives in S3. If storage is unavailable (e.g. no AWS credentials
+    // on a dev machine) the pass is still issued — the gate can check the visitor
+    // in by pass number — just without the QR image.
+    let qrCodePath = null;
+    try {
+      qrCodePath = await generateQRCode(qrData, passNumber);
+    } catch (qrErr) {
+      console.warn(`[GatePassService] Pass ${passNumber} issued WITHOUT a QR image — S3 upload failed: ${qrErr.message}. ` +
+        'Check AWS credentials (IAM role on EC2, or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) and AWS_S3_BUCKET.');
+    }
 
     let insertResult;
     try {

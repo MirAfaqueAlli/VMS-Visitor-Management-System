@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -25,19 +25,19 @@ import { getApiErrorMessage } from "../../utils/apiError";
 
 // â”€â”€ Category definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ALL_CATEGORIES = [
-  { id: "EMPLOYEE_VISIT", label: "Employee Visit",      desc: "Visit or invite a fellow employee" },
-  { id: "PERSONAL_VISIT", label: "Personal Visit",      desc: "Family / friend visiting you" },
-  { id: "VENDOR",         label: "Vendor / Contractor", desc: "Service and maintenance vendor" },
-  { id: "SPOT",           label: "Spot Walk-in",        desc: "Urgent unplanned visit" },
+  { id: "EMPLOYEE_VISIT", label: "Employee Visit", desc: "Visit or invite a fellow employee" },
+  { id: "PERSONAL_VISIT", label: "Personal Visit", desc: "Family / friend visiting you" },
+  { id: "VENDOR", label: "Vendor / Contractor", desc: "Service and maintenance vendor" },
+  { id: "SPOT", label: "Spot Walk-in", desc: "Urgent unplanned visit" },
 ];
 
 const ROLE_CATEGORIES = {
-  security:     ["SPOT"],
-  employee:     ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR"],
-  unit_admin:   ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
-  super_admin:  ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
+  security: ["SPOT"],
+  employee: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR"],
+  unit_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
+  super_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
   receptionist: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
-  org_admin:    ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT"],
+  org_admin: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT"],
 };
 
 export default function NewRequest() {
@@ -54,7 +54,7 @@ export default function NewRequest() {
 
   // â”€â”€ Visitor phone lookup state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [visitorLookupState, setVisitorLookupState] = useState("idle"); // idle | loading | found | not_found
-  const [foundVisitorData,   setFoundVisitorData]   = useState(null);
+  const [foundVisitorData, setFoundVisitorData] = useState(null);
 
   const resetVisitorLookup = useCallback(() => {
     setVisitorLookupState("idle");
@@ -69,13 +69,28 @@ export default function NewRequest() {
   }, []);
 
   // â”€â”€ EMPLOYEE_VISIT state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const [visitMode,      setVisitMode]      = useState("visiting"); // 'visiting' | 'hosting'
-  const [units,          setUnits]          = useState([]);
+  const [visitMode, setVisitMode] = useState("visiting"); // 'visiting' | 'hosting'
+  const [units, setUnits] = useState([]);
   const [selectedUnitId, setSelectedUnitId] = useState("");
   const [empDepartments, setEmpDepartments] = useState([]);
-  const [empDeptId,      setEmpDeptId]      = useState("");
-  const [employees,      setEmployees]      = useState([]);
-  const [selectedEmpId,  setSelectedEmpId]  = useState("");
+  const [empDeptId, setEmpDeptId] = useState("");
+  const [employees, setEmployees] = useState([]);
+  const [selectedEmpId, setSelectedEmpId] = useState("");
+
+  // Current user's own unit ID (or active unit if super admin)
+  const currentUnitId = activeUnit?.id ?? user?.unit_id ?? null;
+
+  // Filter out the logged-in user's own unit so only other units are selectable for cross-unit visits
+  const otherUnits = useMemo(() => {
+    return units.filter((u) => {
+      if (currentUnitId != null && String(u.id) === String(currentUnitId)) return false;
+      if (user?.unit_id != null && String(u.id) === String(user.unit_id)) return false;
+      if (activeUnit?.id != null && String(u.id) === String(activeUnit.id)) return false;
+      if (user?.unit_code && u.code && u.code.toLowerCase() === user.unit_code.toLowerCase()) return false;
+      if (activeUnit?.code && u.code && u.code.toLowerCase() === activeUnit.code.toLowerCase()) return false;
+      return true;
+    });
+  }, [units, currentUnitId, user?.unit_id, user?.unit_code, activeUnit?.id, activeUnit?.code]);
 
   // â”€â”€ Unit Admin EMPLOYEE_VISIT state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [adminVisitorDeptId, setAdminVisitorDeptId] = useState("");
@@ -106,17 +121,17 @@ export default function NewRequest() {
 
   const [formData, setFormData] = useState({
     visit_category: getInitialCategory(),
-    host_user_id:    isAdminOrStaff ? "" : user?.id || "",
-    department_id:   user?.department_id || "",
+    host_user_id: isAdminOrStaff ? "" : user?.id || "",
+    department_id: user?.department_id || "",
     organization_id: user?.organization_id || "",
     purpose: "",
     visit_date: "",
     visit_start_time: "",
     visit_end_time: "",
     accompanying_count: 0,
-    visitor_id:    "",
+    visitor_id: "",
     visitor_phone: "",
-    visitor_name:  "",
+    visitor_name: "",
     visitor_email: "",
     company_name: "",
     vendor_email: "",
@@ -151,7 +166,7 @@ export default function NewRequest() {
           setAdminVisitorAllEmployees(res.data?.data ?? []);
           setAdminVisitorEmployees(res.data?.data ?? []);
         })
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [user?.role_type, formData.visit_category]);
 
@@ -167,7 +182,7 @@ export default function NewRequest() {
           const dRaw = deptRes.value.data?.data;
           setDepartments(dRaw?.departments ?? (Array.isArray(dRaw) ? dRaw : []));
         }
-        if (empRes.status  === 'fulfilled') {
+        if (empRes.status === 'fulfilled') {
           setAdminVisitorAllEmployees(empRes.value.data?.data ?? []);
           setAdminVisitorEmployees(empRes.value.data?.data ?? []);
         }
@@ -177,9 +192,9 @@ export default function NewRequest() {
 
   // â”€â”€ Visitor phone lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleVisitorLookup = async () => {
-    const phone = formData.visitor_phone.trim();
-    if (!phone || phone.length < 5) {
-      toast.error("Please enter a valid phone number to look up.");
+    const phone = formData.visitor_phone.trim().replace(/\D/g, "");
+    if (phone.length !== 10) {
+      toast.error("Please enter a valid 10-digit mobile number to look up.");
       return;
     }
     setVisitorLookupState("loading");
@@ -198,9 +213,9 @@ export default function NewRequest() {
         setFoundVisitorData(visitor);
         setFormData(p => ({
           ...p,
-          visitor_id:    visitor.id    || "",
-          visitor_name:  visitor.full_name || "",
-          visitor_email: visitor.email    || "",
+          visitor_id: visitor.id || "",
+          visitor_name: visitor.full_name || "",
+          visitor_email: visitor.email || "",
         }));
         toast.success(`Returning visitor found: ${visitor.full_name}`);
       } else {
@@ -215,9 +230,9 @@ export default function NewRequest() {
 
   // â”€â”€ Vendor phone lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleVendorLookup = async () => {
-    const phone = formData.visitor_phone.trim();
-    if (!phone || phone.length < 5) {
-      toast.error("Please enter a valid contact number to look up.");
+    const phone = formData.visitor_phone.trim().replace(/\D/g, "");
+    if (phone.length !== 10) {
+      toast.error("Please enter a valid 10-digit contact number to look up.");
       return;
     }
     setVendorLookupState("loading");
@@ -235,7 +250,7 @@ export default function NewRequest() {
         setFormData(p => ({
           ...p,
           contact_person: visitor.full_name || p.contact_person,
-          vendor_email:   visitor.email     || p.vendor_email,
+          vendor_email: visitor.email || p.vendor_email,
         }));
         toast.success(`Returning contact found: ${visitor.full_name}`);
       } else {
@@ -251,7 +266,7 @@ export default function NewRequest() {
   useEffect(() => {
     apiClient.get("/units/public")
       .then(res => setUnits(res.data?.data ?? []))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   // â”€â”€ Time helper: add minutes to "HH:MM" string â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -279,9 +294,9 @@ export default function NewRequest() {
       // Only preserve end if user deliberately chose a window > 30 min after new start.
       if (name === 'visit_start_time' && value) {
         const auto30 = addMinutesToTime(value, 30);
-        const noEnd          = !prev.visit_end_time;
+        const noEnd = !prev.visit_end_time;
         const endBeforeStart = prev.visit_end_time && prev.visit_end_time <= value;
-        const endWithinAuto  = prev.visit_end_time && prev.visit_end_time <= auto30;
+        const endWithinAuto = prev.visit_end_time && prev.visit_end_time <= auto30;
         if (noEnd || endBeforeStart || endWithinAuto) {
           next.visit_end_time = auto30;
         }
@@ -341,6 +356,19 @@ export default function NewRequest() {
     setAllAdminHostEmployees([]);
     setAdminHostEmployees([]);
   };
+
+  // Ensure selected unit is not the user's own unit
+  useEffect(() => {
+    if (selectedUnitId && !otherUnits.some(u => String(u.id) === String(selectedUnitId))) {
+      resetEmpVisitState();
+    }
+  }, [selectedUnitId, otherUnits]);
+
+  useEffect(() => {
+    if (adminHostUnitId && !otherUnits.some(u => String(u.id) === String(adminHostUnitId))) {
+      resetAdminEmpVisitState();
+    }
+  }, [adminHostUnitId, otherUnits]);
 
   const handleEmpUnitChange = async (e) => {
     const uId = e.target.value;
@@ -480,11 +508,11 @@ export default function NewRequest() {
       department_id: isAdminOrStaff ? "" : (category === "EMPLOYEE_VISIT" ? "" : user?.department_id || ""),
       target_unit_id: "",
       visitor_phone: "",
-      visitor_name:  "",
+      visitor_name: "",
       visitor_email: "",
-      visitor_id:    "",
+      visitor_id: "",
       visit_start_time: now,
-      visit_end_time:   end,
+      visit_end_time: end,
     }));
     resetVisitorLookup();
     setSelectedDeptId("");
@@ -505,7 +533,22 @@ export default function NewRequest() {
 
   const updateCompanion = (index, field, value) => {
     const updated = [...formData.companions];
-    updated[index][field] = value;
+    if (field === "id_type") {
+      updated[index].id_type = value;
+      // If switching to AADHAAR, keep only digits and max 12 chars
+      if (value === "AADHAAR" && updated[index].id_number) {
+        updated[index].id_number = updated[index].id_number.replace(/\D/g, "").slice(0, 12);
+      }
+    } else if (field === "id_number") {
+      if (updated[index].id_type === "AADHAAR") {
+        // Aadhaar: only allow numeric digits, max 12
+        updated[index].id_number = value.replace(/\D/g, "").slice(0, 12);
+      } else {
+        updated[index].id_number = value;
+      }
+    } else {
+      updated[index][field] = value;
+    }
     setFormData((prev) => ({ ...prev, companions: updated }));
   };
 
@@ -531,56 +574,64 @@ export default function NewRequest() {
     if (cat === "EMPLOYEE_VISIT") {
       if (isAdminEmpVisit) {
         const selectedVisitor = adminVisitorAllEmployees.find(emp => String(emp.id) === String(adminVisitorEmpId));
-        payload.visitor_name   = selectedVisitor?.full_name || null;
-        payload.visitor_phone  = selectedVisitor?.phone     || null;
-        payload.visitor_email  = selectedVisitor?.email     || null;
-        payload.host_user_id   = Number(adminHostEmpId)     || null;
-        payload.department_id  = Number(adminHostDeptId)    || null;
-        payload.target_unit_id = Number(adminHostUnitId)    || null;
+        payload.visitor_name = selectedVisitor?.full_name || null;
+        payload.visitor_phone = selectedVisitor?.phone || null;
+        payload.visitor_email = selectedVisitor?.email || null;
+        payload.visitor_user_id = Number(selectedVisitor?.id) || null;
+        payload.visitor_unit_id = Number(selectedVisitor?.unit_id || user?.unit_id) || null;
+        payload.host_user_id = Number(adminHostEmpId) || null;
+        payload.department_id = Number(adminHostDeptId) || null;
+        payload.target_unit_id = Number(adminHostUnitId) || null;
         payload.request_source = "HOST";
       } else {
         const isVisiting = visitMode === "visiting";
-        const isHosting  = visitMode === "hosting";
+        const isHosting = visitMode === "hosting";
         payload.request_source = isVisiting ? "SELF" : "HOST";
         if (isVisiting) {
-          payload.visitor_name   = user?.full_name || null;
-          payload.visitor_phone  = user?.phone     || null;
-          payload.visitor_email  = user?.email     || null;
-          payload.host_user_id   = Number(selectedEmpId) || null;
-          payload.department_id  = Number(empDeptId)     || null;
+          payload.visitor_name = user?.full_name || null;
+          payload.visitor_phone = user?.phone || null;
+          payload.visitor_email = user?.email || null;
+          payload.visitor_user_id = Number(user?.id) || null;
+          payload.visitor_unit_id = Number(user?.unit_id) || null;
+          payload.host_user_id = Number(selectedEmpId) || null;
+          payload.department_id = Number(empDeptId) || null;
           payload.target_unit_id = Number(selectedUnitId) || null;
         } else if (isHosting) {
           const selectedEmp = employees.find(emp => String(emp.id) === String(selectedEmpId));
-          payload.visitor_name   = selectedEmp?.full_name || null;
-          payload.visitor_phone  = selectedEmp?.phone     || null;
-          payload.visitor_email  = selectedEmp?.email     || null;
+          payload.visitor_name = selectedEmp?.full_name || null;
+          payload.visitor_phone = selectedEmp?.phone || null;
+          payload.visitor_email = selectedEmp?.email || null;
+          payload.visitor_user_id = Number(selectedEmp?.id) || null;
+          payload.visitor_unit_id = Number(selectedUnitId || selectedEmp?.unit_id) || null;
           // Hosting mode: request is always stored in the HOST's own unit DB.
           // Do NOT send target_unit_id — that would wrongly route the INSERT to the
           // visitor's unit DB where the host_user_id doesn't exist (FK violation).
           payload.target_unit_id = null;
         }
       }
-      if (payload.host_user_id)   payload.host_user_id   = Number(payload.host_user_id);
-      if (payload.department_id)  payload.department_id  = Number(payload.department_id);
+      if (payload.visitor_user_id) payload.visitor_user_id = Number(payload.visitor_user_id);
+      if (payload.visitor_unit_id) payload.visitor_unit_id = Number(payload.visitor_unit_id);
+      if (payload.host_user_id) payload.host_user_id = Number(payload.host_user_id);
+      if (payload.department_id) payload.department_id = Number(payload.department_id);
       if (payload.target_unit_id) payload.target_unit_id = Number(payload.target_unit_id);
     } else {
       payload.visitor_phone = formData.visitor_phone?.trim() || null;
       if (cat === 'VENDOR') {
-        payload.visitor_name  = formData.contact_person?.trim() || formData.company_name?.trim() || null;
+        payload.visitor_name = formData.contact_person?.trim() || formData.company_name?.trim() || null;
         payload.visitor_email = formData.vendor_email?.trim() || null;
       } else {
-        payload.visitor_name  = formData.visitor_name?.trim() || null;
+        payload.visitor_name = formData.visitor_name?.trim() || null;
         payload.visitor_email = formData.visitor_email?.trim() || null;
       }
-      payload.visitor_id    = null;
-      payload.host_user_id    = Number(payload.host_user_id)  || user?.id  || null;
-      payload.department_id   = Number(payload.department_id) || user?.department_id || null;
+      payload.visitor_id = null;
+      payload.host_user_id = Number(payload.host_user_id) || user?.id || null;
+      payload.department_id = Number(payload.department_id) || user?.department_id || null;
       payload.organization_id = Number(payload.organization_id) || null;
     }
 
     payload.accompanying_count = Number(payload.accompanying_count);
     if (!payload.visit_start_time) payload.visit_start_time = null;
-    if (!payload.visit_end_time)   payload.visit_end_time   = null;
+    if (!payload.visit_end_time) payload.visit_end_time = null;
     delete payload.visitor_id;
     return payload;
   };
@@ -595,6 +646,28 @@ export default function NewRequest() {
       return;
     }
 
+    // Companion Aadhaar validation
+    for (let i = 0; i < formData.companions.length; i++) {
+      const comp = formData.companions[i];
+      const name = comp.full_name?.trim() || `Companion ${i + 1}`;
+      if (comp.id_type === "AADHAAR") {
+        const cleanAadhaar = (comp.id_number || "").replace(/[\s-]/g, "");
+        if (!/^\d{12}$/.test(cleanAadhaar)) {
+          toast.error(`${name}: Aadhaar number must be exactly 12 digits.`);
+          return;
+        }
+      }
+    }
+
+    // Visitor phone validation for non-employee visits
+    if (["SPOT", "PERSONAL_VISIT", "VENDOR"].includes(formData.visit_category)) {
+      const cleanPhone = (formData.visitor_phone || "").replace(/\D/g, "");
+      if (cleanPhone.length !== 10) {
+        toast.error("Please enter a valid 10-digit mobile number.");
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const payload = buildPayload();
@@ -606,10 +679,10 @@ export default function NewRequest() {
       // ── Conflict detected → show confirmation modal instead of toast ──
       if (error.response?.status === 409 && data?.conflict) {
         setConflictModal({
-          types:           data.types || [],
-          host_conflict:   data.host_conflict   || null,
+          types: data.types || [],
+          host_conflict: data.host_conflict || null,
           visitor_conflict: data.visitor_conflict || null,
-          pendingPayload:  buildPayload(),
+          pendingPayload: buildPayload(),
         });
         setLoading(false);
         return;
@@ -640,18 +713,18 @@ export default function NewRequest() {
   };
 
   // â”€â”€ Derived booleans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const isUnitAdmin   = user?.role_type === "unit_admin";
+  const isUnitAdmin = user?.role_type === "unit_admin";
   const isSuperAdminUser = user?.role_type === "super_admin";
   // Super Admin can create emp-visit only when managing a unit
   const isAdminEmpVisit = (isUnitAdmin || (isSuperAdminUser && !!activeUnit));
-  const cat           = formData.visit_category;
-  const isVendor      = cat === "VENDOR";
-  const isEmpVisit    = cat === "EMPLOYEE_VISIT";
+  const cat = formData.visit_category;
+  const isVendor = cat === "VENDOR";
+  const isEmpVisit = cat === "EMPLOYEE_VISIT";
   const isSelfHosting = !isAdminOrStaff && !isEmpVisit && !isUnitAdmin;
 
   // Hide the standard visitor phone fields and host picker for EMPLOYEE_VISIT
   const showVisitorFields = !isVendor && !isEmpVisit;
-  const showHostPicker    = (!isSelfHosting || isUnitAdmin) && !isEmpVisit;
+  const showHostPicker = (!isSelfHosting || isUnitAdmin) && !isEmpVisit;
 
   // Shared input style
   const inputCls = "w-full bg-bg-primary border-0 border-b border-subtle px-3 py-2.5 text-loud focus:ring-0 focus:border-border transition-colors duration-300";
@@ -680,11 +753,10 @@ export default function NewRequest() {
                 key={c.id}
                 type="button"
                 onClick={() => handleCategoryChange(c.id)}
-                className={`p-3 text-sm rounded-md border text-left transition-all duration-300 ${
-                  formData.visit_category === c.id
+                className={`p-3 text-sm rounded-md border text-left transition-all duration-300 ${formData.visit_category === c.id
                     ? "border-border bg-mixed-bg shadow-soft-sm"
                     : "border-subtle hover:border-border hover:bg-bg-primary"
-                }`}
+                  }`}
               >
                 <div className={`font-medium ${formData.visit_category === c.id ? "text-accent" : "text-loud"}`}>
                   {c.label}
@@ -764,18 +836,17 @@ export default function NewRequest() {
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {[
-                      { mode: "visiting", label: "I'm visiting someone",  desc: "You are the visitor  -  they must approve" },
-                      { mode: "hosting",  label: "I'm hosting someone",   desc: "You are the host  -  auto-approved" },
+                      { mode: "visiting", label: "I'm visiting someone", desc: "You are the visitor  -  they must approve" },
+                      { mode: "hosting", label: "I'm hosting someone", desc: "You are the host  -  auto-approved" },
                     ].map(({ mode, label, desc }) => (
                       <button
                         key={mode}
                         type="button"
                         onClick={() => { setVisitMode(mode); resetEmpVisitState(); }}
-                        className={`p-3 rounded-md border text-left transition-all duration-200 ${
-                          visitMode === mode
+                        className={`p-3 rounded-md border text-left transition-all duration-200 ${visitMode === mode
                             ? "border-border bg-mixed-bg"
                             : "border-subtle hover:border-border"
-                        }`}
+                          }`}
                       >
                         <div className={`font-medium text-sm ${visitMode === mode ? "text-accent" : "text-loud"}`}>
                           {label}
@@ -808,8 +879,12 @@ export default function NewRequest() {
                     required
                     className={inputCls}
                   >
-                    <option value=""> -  Select Unit  - </option>
-                    {units.map(u => (
+                    <option value="">
+                      {units.length > 0 && otherUnits.length === 0
+                        ? " -  No other units available  - "
+                        : " -  Select Unit  - "}
+                    </option>
+                    {otherUnits.map(u => (
                       <option key={u.id} value={u.id}>
                         {u.name}{u.city ? `  -  ${u.city}` : ""}
                       </option>
@@ -887,7 +962,7 @@ export default function NewRequest() {
             {/* â”€â”€ EMPLOYEE VISIT for Unit Admin & Super Admin (while managing a unit) â”€â”€ */}
             {isEmpVisit && isAdminEmpVisit && (
               <div className="md:col-span-2 space-y-6">
-                
+
                 {/* Section header or info */}
                 <div className="p-4 rounded-md border border-subtle bg-mixed-bg text-sm">
                   <p className="text-loud font-medium">
@@ -964,8 +1039,12 @@ export default function NewRequest() {
                         required
                         className={inputCls}
                       >
-                        <option value=""> -  Select Unit  - </option>
-                        {units.map(u => (
+                        <option value="">
+                          {units.length > 0 && otherUnits.length === 0
+                            ? " -  No other units available  - "
+                            : " -  Select Unit  - "}
+                        </option>
+                        {otherUnits.map(u => (
                           <option key={u.id} value={u.id}>
                             {u.name}{u.city ? `  -  ${u.city}` : ""}
                           </option>
@@ -1036,20 +1115,22 @@ export default function NewRequest() {
                       <div className="flex gap-2">
                         <input
                           type="tel"
-                          placeholder="WhatsApp / mobile number"
+                          placeholder="10-digit mobile number"
+                          maxLength={10}
                           value={formData.visitor_phone}
                           onChange={e => {
-                            setFormData(p => ({ ...p, visitor_phone: e.target.value, visitor_name: '', visitor_email: '', visitor_id: '' }));
+                            const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                            setFormData(p => ({ ...p, visitor_phone: val, visitor_name: '', visitor_email: '', visitor_id: '' }));
                             resetVisitorLookup();
                           }}
-                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleVisitorLookup(); }}}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleVisitorLookup(); } }}
                           required
                           className={`${inputCls} flex-1`}
                         />
                         <button
                           type="button"
                           onClick={handleVisitorLookup}
-                          disabled={visitorLookupState === 'loading' || !formData.visitor_phone}
+                          disabled={visitorLookupState === 'loading' || formData.visitor_phone?.length !== 10}
                           className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 disabled:opacity-50 shrink-0"
                           style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
                         >
@@ -1059,6 +1140,11 @@ export default function NewRequest() {
                           {visitorLookupState === 'loading' ? 'Looking up...' : 'Lookup'}
                         </button>
                       </div>
+                      {visitorLookupState === 'idle' && formData.visitor_phone?.length > 0 && formData.visitor_phone?.length < 10 && (
+                        <p className="text-xs text-amber-500">
+                          Please enter a valid 10-digit mobile number
+                        </p>
+                      )}
 
                       {/* Status banners */}
                       {visitorLookupState === 'found' && (
@@ -1075,9 +1161,9 @@ export default function NewRequest() {
                           <span><strong>New visitor</strong>  -  fill in the details below. They will be saved automatically.</span>
                         </div>
                       )}
-                      {visitorLookupState === 'idle' && (
+                      {visitorLookupState === 'idle' && (!formData.visitor_phone || formData.visitor_phone.length === 0) && (
                         <p className="text-xs text-faint">
-                          Enter the visitor's WhatsApp / mobile number and click <strong>Lookup</strong>.
+                          Enter a valid 10-digit mobile number and click <strong>Lookup</strong>.
                           Details auto-fill for returning visitors.
                         </p>
                       )}
@@ -1237,19 +1323,21 @@ export default function NewRequest() {
                 <div className="flex gap-2">
                   <input
                     type="tel" name="visitor_phone" required
-                    placeholder="Representative's WhatsApp / mobile number"
+                    placeholder="10-digit contact / mobile number"
+                    maxLength={10}
                     value={formData.visitor_phone}
                     onChange={e => {
-                      setFormData(p => ({ ...p, visitor_phone: e.target.value, contact_person: '' }));
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      setFormData(p => ({ ...p, visitor_phone: val, contact_person: '' }));
                       resetVendorLookup();
                     }}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleVendorLookup(); }}}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleVendorLookup(); } }}
                     className={`${inputCls} flex-1`}
                   />
                   <button
                     type="button"
                     onClick={handleVendorLookup}
-                    disabled={vendorLookupState === 'loading' || !formData.visitor_phone}
+                    disabled={vendorLookupState === 'loading' || formData.visitor_phone?.length !== 10}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 disabled:opacity-50 shrink-0"
                     style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
                   >
@@ -1259,6 +1347,11 @@ export default function NewRequest() {
                     {vendorLookupState === 'loading' ? 'Looking up...' : 'Lookup'}
                   </button>
                 </div>
+                {vendorLookupState === 'idle' && formData.visitor_phone?.length > 0 && formData.visitor_phone?.length < 10 && (
+                  <p className="text-xs text-amber-500">
+                    Please enter a valid 10-digit mobile number
+                  </p>
+                )}
                 {vendorLookupState === 'found' && (
                   <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
                     style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
@@ -1273,9 +1366,9 @@ export default function NewRequest() {
                     <span><strong>New contact</strong>  -  fill in the name below.</span>
                   </div>
                 )}
-                {vendorLookupState === 'idle' && (
+                {vendorLookupState === 'idle' && (!formData.visitor_phone || formData.visitor_phone.length === 0) && (
                   <p className="text-xs text-faint">
-                    Enter the representative's mobile and click <strong>Lookup</strong> to auto-fill details.
+                    Enter a valid 10-digit mobile number and click <strong>Lookup</strong> to auto-fill details.
                   </p>
                 )}
               </div>
@@ -1364,12 +1457,21 @@ export default function NewRequest() {
                   <div className="flex-1 space-y-1 w-full">
                     <input
                       type="text"
-                      placeholder="ID Number"
+                      placeholder={comp.id_type === "AADHAAR" ? "12-digit Aadhaar Number" : "ID Number"}
                       required
                       value={comp.id_number}
+                      maxLength={comp.id_type === "AADHAAR" ? 12 : 50}
                       onChange={(e) => updateCompanion(idx, "id_number", e.target.value)}
-                      className="w-full bg-bg-primary px-2 border-0 border-b border-subtle  py-2 text-sm text-loud focus:ring-0 focus:border-border"
+                      className={`w-full bg-bg-primary px-2 border-0 border-b py-2 text-sm text-loud focus:ring-0 focus:border-border transition-colors ${comp.id_type === "AADHAAR" && comp.id_number && comp.id_number.length !== 12
+                          ? "border-red-500 focus:border-red-500"
+                          : "border-subtle"
+                        }`}
                     />
+                    {comp.id_type === "AADHAAR" && comp.id_number && comp.id_number.length !== 12 && (
+                      <p className="text-xs text-red-500 pt-0.5">
+                        Aadhaar must be exactly 12 digits
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -1520,7 +1622,7 @@ export default function NewRequest() {
             </div>
           </div>
         </div>
-      , document.body)}
+        , document.body)}
 
 
 

@@ -217,6 +217,21 @@ async function migrateUnitDatabase(conn, dbName) {
     }
   } catch (_) {}
 
+  // 2b. notifications.notification_type ENUM update (include 'WHATSAPP')
+  try {
+    const [cols] = await conn.query(
+      `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'notifications' AND COLUMN_NAME = 'notification_type'`,
+      [dbName]
+    );
+    if (cols.length > 0 && !cols[0].COLUMN_TYPE.includes("'WHATSAPP'")) {
+      await conn.query(
+        `ALTER TABLE \`${dbName}\`.notifications
+         MODIFY COLUMN notification_type ENUM('SMS','EMAIL','DASHBOARD','WHATSAPP') NOT NULL`
+      );
+    }
+  } catch (_) {}
+
   // 3. gate_passes columns
   await addColumnIfMissing(conn, dbName, 'gate_passes', 'checkout_method', "ENUM('DIRECT','QR_SCAN') NULL AFTER status");
   await addColumnIfMissing(conn, dbName, 'gate_passes', 'qr_expires_at', 'DATETIME NULL AFTER checkout_method');

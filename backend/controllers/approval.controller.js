@@ -9,7 +9,8 @@ const { generateGatePass } = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
 const { getSignedFileUrl } = require('../utils/s3.util');
-const { centralPool, getPool } = require('../services/dbManager');
+const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
+const { gatePassMediaUrl } = require('../services/whatsapp.service');
 // ── Inline schedule conflict check for the approval flow ─────────────────────
 // Checks if the host already has another APPROVED visit overlapping the given time.
 const checkApprovalConflict = async (db, hostUserId, visitDate, startTime, endTime, excludeRequestId) => {
@@ -396,13 +397,13 @@ const approveRequest = async (req, res) => {
           return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
         })()]
         : []),
-      // SMS visitor
-      ...(visitorPhone ? [notify({
-        visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
+      // SMS visitor (+ WhatsApp copy with the gate-pass QR image)
+      ...(visitorPhone ? [gatePassMediaUrl(passResult?.qr_code_path).then((whatsappMedia) => notify({
+        visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS', whatsappMedia,
         message: passResult?.pass_number
           ? `VMS: Your visit on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}. Gate Pass: ${passResult.pass_number}`
           : `VMS: Your visit on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}.`,
-      })] : []),
+      }))] : []),
       // Dashboard — requester
       ...(request.requester_user_id && request.requester_user_id !== user.id
         ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}.` })]
@@ -568,4 +569,33 @@ const rejectRequest = async (req, res) => {
   }
 };
 
-module.exports = { getInbox, approveRequest, rejectRequest };
+// ── getUserNotifications ──────────────────────────────────────────────────────
+const getUserNotifications = async (req, res) => {
+  try {
+    const user = req.user;
+    // Central users (super / global auditor) have no unit notifications. When one
+    // manages a unit, req.db is that unit's DB and their central id would match
+    // some unit user's id — so never look them up there.
+    if (!req.db || !user?.id || user.unit_db === 'central' || user.unit_db === CENTRAL_DB_NAME) {
+      return sendSuccess(res, [], 'No notifications.');
+    }
+    const [rows] = await req.db.query(
+      `SELECT n.id, n.visit_request_id, n.message, n.subject, n.created_at,
+              vr.visit_date, vr.visit_start_time, vr.visit_category, vr.status AS visit_status,
+              gp.pass_number
+       FROM notifications n
+       LEFT JOIN visit_requests vr ON vr.id = n.visit_request_id
+       LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
+       WHERE n.recipient_user_id = ? AND n.notification_type = 'DASHBOARD'
+       ORDER BY n.created_at DESC
+       LIMIT 20`,
+      [user.id]
+    );
+    return sendSuccess(res, rows, 'Notifications fetched successfully.');
+  } catch (err) {
+    console.error('[ApprovalController] getUserNotifications error:', err.message);
+    return sendSuccess(res, [], 'Empty notifications.');
+  }
+};
+
+module.exports = { getInbox, approveRequest, rejectRequest, getUserNotifications };

@@ -4,7 +4,11 @@
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
 const { generateGatePass }       = require('../services/gatePass.service');
-const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { isSuperAdmin, isUnitAdmin, isEmployee } = require('../middlewares/rbac.middleware');
+const { centralPool, getPool }      = require('../services/dbManager');
+
+/** Last 10 digits, for comparing mobile numbers. */
+const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
 const { getSignedFileUrl, withSignedUrls } = require('../utils/s3.util');
 
 // ── Helper: fetch a full gate pass row with joins ─────────────────────────────
@@ -80,21 +84,48 @@ const generatePass = async (req, res) => {
 const getPass = async (req, res) => {
   try {
     const { passNumber } = req.params;
+    const employee = isEmployee(req.user);
 
-    const [rows] = await req.db.query(
-      `SELECT id FROM gate_passes WHERE pass_number = ? LIMIT 1`,
+    // An employee hosted in another unit opens that unit's pass with ?unit_id=
+    let db = req.db;
+    const crossUnitId = employee && req.query.unit_id && Number(req.query.unit_id) !== Number(req.user.unit_id)
+      ? parseInt(req.query.unit_id, 10) : null;
+    if (crossUnitId) {
+      const [units] = await centralPool.query(
+        "SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = 'ACTIVE' LIMIT 1", [crossUnitId]
+      );
+      if (!units.length) return sendError(res, 'Gate pass not found.', 404);
+      db = getPool(units[0].db_name);
+    }
+
+    const [rows] = await db.query(
+      `SELECT gp.id, vr.host_user_id, vr.requester_user_id, vr.cross_unit_requester_id, vr.requester_unit_id,
+              vr.visitor_email, vr.visitor_phone
+       FROM gate_passes gp JOIN visit_requests vr ON vr.id = gp.visit_request_id
+       WHERE gp.pass_number = ? LIMIT 1`,
       [passNumber]
     );
     if (!rows.length) return sendError(res, 'Gate pass not found.', 404);
 
-    const passId = rows[0].id;
+    const pass   = rows[0];
+    const passId = pass.id;
 
-    await req.db.query(
-      `UPDATE gate_passes SET is_printed = TRUE WHERE id = ?`,
-      [passId]
-    );
+    if (employee) {
+      // Employees may open only passes they are connected to: as host or requester,
+      // or as the visitor themself (404, so pass numbers can't be probed)
+      const u = req.user;
+      const linked =
+        (!crossUnitId && (pass.host_user_id === u.id || pass.requester_user_id === u.id)) ||
+        (pass.cross_unit_requester_id === u.id && Number(pass.requester_unit_id) === Number(u.unit_id)) ||
+        (u.email && pass.visitor_email && pass.visitor_email.toLowerCase() === u.email.toLowerCase()) ||
+        (u.phone && pass.visitor_phone && last10(pass.visitor_phone) === last10(u.phone));
+      if (!linked) return sendError(res, 'Gate pass not found.', 404);
+    } else {
+      // Gate staff open a pass to print it; an employee viewing theirs doesn't count
+      await db.query('UPDATE gate_passes SET is_printed = TRUE WHERE id = ?', [passId]);
+    }
 
-    const fullPass = await fetchFullPass(req.db, passId);
+    const fullPass = await fetchFullPass(db, passId);
     return sendSuccess(res, fullPass, 'Gate pass retrieved successfully.');
   } catch (err) {
     console.error('[GatePassController] getPass error:', err.message);

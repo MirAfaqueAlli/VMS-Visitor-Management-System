@@ -254,32 +254,83 @@ function CascadeFilters({ isCentral, filters, showDept = false, showEmp = false,
 }
 
 // ─────────────────────────── export helpers ───────────────────────────────────
-function exportExcel(rows, columns, filename) {
-  const ws = XLSX.utils.json_to_sheet(rows.map(r => {
+async function fetchAllReportRows(endpoint, params = {}) {
+  const res = await apiClient.get(endpoint, {
+    params: {
+      ...params,
+      all: 'true',
+      export: 'true',
+      limit: 10000,
+    }
+  });
+  const data = res.data?.data;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.rows)) return data.rows;
+  return [];
+}
+
+function exportExcel(rows, columns, filename, { title, metadata } = {}) {
+  const headerRows = [];
+  if (title) headerRows.push([title]);
+  headerRows.push([`Generated: ${new Date().toLocaleString('en-GB')}`]);
+  if (metadata && typeof metadata === 'object') {
+    Object.entries(metadata).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        headerRows.push([`${k}:`, v]);
+      }
+    });
+  }
+  if (headerRows.length > 0) {
+    headerRows.push([]); // blank separator before headers
+  }
+
+  const tableData = rows.map(r => {
     const o = {};
     columns.forEach(c => { o[c.header] = c.accessor(r) ?? ''; });
     return o;
-  }));
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(headerRows);
+  XLSX.utils.sheet_add_json(ws, tableData, {
+    origin: headerRows.length > 0 ? `A${headerRows.length + 1}` : 'A1'
+  });
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Report');
-  XLSX.writeFile(wb, `${filename}.xlsx`);
+  const cleanFilename = (filename || 'report').replace(/[^a-zA-Z0-9_-]/g, '_');
+  XLSX.writeFile(wb, `${cleanFilename}.xlsx`);
 }
 
-function exportPDF(rows, columns, title, filename) {
+function exportPDF(rows, columns, title, filename, { metadata } = {}) {
   const doc = new jsPDF({ orientation: 'landscape' });
   doc.setFontSize(14);
   doc.text(title, 14, 16);
   doc.setFontSize(9);
-  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 23);
+  doc.setTextColor(100);
+  let y = 22;
+  doc.text(`Generated: ${new Date().toLocaleString('en-GB')}`, 14, y);
+
+  if (metadata && typeof metadata === 'object') {
+    const metaEntries = Object.entries(metadata).filter(([_, v]) => v !== undefined && v !== null && v !== '');
+    if (metaEntries.length > 0) {
+      y += 5;
+      const metaText = metaEntries.map(([k, v]) => `${k}: ${v}`).join('   |   ');
+      doc.setFontSize(8);
+      doc.setTextColor(70);
+      doc.text(metaText, 14, y);
+    }
+  }
+
   autoTable(doc, {
-    startY: 28,
+    startY: y + 5,
     head: [columns.map(c => c.header)],
     body: rows.map(r => columns.map(c => c.accessor(r) ?? '')),
-    styles: { fontSize: 8 },
-    headStyles: { fillColor: [99, 102, 241] },
-    alternateRowStyles: { fillColor: [245, 247, 255] },
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [99, 102, 241], fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [248, 249, 253] },
   });
-  doc.save(`${filename}.pdf`);
+  const cleanFilename = (filename || 'report').replace(/[^a-zA-Z0-9_-]/g, '_');
+  doc.save(`${cleanFilename}.pdf`);
 }
 
 // ─────────────────────────── reusable table + pagination ─────────────────────
@@ -334,7 +385,7 @@ function FilterBar({ from, setFrom, to, setTo, visitorType, setVisitorType, sear
   status, setStatus, showStatus = false, statusOptions = VISIT_STATUSES, showVisitorType = true,
   onApply, loading,
   cascadeFilters, isCentral, showDept = false, showEmp = false,
-  onExcelExport, onPdfExport }) {
+  onExcelExport, onPdfExport, exporting = false }) {
   return (
     <div className="space-y-3 mb-4 p-4 bg-bg-primary/50 rounded-lg border border-subtle">
       {/* Cascade Filters (Unit → Dept → Employee) */}
@@ -381,14 +432,19 @@ function FilterBar({ from, setFrom, to, setTo, visitorType, setVisitorType, sear
       </div>
 
       {/* Export buttons */}
-      <div className="flex gap-2 justify-end">
-        <button onClick={onExcelExport}
-          className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs text-muted hover:bg-bg-primary hover:text-loud transition-colors">
-          <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" /> Excel
+      <div className="flex items-center gap-2 justify-end pt-1 border-t border-subtle/50">
+        <span className="text-xs text-muted font-medium mr-1">Export Full Report:</span>
+        <button onClick={onExcelExport} disabled={exporting}
+          title="Download complete report across all pages in Excel"
+          className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs font-medium text-muted hover:bg-bg-primary hover:text-loud hover:border-green-500/50 transition-colors disabled:opacity-50">
+          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />}
+          Excel
         </button>
-        <button onClick={onPdfExport}
-          className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs text-muted hover:bg-bg-primary hover:text-loud transition-colors">
-          <FileText className="w-3.5 h-3.5 text-red-500" /> PDF
+        <button onClick={onPdfExport} disabled={exporting}
+          title="Download complete report across all pages in PDF"
+          className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs font-medium text-muted hover:bg-bg-primary hover:text-loud hover:border-red-500/50 transition-colors disabled:opacity-50">
+          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
+          PDF
         </button>
       </div>
     </div>
@@ -406,6 +462,8 @@ function EmployeeReport({ isCentral }) {
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const limit = 50;
@@ -433,16 +491,6 @@ function EmployeeReport({ isCentral }) {
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  const cols = [
-    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted">{r.unit_name || '—'}</span> },
-    { key: 'host_name',       label: 'Host Employee', render: r => <div><div className="font-medium text-loud">{r.host_name || '—'}</div><div className="text-xs text-faint">{r.employee_code}</div></div> },
-    { key: 'department_name', label: 'Department' },
-    { key: 'visitor_name',    label: 'Visitor', render: r => <div><div>{r.visitor_name || '—'}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
-    { key: 'visit_category',  label: 'Type', render: r => <CatBadge cat={r.visit_category} /> },
-    { key: 'visit_date',      label: 'Date', render: r => fmt(r.visit_date) },
-    { key: 'status',          label: 'Status', render: r => <SBadge status={r.status} /> },
-  ].filter(Boolean);
-
   const expCols = [
     isCentral && { header: 'Unit', accessor: r => r.unit_name },
     { header: 'Host Employee', accessor: r => r.host_name },
@@ -456,6 +504,156 @@ function EmployeeReport({ isCentral }) {
     { header: 'Purpose',       accessor: r => r.purpose },
   ].filter(Boolean);
 
+  // Download entire report across all employees
+  const handleExportAll = async (format) => {
+    try {
+      setExportingAll(true);
+      const params = {};
+      if (from) params.from = from;
+      if (to) params.to = to;
+      if (visitorType) params.visitor_type = visitorType;
+      if (search) params.search = search;
+      if (cf.selUnit) params.unit_db = cf.selUnit;
+      if (cf.selDept) params.department_id = cf.selDept;
+      if (cf.selEmp) params.host_user_id = cf.selEmp;
+
+      toast.loading('Preparing complete employee-wise report...', { id: 'emp-all-export' });
+      const allRows = await fetchAllReportRows('/reports/employee-wise', params);
+      toast.dismiss('emp-all-export');
+
+      if (!allRows || allRows.length === 0) {
+        toast.error('No matching records found to export.');
+        return;
+      }
+
+      const meta = {
+        'Report Name': 'Employee-Wise Visitor Report (All Records)',
+        'Unit': cf.units.find(u => u.db_name === cf.selUnit)?.name || (cf.selUnit ? cf.selUnit : 'All Units'),
+        'Department': cf.depts.find(d => String(d.id) === String(cf.selDept))?.name || (cf.selDept ? cf.selDept : 'All Departments'),
+        'Employee': cf.employees.find(e => String(e.id) === String(cf.selEmp))?.full_name || 'All Employees',
+        'Date Range': (from || to) ? `${from || 'Start'} to ${to || 'Present'}` : 'All Time',
+        'Total Records': allRows.length,
+      };
+
+      if (format === 'excel') {
+        exportExcel(allRows, expCols, 'employee_wise_report_all', { title: 'Employee-wise Visitor Report', metadata: meta });
+      } else {
+        exportPDF(allRows, expCols, 'Employee-wise Visitor Report', 'employee_wise_report_all', { metadata: meta });
+      }
+      toast.success(`Exported ${allRows.length} records successfully.`);
+    } catch (e) {
+      toast.dismiss('emp-all-export');
+      toast.error('Failed to export employee report: ' + (e?.message || 'Error'));
+    } finally {
+      setExportingAll(false);
+    }
+  };
+
+  // Download complete report of a particular employee
+  const handleDownloadEmployee = async (emp, format) => {
+    const hostId = emp.host_id || emp.id;
+    const hostCode = emp.employee_code || '';
+    const hostName = emp.host_name || emp.full_name || 'Employee';
+    const deptName = emp.department_name || (cf.depts.find(d => String(d.id) === String(cf.selDept))?.name) || '';
+    const unitDb = emp.unit_db || cf.selUnit;
+    const unitName = emp.unit_name || cf.units.find(u => u.db_name === cf.selUnit)?.name || '';
+
+    const key = `${format}-${hostId || hostCode || hostName}`;
+    try {
+      setDownloadingKey(key);
+      toast.loading(`Fetching full report for ${hostName}...`, { id: 'single-emp-dl' });
+
+      const params = {};
+      if (from) params.from = from;
+      if (to) params.to = to;
+      if (visitorType) params.visitor_type = visitorType;
+      if (hostId) params.host_user_id = hostId;
+      if (hostCode) params.employee_code = hostCode;
+      if (unitDb) params.unit_db = unitDb;
+
+      const singleRows = await fetchAllReportRows('/reports/employee-wise', params);
+      toast.dismiss('single-emp-dl');
+
+      if (!singleRows || singleRows.length === 0) {
+        toast.error(`No visit records found for ${hostName}.`);
+        return;
+      }
+
+      const cleanName = hostName.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cleanCode = (hostCode || 'EMP').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `Employee_Report_${cleanName}_${cleanCode}`;
+
+      const meta = {
+        'Report Type': 'Individual Employee Visit Report',
+        'Host Employee': `${hostName} (${hostCode || 'N/A'})`,
+        'Department': deptName || 'General',
+        'Unit': unitName || 'All Units',
+        'Date Range': (from || to) ? `${from || 'Start'} to ${to || 'Present'}` : 'All Time',
+        'Total Visits': singleRows.length,
+      };
+
+      if (format === 'excel') {
+        exportExcel(singleRows, expCols, filename, { title: `Employee Visit Report - ${hostName}`, metadata: meta });
+      } else {
+        exportPDF(singleRows, expCols, `Employee Visit Report - ${hostName}`, filename, { metadata: meta });
+      }
+      toast.success(`Downloaded complete report for ${hostName} (${singleRows.length} visits).`);
+    } catch (e) {
+      toast.dismiss('single-emp-dl');
+      toast.error('Failed to download employee report: ' + (e?.message || 'Error'));
+    } finally {
+      setDownloadingKey('');
+    }
+  };
+
+  const selectedEmpObj = cf.employees.find(e => String(e.id) === String(cf.selEmp));
+
+  const cols = [
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted">{r.unit_name || '—'}</span> },
+    { key: 'host_name',       label: 'Host Employee', render: r => <div><div className="font-medium text-loud">{r.host_name || '—'}</div><div className="text-xs text-faint">{r.employee_code}</div></div> },
+    { key: 'department_name', label: 'Department' },
+    { key: 'visitor_name',    label: 'Visitor', render: r => <div><div>{r.visitor_name || '—'}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
+    { key: 'visit_category',  label: 'Type', render: r => <CatBadge cat={r.visit_category} /> },
+    { key: 'visit_date',      label: 'Date', render: r => fmt(r.visit_date) },
+    { key: 'status',          label: 'Status', render: r => <SBadge status={r.status} /> },
+    {
+      key: 'actions',
+      label: 'Download Individual',
+      render: r => (
+        <div className="flex items-center gap-1.5 whitespace-nowrap">
+          <button
+            type="button"
+            title={`Download complete Excel report for ${r.host_name || 'this employee'}`}
+            onClick={() => handleDownloadEmployee(r, 'excel')}
+            disabled={downloadingKey === `excel-${r.host_id || r.employee_code || r.host_name}`}
+            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-green-500 text-loud hover:text-green-600 transition-colors disabled:opacity-50"
+          >
+            {downloadingKey === `excel-${r.host_id || r.employee_code || r.host_name}` ? (
+              <Loader2 className="w-3 h-3 animate-spin text-green-600" />
+            ) : (
+              <FileSpreadsheet className="w-3 h-3 text-green-600" />
+            )}
+            <span className="text-[11px] font-medium">Excel</span>
+          </button>
+          <button
+            type="button"
+            title={`Download complete PDF report for ${r.host_name || 'this employee'}`}
+            onClick={() => handleDownloadEmployee(r, 'pdf')}
+            disabled={downloadingKey === `pdf-${r.host_id || r.employee_code || r.host_name}`}
+            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-red-500 text-loud hover:text-red-600 transition-colors disabled:opacity-50"
+          >
+            {downloadingKey === `pdf-${r.host_id || r.employee_code || r.host_name}` ? (
+              <Loader2 className="w-3 h-3 animate-spin text-red-600" />
+            ) : (
+              <FileText className="w-3 h-3 text-red-600" />
+            )}
+            <span className="text-[11px] font-medium">PDF</span>
+          </button>
+        </div>
+      ),
+    },
+  ].filter(Boolean);
+
   return (
     <div>
       <FilterBar
@@ -464,9 +662,56 @@ function EmployeeReport({ isCentral }) {
         search={search} setSearch={setSearch}
         onApply={() => { setPage(1); fetch(); }} loading={loading}
         cascadeFilters={cf} isCentral={isCentral} showDept showEmp
-        onExcelExport={() => exportExcel(rows, expCols, 'employee_wise_report')}
-        onPdfExport={() => exportPDF(rows, expCols, 'Employee-wise Visitor Report', 'employee_wise_report')}
+        onExcelExport={() => handleExportAll('excel')}
+        onPdfExport={() => handleExportAll('pdf')}
+        exporting={exportingAll}
       />
+
+      {/* Contextual Individual Employee Download Banner when selected in Filter */}
+      {selectedEmpObj && (
+        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-loud text-sm">{selectedEmpObj.full_name}</span>
+                {selectedEmpObj.employee_code && (
+                  <span className="text-xs px-2 py-0.5 rounded bg-subtle text-muted font-mono">
+                    {selectedEmpObj.employee_code}
+                  </span>
+                )}
+                <span className="text-xs text-muted">
+                  ({cf.depts.find(d => String(d.id) === String(cf.selDept))?.name || 'Department'})
+                </span>
+              </div>
+              <p className="text-xs text-muted mt-0.5">
+                Download entire visit history report exclusively for this employee
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleDownloadEmployee(selectedEmpObj, 'excel')}
+              disabled={!!downloadingKey}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-green-500 hover:text-green-600 transition-colors shadow-sm disabled:opacity-50"
+            >
+              {downloadingKey === `excel-${selectedEmpObj.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />}
+              Download Excel
+            </button>
+            <button
+              onClick={() => handleDownloadEmployee(selectedEmpObj, 'pdf')}
+              disabled={!!downloadingKey}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-red-500 hover:text-red-600 transition-colors shadow-sm disabled:opacity-50"
+            >
+              {downloadingKey === `pdf-${selectedEmpObj.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
+              Download PDF
+            </button>
+          </div>
+        </div>
+      )}
+
       <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
         page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} />
@@ -483,6 +728,8 @@ function DepartmentReport({ isCentral }) {
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const limit = 50;
@@ -509,16 +756,6 @@ function DepartmentReport({ isCentral }) {
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  const cols = [
-    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted">{r.unit_name || '—'}</span> },
-    { key: 'department_name', label: 'Department', render: r => <span className="font-medium">{r.department_name || 'N/A'}</span> },
-    { key: 'host_name',       label: 'Host',       render: r => r.host_name || '—' },
-    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
-    { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
-    { key: 'visit_date',      label: 'Date',       render: r => fmt(r.visit_date) },
-    { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
-  ].filter(Boolean);
-
   const expCols = [
     isCentral && { header: 'Unit',        accessor: r => r.unit_name },
     { header: 'Department',  accessor: r => r.department_name },
@@ -531,6 +768,151 @@ function DepartmentReport({ isCentral }) {
     { header: 'Purpose',     accessor: r => r.purpose },
   ].filter(Boolean);
 
+  // Download entire department report across all departments
+  const handleExportAll = async (format) => {
+    try {
+      setExportingAll(true);
+      const params = {};
+      if (from) params.from = from;
+      if (to) params.to = to;
+      if (visitorType) params.visitor_type = visitorType;
+      if (search) params.search = search;
+      if (cf.selUnit) params.unit_db = cf.selUnit;
+      if (cf.selDept) params.department_id = cf.selDept;
+
+      toast.loading('Preparing complete department-wise report...', { id: 'dept-all-export' });
+      const allRows = await fetchAllReportRows('/reports/department-wise', params);
+      toast.dismiss('dept-all-export');
+
+      if (!allRows || allRows.length === 0) {
+        toast.error('No matching records found to export.');
+        return;
+      }
+
+      const meta = {
+        'Report Name': 'Department-Wise Visitor Report (All Records)',
+        'Unit': cf.units.find(u => u.db_name === cf.selUnit)?.name || (cf.selUnit ? cf.selUnit : 'All Units'),
+        'Department': cf.depts.find(d => String(d.id) === String(cf.selDept))?.name || (cf.selDept ? cf.selDept : 'All Departments'),
+        'Date Range': (from || to) ? `${from || 'Start'} to ${to || 'Present'}` : 'All Time',
+        'Total Records': allRows.length,
+      };
+
+      if (format === 'excel') {
+        exportExcel(allRows, expCols, 'department_wise_report_all', { title: 'Department-wise Visitor Report', metadata: meta });
+      } else {
+        exportPDF(allRows, expCols, 'Department-wise Visitor Report', 'department_wise_report_all', { metadata: meta });
+      }
+      toast.success(`Exported ${allRows.length} records successfully.`);
+    } catch (e) {
+      toast.dismiss('dept-all-export');
+      toast.error('Failed to export department report: ' + (e?.message || 'Error'));
+    } finally {
+      setExportingAll(false);
+    }
+  };
+
+  // Download complete report of a particular department of a particular unit
+  const handleDownloadDept = async (dept, format) => {
+    const deptId = dept.department_id || dept.id;
+    const deptName = dept.department_name || dept.name || 'Department';
+    const unitDb = dept.unit_db || cf.selUnit;
+    const unitName = dept.unit_name || cf.units.find(u => u.db_name === cf.selUnit)?.name || '';
+
+    const key = `${format}-${deptId || deptName}`;
+    try {
+      setDownloadingKey(key);
+      toast.loading(`Fetching report for ${deptName}...`, { id: 'single-dept-dl' });
+
+      const params = {};
+      if (from) params.from = from;
+      if (to) params.to = to;
+      if (visitorType) params.visitor_type = visitorType;
+      if (deptId) params.department_id = deptId;
+      if (deptName) params.department_name = deptName;
+      if (unitDb) params.unit_db = unitDb;
+
+      const singleRows = await fetchAllReportRows('/reports/department-wise', params);
+      toast.dismiss('single-dept-dl');
+
+      if (!singleRows || singleRows.length === 0) {
+        toast.error(`No visit records found for ${deptName}.`);
+        return;
+      }
+
+      const cleanDept = deptName.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cleanUnit = (unitName || 'AllUnits').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `Department_Report_${cleanDept}_${cleanUnit}`;
+
+      const meta = {
+        'Report Type': 'Department-Wise Visit Report',
+        'Department': deptName,
+        'Unit': unitName || 'All Units',
+        'Date Range': (from || to) ? `${from || 'Start'} to ${to || 'Present'}` : 'All Time',
+        'Total Visits': singleRows.length,
+      };
+
+      if (format === 'excel') {
+        exportExcel(singleRows, expCols, filename, { title: `Department Visit Report - ${deptName}`, metadata: meta });
+      } else {
+        exportPDF(singleRows, expCols, `Department Visit Report - ${deptName}`, filename, { metadata: meta });
+      }
+      toast.success(`Downloaded complete report for ${deptName} (${singleRows.length} visits).`);
+    } catch (e) {
+      toast.dismiss('single-dept-dl');
+      toast.error('Failed to download department report: ' + (e?.message || 'Error'));
+    } finally {
+      setDownloadingKey('');
+    }
+  };
+
+  const selectedDeptObj = cf.depts.find(d => String(d.id) === String(cf.selDept));
+
+  const cols = [
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted">{r.unit_name || '—'}</span> },
+    { key: 'department_name', label: 'Department', render: r => <span className="font-medium">{r.department_name || 'N/A'}</span> },
+    { key: 'host_name',       label: 'Host',       render: r => r.host_name || '—' },
+    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
+    { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
+    { key: 'visit_date',      label: 'Date',       render: r => fmt(r.visit_date) },
+    { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
+    {
+      key: 'actions',
+      label: 'Download Dept',
+      render: r => (
+        <div className="flex items-center gap-1.5 whitespace-nowrap">
+          <button
+            type="button"
+            title={`Download complete Excel report for ${r.department_name || 'this department'}`}
+            onClick={() => handleDownloadDept(r, 'excel')}
+            disabled={downloadingKey === `excel-${r.department_id || r.department_name}`}
+            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-green-500 text-loud hover:text-green-600 transition-colors disabled:opacity-50"
+          >
+            {downloadingKey === `excel-${r.department_id || r.department_name}` ? (
+              <Loader2 className="w-3 h-3 animate-spin text-green-600" />
+            ) : (
+              <FileSpreadsheet className="w-3 h-3 text-green-600" />
+            )}
+            <span className="text-[11px] font-medium">Excel</span>
+          </button>
+          <button
+            type="button"
+            title={`Download complete PDF report for ${r.department_name || 'this department'}`}
+            onClick={() => handleDownloadDept(r, 'pdf')}
+            disabled={downloadingKey === `pdf-${r.department_id || r.department_name}`}
+            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-red-500 text-loud hover:text-red-600 transition-colors disabled:opacity-50"
+          >
+            {downloadingKey === `pdf-${r.department_id || r.department_name}` ? (
+              <Loader2 className="w-3 h-3 animate-spin text-red-600" />
+            ) : (
+              <FileText className="w-3 h-3 text-red-600" />
+            )}
+            <span className="text-[11px] font-medium">PDF</span>
+          </button>
+        </div>
+      ),
+    },
+  ].filter(Boolean);
+
   return (
     <div>
       <FilterBar
@@ -539,9 +921,51 @@ function DepartmentReport({ isCentral }) {
         search={search} setSearch={setSearch}
         onApply={() => { setPage(1); fetch(); }} loading={loading}
         cascadeFilters={cf} isCentral={isCentral} showDept
-        onExcelExport={() => exportExcel(rows, expCols, 'department_wise_report')}
-        onPdfExport={() => exportPDF(rows, expCols, 'Department-wise Visitor Report', 'department_wise_report')}
+        onExcelExport={() => handleExportAll('excel')}
+        onPdfExport={() => handleExportAll('pdf')}
+        exporting={exportingAll}
       />
+
+      {/* Contextual Individual Department Download Banner when selected in Filter */}
+      {selectedDeptObj && (
+        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
+              <Building2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-loud text-sm">{selectedDeptObj.name}</span>
+                <span className="text-xs text-muted">
+                  ({cf.units.find(u => u.db_name === cf.selUnit)?.name || 'Selected Unit'})
+                </span>
+              </div>
+              <p className="text-xs text-muted mt-0.5">
+                Download entire visit report separated for this specific department
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleDownloadDept(selectedDeptObj, 'excel')}
+              disabled={!!downloadingKey}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-green-500 hover:text-green-600 transition-colors shadow-sm disabled:opacity-50"
+            >
+              {downloadingKey === `excel-${selectedDeptObj.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />}
+              Download Excel
+            </button>
+            <button
+              onClick={() => handleDownloadDept(selectedDeptObj, 'pdf')}
+              disabled={!!downloadingKey}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-red-500 hover:text-red-600 transition-colors shadow-sm disabled:opacity-50"
+            >
+              {downloadingKey === `pdf-${selectedDeptObj.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
+              Download PDF
+            </button>
+          </div>
+        </div>
+      )}
+
       <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
         page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} />
@@ -559,6 +983,7 @@ function UnitReport({ isCentral }) {
   const [search, setSearch] = useState('');
   const [data,    setData]    = useState(null);   // { rows: [], units: [] }
   const [loading, setLoading] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState('');
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -580,7 +1005,70 @@ function UnitReport({ isCentral }) {
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  // Unit-level: show their own breakdown as dept table
+  const unitVisitsExpCols = [
+    { header: 'Unit',         accessor: r => r.unit_name },
+    { header: 'Visitor Name', accessor: r => r.visitor_name },
+    { header: 'Visitor Phone',accessor: r => r.visitor_phone },
+    { header: 'Department',   accessor: r => r.department_name },
+    { header: 'Host Employee',accessor: r => r.host_name },
+    { header: 'Employee Code',accessor: r => r.employee_code },
+    { header: 'Type',         accessor: r => CATEGORY_LABELS[r.visit_category] ?? r.visit_category },
+    { header: 'Date',         accessor: r => fmt(r.visit_date) },
+    { header: 'Start Time',   accessor: r => fmtTime(r.visit_start_time) },
+    { header: 'End Time',     accessor: r => fmtTime(r.visit_end_time) },
+    { header: 'Status',       accessor: r => r.status },
+    { header: 'Purpose',      accessor: r => r.purpose },
+  ];
+
+  // Download all individual visits for a particular unit
+  const handleDownloadUnitVisits = async (unitObj, format) => {
+    const unitDb = unitObj.unit_db || cf.selUnit;
+    const unitName = unitObj.unit_name || cf.units.find(u => u.db_name === cf.selUnit)?.name || 'Unit';
+    const key = `unit-${format}-${unitDb || unitName}`;
+    try {
+      setDownloadingKey(key);
+      toast.loading(`Fetching detailed visit report for ${unitName}...`, { id: 'unit-dl' });
+
+      const params = { details: 'true' };
+      if (from) params.from = from;
+      if (to)   params.to   = to;
+      if (visitorType) params.visitor_type = visitorType;
+      if (unitDb) params.unit_db = unitDb;
+
+      const visits = await fetchAllReportRows('/reports/unit-wise', params);
+      toast.dismiss('unit-dl');
+
+      if (!visits || visits.length === 0) {
+        toast.error(`No detailed visit records found for ${unitName}.`);
+        return;
+      }
+
+      const cleanUnit = unitName.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `Unit_Visits_Report_${cleanUnit}`;
+
+      const meta = {
+        'Report Type': 'Unit Detailed Visits Report',
+        'Unit': unitName,
+        'Office Type': officeTypeLabel(unitObj.office_type),
+        'Date Range': (from || to) ? `${from || 'Start'} to ${to || 'Present'}` : 'All Time',
+        'Total Visits': visits.length,
+      };
+
+      if (format === 'excel') {
+        exportExcel(visits, unitVisitsExpCols, filename, { title: `Detailed Visits Report - ${unitName}`, metadata: meta });
+      } else {
+        exportPDF(visits, unitVisitsExpCols, `Detailed Visits Report - ${unitName}`, filename, { metadata: meta });
+      }
+      toast.success(`Downloaded ${visits.length} visit records for ${unitName}.`);
+    } catch (e) {
+      toast.dismiss('unit-dl');
+      toast.error('Failed to download unit visits report: ' + (e?.message || 'Error'));
+    } finally {
+      setDownloadingKey('');
+    }
+  };
+
+  // Unit-level: show their own breakdown as dept table with detailed download option
   if (!isCentral) {
     const rows = data?.rows ?? [];
     const cols = [
@@ -603,9 +1091,43 @@ function UnitReport({ isCentral }) {
           search={search} setSearch={setSearch}
           onApply={fetch} loading={loading}
           cascadeFilters={cf} isCentral={false}
-          onExcelExport={() => exportExcel(rows, expCols, 'unit_dept_breakdown')}
+          onExcelExport={() => exportExcel(rows, expCols, 'unit_dept_breakdown', { title: 'Unit Department Breakdown' })}
           onPdfExport={() => exportPDF(rows, expCols, 'Unit Breakdown by Department', 'unit_dept_breakdown')}
         />
+
+        {/* Detailed Visits Download Banner for Unit-level users */}
+        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
+              <Building className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="font-semibold text-loud text-sm">Download Complete Unit Visits</span>
+              <p className="text-xs text-muted mt-0.5">
+                Download all individual visitor records with timestamps, departments, and hosts for your unit
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleDownloadUnitVisits({ unit_name: 'Unit_Visits' }, 'excel')}
+              disabled={!!downloadingKey}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-green-500 hover:text-green-600 transition-colors shadow-sm disabled:opacity-50"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />
+              Detailed Visits (Excel)
+            </button>
+            <button
+              onClick={() => handleDownloadUnitVisits({ unit_name: 'Unit_Visits' }, 'pdf')}
+              disabled={!!downloadingKey}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-red-500 hover:text-red-600 transition-colors shadow-sm disabled:opacity-50"
+            >
+              <FileText className="w-3.5 h-3.5 text-red-500" />
+              Detailed Visits (PDF)
+            </button>
+          </div>
+        </div>
+
         <ReportTable cols={cols} rows={rows} loading={loading}
           page={1} setPage={() => {}} totalPages={1}
           emptyMsg="No breakdown data found." />
@@ -613,7 +1135,7 @@ function UnitReport({ isCentral }) {
     );
   }
 
-  // Global: unit cards
+  // Global: unit cards with detailed visits download per card + overview summary
   const unitRows = data?.rows ?? [];
   const expCols = [
     { header: 'Unit',        accessor: r => r.unit_name },
@@ -621,9 +1143,11 @@ function UnitReport({ isCentral }) {
     { header: 'Total',       accessor: r => r.total },
   ];
 
+  const selectedUnitObj = cf.units.find(u => u.db_name === cf.selUnit);
+
   return (
     <div>
-      {/* Office type (tender 1.1.3: Units / Corporate / Training Centre wise) */}
+      {/* Office type filter */}
       <div className="relative mb-3 max-w-xs">
         <select value={officeType} onChange={e => setOfficeType(e.target.value)}
           className="block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer">
@@ -632,15 +1156,57 @@ function UnitReport({ isCentral }) {
         </select>
         <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
       </div>
+
       <FilterBar
         from={from} setFrom={setFrom} to={to} setTo={setTo}
         visitorType={visitorType} setVisitorType={setVisitorType}
         search={search} setSearch={setSearch}
         onApply={fetch} loading={loading}
         cascadeFilters={cf} isCentral
-        onExcelExport={() => exportExcel(unitRows, expCols, 'unit_wise_report')}
-        onPdfExport={() => exportPDF(unitRows, expCols, 'Unit-wise Visit Report', 'unit_wise_report')}
+        onExcelExport={() => exportExcel(unitRows, expCols, 'unit_wise_report_summary', { title: 'Unit-wise Visit Summary Report' })}
+        onPdfExport={() => exportPDF(unitRows, expCols, 'Unit-wise Visit Report', 'unit_wise_report_summary')}
       />
+
+      {/* Contextual Unit Download Banner when a Unit is Selected in CascadeFilter */}
+      {selectedUnitObj && (
+        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
+              <Building className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-loud text-sm">{selectedUnitObj.name}</span>
+                <span className="text-xs px-2 py-0.5 rounded bg-subtle text-muted">
+                  {officeTypeLabel(selectedUnitObj.type || selectedUnitObj.office_type)}
+                </span>
+              </div>
+              <p className="text-xs text-muted mt-0.5">
+                Download complete individual visit records for this unit
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleDownloadUnitVisits({ unit_db: selectedUnitObj.db_name, unit_name: selectedUnitObj.name, office_type: selectedUnitObj.type }, 'excel')}
+              disabled={!!downloadingKey}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-green-500 hover:text-green-600 transition-colors shadow-sm disabled:opacity-50"
+            >
+              {downloadingKey === `unit-excel-${selectedUnitObj.db_name}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />}
+              Download Unit Visits (Excel)
+            </button>
+            <button
+              onClick={() => handleDownloadUnitVisits({ unit_db: selectedUnitObj.db_name, unit_name: selectedUnitObj.name, office_type: selectedUnitObj.type }, 'pdf')}
+              disabled={!!downloadingKey}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-red-500 hover:text-red-600 transition-colors shadow-sm disabled:opacity-50"
+            >
+              {downloadingKey === `unit-pdf-${selectedUnitObj.db_name}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
+              Download Unit Visits (PDF)
+            </button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="py-12 text-center text-faint italic">Loading…</div>
       ) : unitRows.length === 0 ? (
@@ -648,24 +1214,61 @@ function UnitReport({ isCentral }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {unitRows.map((u, i) => (
-            <div key={u.unit_name} className="vms-card rounded-lg p-5">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <h4 className="font-semibold text-loud text-sm">{u.unit_name}</h4>
-                  <p className="text-[11px] text-faint">{officeTypeLabel(u.office_type)}</p>
-                </div>
-                <span className="text-2xl font-bold text-accent">{u.total}</span>
-              </div>
-              <div className="space-y-1.5">
-                {(u.breakdown ?? []).map((b, j) => (
-                  <div key={j} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <CatBadge cat={b.visit_category} />
-                      <SBadge status={b.status} />
-                    </div>
-                    <span className="font-semibold text-muted">{b.count}</span>
+            <div key={u.unit_name || i} className="vms-card rounded-lg p-5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h4 className="font-semibold text-loud text-sm">{u.unit_name}</h4>
+                    <p className="text-[11px] text-faint">{officeTypeLabel(u.office_type)}</p>
                   </div>
-                ))}
+                  <span className="text-2xl font-bold text-accent">{u.total}</span>
+                </div>
+                <div className="space-y-1.5 mb-3">
+                  {(u.breakdown ?? []).map((b, j) => (
+                    <div key={j} className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <CatBadge cat={b.visit_category} />
+                        <SBadge status={b.status} />
+                      </div>
+                      <span className="font-semibold text-muted">{b.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Per-Unit Detailed Visits Download Section */}
+              <div className="mt-3 pt-3 border-t border-subtle flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted font-medium">Detailed Visits:</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    title={`Download detailed visit report for ${u.unit_name} in Excel`}
+                    onClick={() => handleDownloadUnitVisits(u, 'excel')}
+                    disabled={downloadingKey === `unit-excel-${u.unit_db || u.unit_name}`}
+                    className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-green-500 text-loud hover:text-green-600 transition-colors disabled:opacity-50"
+                  >
+                    {downloadingKey === `unit-excel-${u.unit_db || u.unit_name}` ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-green-600" />
+                    ) : (
+                      <FileSpreadsheet className="w-3 h-3 text-green-600" />
+                    )}
+                    <span className="text-[11px] font-medium">Excel</span>
+                  </button>
+                  <button
+                    type="button"
+                    title={`Download detailed visit report for ${u.unit_name} in PDF`}
+                    onClick={() => handleDownloadUnitVisits(u, 'pdf')}
+                    disabled={downloadingKey === `unit-pdf-${u.unit_db || u.unit_name}`}
+                    className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-red-500 text-loud hover:text-red-600 transition-colors disabled:opacity-50"
+                  >
+                    {downloadingKey === `unit-pdf-${u.unit_db || u.unit_name}` ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-red-600" />
+                    ) : (
+                      <FileText className="w-3 h-3 text-red-600" />
+                    )}
+                    <span className="text-[11px] font-medium">PDF</span>
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -685,6 +1288,7 @@ function RejectedReport({ isCentral }) {
   const [search, setSearch] = useState('');
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
   const [page, setPage]   = useState(1);
   const [total, setTotal] = useState(0);
   const limit = 50;
@@ -736,6 +1340,50 @@ function RejectedReport({ isCentral }) {
     { header: 'Purpose',          accessor: r => r.purpose },
   ].filter(Boolean);
 
+  const handleExportAll = async (format) => {
+    try {
+      setExportingAll(true);
+      const params = {};
+      if (from) params.from = from;
+      if (to)   params.to   = to;
+      if (visitorType) params.visitor_type  = visitorType;
+      if (status)      params.status        = status;
+      if (search)      params.search        = search;
+      if (cf.selUnit)  params.unit_db       = cf.selUnit;
+      if (cf.selDept)  params.department_id = cf.selDept;
+
+      toast.loading('Preparing rejected visitors report...', { id: 'rej-export' });
+      const allRows = await fetchAllReportRows('/reports/rejected', params);
+      toast.dismiss('rej-export');
+
+      if (!allRows || allRows.length === 0) {
+        toast.error('No matching records found to export.');
+        return;
+      }
+
+      const meta = {
+        'Report Name': 'Rejected / Not Allowed Visitors Report',
+        'Unit': cf.units.find(u => u.db_name === cf.selUnit)?.name || (cf.selUnit ? cf.selUnit : 'All Units'),
+        'Department': cf.depts.find(d => String(d.id) === String(cf.selDept))?.name || (cf.selDept ? cf.selDept : 'All Departments'),
+        'Status Filter': status ? status.replace(/_/g, ' ') : 'All',
+        'Date Range': (from || to) ? `${from || 'Start'} to ${to || 'Present'}` : 'All Time',
+        'Total Records': allRows.length,
+      };
+
+      if (format === 'excel') {
+        exportExcel(allRows, expCols, 'rejected_visitors_report_all', { title: 'Rejected Visitors Report', metadata: meta });
+      } else {
+        exportPDF(allRows, expCols, 'Rejected / Not Allowed Visitors', 'rejected_visitors_report_all', { metadata: meta });
+      }
+      toast.success(`Exported ${allRows.length} records successfully.`);
+    } catch (e) {
+      toast.dismiss('rej-export');
+      toast.error('Failed to export rejected report: ' + (e?.message || 'Error'));
+    } finally {
+      setExportingAll(false);
+    }
+  };
+
   return (
     <div>
       <FilterBar
@@ -745,8 +1393,9 @@ function RejectedReport({ isCentral }) {
         search={search} setSearch={setSearch}
         onApply={() => { setPage(1); fetch(); }} loading={loading}
         cascadeFilters={cf} isCentral={isCentral} showDept
-        onExcelExport={() => exportExcel(rows, expCols, 'rejected_report')}
-        onPdfExport={() => exportPDF(rows, expCols, 'Rejected / Not Allowed Visitors', 'rejected_report')}
+        onExcelExport={() => handleExportAll('excel')}
+        onPdfExport={() => handleExportAll('pdf')}
+        exporting={exportingAll}
       />
       <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
@@ -764,6 +1413,7 @@ function DebarredReport({ isCentral }) {
   const [search, setSearch] = useState('');
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
   const [page, setPage]   = useState(1);
   const [total, setTotal] = useState(0);
   const limit = 50;
@@ -811,6 +1461,47 @@ function DebarredReport({ isCentral }) {
     { header: 'Lift Reason',   accessor: r => r.lift_reason },
   ].filter(Boolean);
 
+  const handleExportAll = async (format) => {
+    try {
+      setExportingAll(true);
+      const params = {};
+      if (from) params.from = from;
+      if (to)   params.to   = to;
+      if (status) params.status = status;
+      if (search) params.search = search;
+      if (cf.selUnit) params.unit_db = cf.selUnit;
+
+      toast.loading('Preparing debarred visitors report...', { id: 'deb-export' });
+      const allRows = await fetchAllReportRows('/reports/debarred', params);
+      toast.dismiss('deb-export');
+
+      if (!allRows || allRows.length === 0) {
+        toast.error('No matching records found to export.');
+        return;
+      }
+
+      const meta = {
+        'Report Name': 'Debarred Visitors Report',
+        'Unit': cf.units.find(u => u.db_name === cf.selUnit)?.name || (cf.selUnit ? cf.selUnit : 'All Units'),
+        'Status Filter': status === 'ACTIVE' ? 'Currently Debarred' : status === 'LIFTED' ? 'Lifted' : 'All',
+        'Date Range': (from || to) ? `${from || 'Start'} to ${to || 'Present'}` : 'All Time',
+        'Total Records': allRows.length,
+      };
+
+      if (format === 'excel') {
+        exportExcel(allRows, expCols, 'debarred_visitors_report_all', { title: 'Debarred Visitors Report', metadata: meta });
+      } else {
+        exportPDF(allRows, expCols, 'Debarred Visitors', 'debarred_visitors_report_all', { metadata: meta });
+      }
+      toast.success(`Exported ${allRows.length} records successfully.`);
+    } catch (e) {
+      toast.dismiss('deb-export');
+      toast.error('Failed to export debarred report: ' + (e?.message || 'Error'));
+    } finally {
+      setExportingAll(false);
+    }
+  };
+
   return (
     <div>
       <FilterBar
@@ -820,8 +1511,9 @@ function DebarredReport({ isCentral }) {
         search={search} setSearch={setSearch}
         onApply={() => { setPage(1); fetch(); }} loading={loading}
         cascadeFilters={cf} isCentral={isCentral}
-        onExcelExport={() => exportExcel(rows, expCols, 'debarred_visitors_report')}
-        onPdfExport={() => exportPDF(rows, expCols, 'Debarred Visitors', 'debarred_visitors_report')}
+        onExcelExport={() => handleExportAll('excel')}
+        onPdfExport={() => handleExportAll('pdf')}
+        exporting={exportingAll}
       />
       <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
@@ -879,6 +1571,21 @@ function ActiveExpectedReport({ isCentral }) {
     { header: 'Expected At', accessor: r => fmtTime(r.check_in_time) },
   ].filter(Boolean);
 
+  const handleExport = (format) => {
+    const meta = {
+      'Report Name': 'Expected Visitors Report',
+      'Unit': cf.units.find(u => u.db_name === cf.selUnit)?.name || (cf.selUnit ? cf.selUnit : 'All Units'),
+      'Department': cf.depts.find(d => String(d.id) === String(cf.selDept))?.name || (cf.selDept ? cf.selDept : 'All Departments'),
+      'Date': date,
+      'Total Expected': expected.length,
+    };
+    if (format === 'excel') {
+      exportExcel(expected, expColsExpected, `expected_visitors_${date}`, { title: 'Expected Visitors Report', metadata: meta });
+    } else {
+      exportPDF(expected, expColsExpected, 'Expected Visitors', `expected_visitors_${date}`, { metadata: meta });
+    }
+  };
+
   return (
     <div>
       {/* Filter bar — date replaces from/to */}
@@ -908,13 +1615,14 @@ function ActiveExpectedReport({ isCentral }) {
             Apply
           </button>
         </div>
-        <div className="flex gap-2 justify-end">
-          <button onClick={() => exportExcel(expected, expColsExpected, 'expected_visitors')}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs text-muted hover:bg-bg-primary hover:text-loud transition-colors">
+        <div className="flex items-center gap-2 justify-end pt-1 border-t border-subtle/50">
+          <span className="text-xs text-muted font-medium mr-1">Export:</span>
+          <button onClick={() => handleExport('excel')}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs font-medium text-muted hover:bg-bg-primary hover:text-loud transition-colors">
             <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" /> Excel
           </button>
-          <button onClick={() => exportPDF(expected, expColsExpected, 'Expected Visitors', 'expected_visitors')}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs text-muted hover:bg-bg-primary hover:text-loud transition-colors">
+          <button onClick={() => handleExport('pdf')}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs font-medium text-muted hover:bg-bg-primary hover:text-loud transition-colors">
             <FileText className="w-3.5 h-3.5 text-red-500" /> PDF
           </button>
         </div>
@@ -937,6 +1645,8 @@ function VisitHistoryReport({ isCentral }) {
   const [search, setSearch] = useState('');
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState('');
   const [page, setPage]   = useState(1);
   const [total, setTotal] = useState(0);
   const limit = 50;
@@ -963,17 +1673,6 @@ function VisitHistoryReport({ isCentral }) {
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  const cols = [
-    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted text-xs">{r.unit_name}</span> },
-    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
-    { key: 'host_name',       label: 'Host',       render: r => <div><div>{r.host_name}</div><div className="text-xs text-faint">{r.department_name}</div></div> },
-    { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
-    { key: 'visit_date',      label: 'Date',       render: r => fmt(r.visit_date) },
-    { key: 'check_in_time',   label: 'In',         render: r => fmtTime(r.check_in_time) },
-    { key: 'check_out_time',  label: 'Out',        render: r => fmtTime(r.check_out_time) },
-    { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
-  ].filter(Boolean);
-
   const expCols = [
     isCentral && { header: 'Unit',        accessor: r => r.unit_name },
     { header: 'Visitor Name',  accessor: r => r.visitor_name },
@@ -989,6 +1688,136 @@ function VisitHistoryReport({ isCentral }) {
     { header: 'Rejection Reason', accessor: r => r.rejection_reason },
   ].filter(Boolean);
 
+  const handleExportAll = async (format) => {
+    try {
+      setExportingAll(true);
+      const params = {};
+      if (from) params.from = from;
+      if (to)   params.to   = to;
+      if (visitorType) params.visitor_type = visitorType;
+      if (search) params.search = search;
+      if (cf.selUnit) params.unit_db = cf.selUnit;
+      if (cf.selDept) params.department_id = cf.selDept;
+
+      toast.loading('Preparing detailed visit history report...', { id: 'hist-export' });
+      const allRows = await fetchAllReportRows('/reports/visit-history', params);
+      toast.dismiss('hist-export');
+
+      if (!allRows || allRows.length === 0) {
+        toast.error('No matching records found to export.');
+        return;
+      }
+
+      const meta = {
+        'Report Name': 'Detailed Visit History Report (All Records)',
+        'Unit': cf.units.find(u => u.db_name === cf.selUnit)?.name || (cf.selUnit ? cf.selUnit : 'All Units'),
+        'Department': cf.depts.find(d => String(d.id) === String(cf.selDept))?.name || (cf.selDept ? cf.selDept : 'All Departments'),
+        'Date Range': (from || to) ? `${from || 'Start'} to ${to || 'Present'}` : 'All Time',
+        'Total Records': allRows.length,
+      };
+
+      if (format === 'excel') {
+        exportExcel(allRows, expCols, 'detailed_visit_history_all', { title: 'Detailed Visit History Report', metadata: meta });
+      } else {
+        exportPDF(allRows, expCols, 'Detailed Visit History', 'detailed_visit_history_all', { metadata: meta });
+      }
+      toast.success(`Exported ${allRows.length} records successfully.`);
+    } catch (e) {
+      toast.dismiss('hist-export');
+      toast.error('Failed to export visit history: ' + (e?.message || 'Error'));
+    } finally {
+      setExportingAll(false);
+    }
+  };
+
+  // Download complete visit history for a specific visitor or host in that row
+  const handleDownloadSingleHistory = async (row, format) => {
+    const visitorPhone = row.visitor_phone;
+    const visitorName = row.visitor_name || 'Visitor';
+    const key = `${format}-${visitorPhone || row.id}`;
+    try {
+      setDownloadingKey(key);
+      toast.loading(`Fetching history for ${visitorName}...`, { id: 'single-hist-dl' });
+      const params = { search: visitorPhone || visitorName };
+      if (row.unit_db || cf.selUnit) params.unit_db = row.unit_db || cf.selUnit;
+
+      const singleRows = await fetchAllReportRows('/reports/visit-history', params);
+      toast.dismiss('single-hist-dl');
+
+      if (!singleRows || singleRows.length === 0) {
+        toast.error(`No history records found for ${visitorName}.`);
+        return;
+      }
+
+      const cleanName = visitorName.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `Visitor_History_${cleanName}`;
+      const meta = {
+        'Report Type': 'Visitor History Report',
+        'Visitor': `${visitorName} (${visitorPhone || 'N/A'})`,
+        'Total Visits': singleRows.length,
+      };
+
+      if (format === 'excel') {
+        exportExcel(singleRows, expCols, filename, { title: `Visitor History - ${visitorName}`, metadata: meta });
+      } else {
+        exportPDF(singleRows, expCols, `Visitor History - ${visitorName}`, filename, { metadata: meta });
+      }
+      toast.success(`Downloaded ${singleRows.length} visit records for ${visitorName}.`);
+    } catch (e) {
+      toast.dismiss('single-hist-dl');
+      toast.error('Failed to download visitor history: ' + (e?.message || 'Error'));
+    } finally {
+      setDownloadingKey('');
+    }
+  };
+
+  const cols = [
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted text-xs">{r.unit_name}</span> },
+    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
+    { key: 'host_name',       label: 'Host',       render: r => <div><div>{r.host_name}</div><div className="text-xs text-faint">{r.department_name}</div></div> },
+    { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
+    { key: 'visit_date',      label: 'Date',       render: r => fmt(r.visit_date) },
+    { key: 'check_in_time',   label: 'In',         render: r => fmtTime(r.check_in_time) },
+    { key: 'check_out_time',  label: 'Out',        render: r => fmtTime(r.check_out_time) },
+    { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
+    {
+      key: 'actions',
+      label: 'Visitor Report',
+      render: r => (
+        <div className="flex items-center gap-1.5 whitespace-nowrap">
+          <button
+            type="button"
+            title={`Download history for ${r.visitor_name} (Excel)`}
+            onClick={() => handleDownloadSingleHistory(r, 'excel')}
+            disabled={downloadingKey === `excel-${r.visitor_phone || r.id}`}
+            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-green-500 text-loud hover:text-green-600 transition-colors disabled:opacity-50"
+          >
+            {downloadingKey === `excel-${r.visitor_phone || r.id}` ? (
+              <Loader2 className="w-3 h-3 animate-spin text-green-600" />
+            ) : (
+              <FileSpreadsheet className="w-3 h-3 text-green-600" />
+            )}
+            <span className="text-[11px] font-medium">Excel</span>
+          </button>
+          <button
+            type="button"
+            title={`Download history for ${r.visitor_name} (PDF)`}
+            onClick={() => handleDownloadSingleHistory(r, 'pdf')}
+            disabled={downloadingKey === `pdf-${r.visitor_phone || r.id}`}
+            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-red-500 text-loud hover:text-red-600 transition-colors disabled:opacity-50"
+          >
+            {downloadingKey === `pdf-${r.visitor_phone || r.id}` ? (
+              <Loader2 className="w-3 h-3 animate-spin text-red-600" />
+            ) : (
+              <FileText className="w-3 h-3 text-red-600" />
+            )}
+            <span className="text-[11px] font-medium">PDF</span>
+          </button>
+        </div>
+      ),
+    },
+  ].filter(Boolean);
+
   return (
     <div>
       <FilterBar
@@ -997,8 +1826,9 @@ function VisitHistoryReport({ isCentral }) {
         search={search} setSearch={setSearch}
         onApply={() => { setPage(1); fetch(); }} loading={loading}
         cascadeFilters={cf} isCentral={isCentral} showDept
-        onExcelExport={() => exportExcel(rows, expCols, 'visit_history')}
-        onPdfExport={() => exportPDF(rows, expCols, 'Detailed Visit History', 'visit_history')}
+        onExcelExport={() => handleExportAll('excel')}
+        onPdfExport={() => handleExportAll('pdf')}
+        exporting={exportingAll}
       />
       <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}

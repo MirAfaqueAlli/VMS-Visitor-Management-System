@@ -64,11 +64,14 @@ const protect = async (req, res, next) => {
       pool = centralPool;
     } else {
       try {
-        pool = getPool(unit_db);
+        // Only an active unit: when a unit is deactivated its staff's open
+        // sessions stop working at once, not when their token expires
+        pool = await getActiveUnitPoolByDbName(unit_db);
       } catch (poolErr) {
         console.error('[AuthMiddleware] Failed to resolve pool for unit_db:', unit_db, poolErr.message);
         return sendError(res, 'Authentication failed: invalid unit database reference.', 401);
       }
+      if (!pool) return sendError(res, 'Your unit has been deactivated. Please contact the administrator.', 401);
     }
 
     // ── 4. Fetch user from the resolved DB ────────────────────────────────────
@@ -185,7 +188,9 @@ const optionalProtect = async (req, res, next) => {
     if (unit_db === 'central' || unit_db === CENTRAL_DB_NAME) {
       pool = centralPool;
     } else {
-      try { pool = getPool(unit_db); } catch (_) { return next(); }
+      // A deactivated unit's staff count as signed out here too
+      try { pool = await getActiveUnitPoolByDbName(unit_db); } catch (_) { return next(); }
+      if (!pool) return next();
     }
 
     const isCentral = unit_db === 'central' || unit_db === CENTRAL_DB_NAME;

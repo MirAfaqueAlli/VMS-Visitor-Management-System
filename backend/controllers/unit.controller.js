@@ -267,6 +267,13 @@ const updateUnit = async (req, res) => {
 };
 
 // ── Deactivate Unit ───────────────────────────────────────────────────────────
+/**
+ * DELETE /api/units/:id — a unit is never hard-deleted: its visit records, gate
+ * passes and audit trail must be kept (tender 1.1.10: yearly backup + archive).
+ * Deactivating closes it instead: its staff can't sign in and their open sessions
+ * stop working (auth.middleware), it leaves the login / public-form unit lists, and
+ * reminders skip it. All data stays in its database; reactivating restores it.
+ */
 const deactivateUnit = async (req, res) => {
   try {
     const { id } = req.params;
@@ -274,19 +281,7 @@ const deactivateUnit = async (req, res) => {
     if (rows.length === 0) return sendError(res, 'Unit not found.', 404);
 
     const unit = rows[0];
-
-    // Check for active users in unit DB
-    if (unit.db_status === 'ACTIVE') {
-      try {
-        const pool = getPool(unit.db_name);
-        const [[{ cnt }]] = await pool.query(
-          'SELECT COUNT(*) AS cnt FROM users WHERE is_active = 1 AND deleted_at IS NULL'
-        );
-        if (cnt > 0) {
-          return sendError(res, `Cannot deactivate — ${cnt} active user(s) exist in this unit.`, 409);
-        }
-      } catch (_) {}
-    }
+    if (!unit.is_active) return sendError(res, 'This unit is already deactivated.', 409);
 
     await centralPool.query(
       `UPDATE units SET is_active = FALSE, db_status = 'SUSPENDED', updated_at = NOW() WHERE id = ?`,
@@ -300,6 +295,7 @@ const deactivateUnit = async (req, res) => {
       module:     'ADMIN',
       recordType: 'UNIT',
       recordId:   parseInt(id),
+      newValues:  { code: unit.code, name: unit.name },
       ipAddress:  req.ip,
       userAgent:  req.headers['user-agent'] || null,
     });
@@ -308,6 +304,52 @@ const deactivateUnit = async (req, res) => {
   } catch (err) {
     console.error('[UnitController] deactivateUnit error:', err.message);
     return sendError(res, 'Failed to deactivate unit.', 500);
+  }
+};
+
+// ── Reactivate Unit ───────────────────────────────────────────────────────────
+/**
+ * POST /api/units/:id/reactivate — reopens a deactivated unit with all its data.
+ * SUSPENDED is also the state of a unit whose database never finished
+ * provisioning, so the database is checked before the unit is reopened.
+ */
+const reactivateUnit = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await centralPool.query('SELECT * FROM units WHERE id = ?', [id]);
+    if (rows.length === 0) return sendError(res, 'Unit not found.', 404);
+
+    const unit = rows[0];
+    if (unit.is_active && unit.db_status === 'ACTIVE') return sendError(res, 'This unit is already active.', 409);
+
+    try {
+      await getPool(unit.db_name).query('SELECT 1 FROM users LIMIT 1');
+    } catch (dbErr) {
+      console.error('[UnitController] reactivateUnit: unit DB not usable:', dbErr.message);
+      return sendError(res, "This unit's database is not ready, so it can't be reactivated. Please contact the system administrator.", 409);
+    }
+
+    await centralPool.query(
+      `UPDATE units SET is_active = TRUE, db_status = 'ACTIVE', updated_at = NOW() WHERE id = ?`,
+      [id]
+    );
+
+    await logAudit({
+      isSuperAdminAction: true,
+      userId:     req.user.id,
+      action:     'REACTIVATE_UNIT',
+      module:     'ADMIN',
+      recordType: 'UNIT',
+      recordId:   parseInt(id),
+      newValues:  { code: unit.code, name: unit.name },
+      ipAddress:  req.ip,
+      userAgent:  req.headers['user-agent'] || null,
+    });
+
+    return sendSuccess(res, { id: parseInt(id), is_active: true }, 'Unit reactivated successfully.');
+  } catch (err) {
+    console.error('[UnitController] reactivateUnit error:', err.message);
+    return sendError(res, 'Failed to reactivate unit.', 500);
   }
 };
 
@@ -359,5 +401,5 @@ const getUnitByCode = async (req, res) => {
   }
 };
 
-module.exports = { listUnits, getUnitById, createUnit, updateUnit, deactivateUnit, getPublicUnits, getUnitByCode };
+module.exports = { listUnits, getUnitById, createUnit, updateUnit, deactivateUnit, reactivateUnit, getPublicUnits, getUnitByCode };
 
