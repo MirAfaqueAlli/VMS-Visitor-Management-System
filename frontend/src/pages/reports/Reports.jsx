@@ -9,9 +9,6 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend,
 } from 'recharts';
-import * as XLSX from 'xlsx';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import apiClient from '../../api/axios';
 import toast from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
@@ -269,7 +266,17 @@ async function fetchAllReportRows(endpoint, params = {}) {
   return [];
 }
 
-function exportExcel(rows, columns, filename, { title, metadata } = {}) {
+// The Excel / PDF libraries are large (~1 MB together), so they are loaded only
+// when an export is actually made — not with the Reports page.
+async function exportExcel(rows, columns, filename, { title, metadata } = {}) {
+  let XLSX;
+  try {
+    XLSX = await import('xlsx');
+  } catch (err) {
+    console.error('[Reports] Could not load the Excel exporter:', err);
+    toast.error('Could not create the Excel file. Please try again.');
+    return;
+  }
   const headerRows = [];
   if (title) headerRows.push([title]);
   headerRows.push([`Generated: ${new Date().toLocaleString('en-GB')}`]);
@@ -301,7 +308,15 @@ function exportExcel(rows, columns, filename, { title, metadata } = {}) {
   XLSX.writeFile(wb, `${cleanFilename}.xlsx`);
 }
 
-function exportPDF(rows, columns, title, filename, { metadata } = {}) {
+async function exportPDF(rows, columns, title, filename, { metadata } = {}) {
+  let jsPDF, autoTable;
+  try {
+    [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+  } catch (err) {
+    console.error('[Reports] Could not load the PDF exporter:', err);
+    toast.error('Could not create the PDF file. Please try again.');
+    return;
+  }
   const doc = new jsPDF({ orientation: 'landscape' });
   doc.setFontSize(14);
   doc.text(title, 14, 16);
