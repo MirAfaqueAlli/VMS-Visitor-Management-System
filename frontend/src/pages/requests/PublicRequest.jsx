@@ -10,6 +10,16 @@ import {
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
 import { auth, DEV_PHONE_OTP } from "../../utils/firebase";
 import useCountdown from "../../hooks/useCountdown";
+
+/** The phone number a phone_token was issued for (the server still verifies the token). */
+const phoneInToken = (token) => {
+  try {
+    const part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(part)).phone ?? null;
+  } catch {
+    return null;
+  }
+};
 import BrandLogo from "../../components/BrandLogo";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
@@ -321,17 +331,9 @@ export default function PublicRequest() {
 
     setStep1Busy(true);
     try {
-      // 1. Check if this mobile number is registered
-      const checkRes = await apiClient.post("/public-auth/check-phone", { phone });
-      const isRegistered = checkRes.data?.data?.registered;
-
-      if (!isRegistered) {
-        toast.error("This mobile number is not registered. Please register as a new visitor.");
-        setAuthMode("register"); // Automatically switch to registration mode with this number
-        return;
-      }
-
-      // 2. Only if registered, send the login OTP!
+      // Whether the number has visited before is known only after the OTP is
+      // verified (existing-visitor-verify), so numbers can't be probed here.
+      // A new number is sent on to registration with its phone already verified.
       await sendFirebaseSms(phone);
       phoneTimer.start();
       setPhoneOtp("");
@@ -357,19 +359,16 @@ export default function PublicRequest() {
 
     setStep1Busy(true);
     try {
-      // 1. Check if this mobile number is ALREADY registered!
-      const checkRes = await apiClient.post("/public-auth/check-phone", { phone: visitor_phone.trim() });
-      const isRegistered = checkRes.data?.data?.registered;
-
-      if (isRegistered) {
-        toast.error("This mobile number is already registered. Please login instead.");
-        setAuthMode("login"); // Automatically switch to login mode with this number
-        return;
+      // A phone verified moments ago (sign-in with a new number) is reused — but
+      // only for that same number. A changed number needs its own OTP, or the
+      // email step would be refused for a proof that belongs to the old number.
+      const phone = visitor_phone.trim();
+      if (!(phoneVerified && phoneToken && phoneInToken(phoneToken) === phone)) {
+        setPhoneVerified(false);
+        setPhoneToken(null);
+        await sendFirebaseSms(phone);
+        phoneTimer.start();
       }
-
-      // 2. If not registered, proceed to send verification codes (SMS + Email)
-      await sendFirebaseSms(visitor_phone.trim());
-      phoneTimer.start();
 
       const emailRes = await apiClient.post("/public-auth/send-email-otp", {
         email: visitor_email.trim(),

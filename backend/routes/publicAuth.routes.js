@@ -20,7 +20,6 @@ const verifyFirebasePhoneSchema = z.object({
 }).refine((d) => d.idToken || d.otp, { message: 'Firebase idToken is required.' });
 
 // All public — no authentication middleware required
-router.post('/check-phone',               ctrl.checkPhone);
 router.post('/send-phone-otp',            validate(publicSendPhoneOtpSchema),    ctrl.sendPhoneOtp);
 router.post('/verify-firebase-phone',     validate(verifyFirebasePhoneSchema),   ctrl.verifyFirebasePhone);
 router.post('/existing-visitor-verify',   validate(verifyFirebasePhoneSchema),   ctrl.existingVisitorVerify);

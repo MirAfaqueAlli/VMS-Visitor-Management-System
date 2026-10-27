@@ -129,29 +129,6 @@ async function findExistingVisitorByPhone(phone) {
   return null;
 }
 
-// ── Check if phone number is registered ───────────────────────────────────────
-const checkPhone = async (req, res) => {
-  try {
-    const phone = normalisePhone(req.body.phone || req.query.phone);
-    if (!phone || phone.length !== 10) {
-      return sendError(res, 'A valid 10-digit mobile number is required.', 400);
-    }
-    const existing = await findExistingVisitorByPhone(phone);
-    const registered = !!(existing && existing.visitor_name);
-    return sendSuccess(
-      res,
-      {
-        registered,
-        phone,
-      },
-      registered ? 'Mobile number is registered.' : 'Mobile number is not registered.'
-    );
-  } catch (err) {
-    console.error('[PublicAuth] checkPhone error:', err.message);
-    return sendError(res, 'Failed to check mobile number.', 500);
-  }
-};
-
 // ── Send Phone OTP (Firebase sends the SMS itself from the browser) ───────────
 // Validates the number. In development it also stands in for Firebase: the code
 // is printed to the backend log (no SMS, no reCAPTCHA).
@@ -162,17 +139,9 @@ const sendPhoneOtp = async (req, res) => {
       return sendError(res, 'A valid 10-digit mobile number is required.', 400);
     }
 
-    const { mode } = req.body;
-    if (mode === 'login' || mode === 'register') {
-      const existing = await findExistingVisitorByPhone(phone);
-      const isRegistered = !!(existing && existing.visitor_name);
-      if (mode === 'login' && !isRegistered) {
-        return sendError(res, 'This mobile number is not registered. Please register as a new visitor.', 404);
-      }
-      if (mode === 'register' && isRegistered) {
-        return sendError(res, 'This mobile number is already registered. Please login instead.', 409);
-      }
-    }
+    // Whether a number has visited before is told only after its OTP is verified
+    // (existing-visitor-verify) — never here, or anyone could probe which phone
+    // numbers have visited OHPC.
 
     if (process.env.NODE_ENV !== 'production') {
       const sent = await sendDevPhoneCode(phone);
@@ -391,7 +360,6 @@ const existingVisitorVerify = async (req, res) => {
 };
 
 module.exports = {
-  checkPhone,
   sendPhoneOtp,
   verifyFirebasePhone,
   sendEmailOtp,
