@@ -28,10 +28,129 @@ const jwt          = require('jsonwebtoken');
 const {
   normalisePhone, sendEmailCode, checkEmailCode, checkFirebasePhone, sendDevPhoneCode, checkDevPhoneCode,
 } = require('../services/contactVerification.service');
+const { queryAllUnits } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 
 const VISITOR_TOKEN_EXPIRY = '30m';
 const PHONE_TOKEN_EXPIRY   = '30m';
+
+/**
+ * Searches all active unit databases for past visitor records matching the phone number.
+ * Searches visit_requests first (most up-to-date), then fallback to visitors table.
+ */
+async function findExistingVisitorByPhone(phone) {
+  const cleanPhone = normalisePhone(phone);
+  if (!cleanPhone || cleanPhone.length !== 10) return null;
+
+  // 1. Search visit_requests across all active unit databases
+  const reqSql = `
+    SELECT 
+      vr.visitor_name,
+      vr.visitor_phone,
+      vr.visitor_email,
+      vr.visitor_address,
+      vr.company_name,
+      v.full_name AS v_name,
+      v.email AS v_email,
+      v.address AS v_address,
+      vr.created_at
+    FROM visit_requests vr
+    LEFT JOIN visitors v ON (vr.visitor_id = v.id OR vr.visitor_phone = v.phone)
+    WHERE (
+      vr.visitor_phone = ?
+      OR vr.visitor_phone = ?
+      OR REPLACE(REPLACE(REPLACE(vr.visitor_phone, ' ', ''), '-', ''), '+', '') = ?
+      OR RIGHT(REPLACE(REPLACE(REPLACE(vr.visitor_phone, ' ', ''), '-', ''), '+', ''), 10) = ?
+    )
+    ORDER BY vr.created_at DESC
+    LIMIT 1
+  `;
+
+  let bestRecord = null;
+  try {
+    const results = await queryAllUnits(reqSql, [phone, cleanPhone, cleanPhone, cleanPhone]);
+    for (const res of results) {
+      if (res.rows && res.rows.length > 0) {
+        const row = res.rows[0];
+        if (!bestRecord || new Date(row.created_at) > new Date(bestRecord.created_at)) {
+          bestRecord = row;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[PublicAuth] findExistingVisitorByPhone visit_requests error:', err.message);
+  }
+
+  if (bestRecord) {
+    const name = (bestRecord.v_name || bestRecord.visitor_name || '').trim();
+    if (name) {
+      return {
+        visitor_name:    name,
+        visitor_phone:   cleanPhone,
+        visitor_email:   (bestRecord.v_email || bestRecord.visitor_email || '').trim(),
+        visitor_address: (bestRecord.v_address || bestRecord.visitor_address || '').trim(),
+        company_name:    (bestRecord.company_name || '').trim(),
+      };
+    }
+  }
+
+  // 2. Fallback: Search visitors table directly across active unit databases
+  const visitorSql = `
+    SELECT full_name, email, phone, address, created_at
+    FROM visitors
+    WHERE phone = ? OR phone LIKE ?
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  try {
+    const vResults = await queryAllUnits(visitorSql, [cleanPhone, `%${cleanPhone}`]);
+    let bestV = null;
+    for (const res of vResults) {
+      if (res.rows && res.rows.length > 0) {
+        const row = res.rows[0];
+        if (!bestV || new Date(row.created_at) > new Date(bestV.created_at)) {
+          bestV = row;
+        }
+      }
+    }
+    if (bestV && bestV.full_name) {
+      return {
+        visitor_name:    bestV.full_name.trim(),
+        visitor_phone:   cleanPhone,
+        visitor_email:   (bestV.email || '').trim(),
+        visitor_address: (bestV.address || '').trim(),
+        company_name:    '',
+      };
+    }
+  } catch (err) {
+    console.warn('[PublicAuth] findExistingVisitorByPhone visitors table error:', err.message);
+  }
+
+  return null;
+}
+
+// ── Check if phone number is registered ───────────────────────────────────────
+const checkPhone = async (req, res) => {
+  try {
+    const phone = normalisePhone(req.body.phone || req.query.phone);
+    if (!phone || phone.length !== 10) {
+      return sendError(res, 'A valid 10-digit mobile number is required.', 400);
+    }
+    const existing = await findExistingVisitorByPhone(phone);
+    const registered = !!(existing && existing.visitor_name);
+    return sendSuccess(
+      res,
+      {
+        registered,
+        phone,
+      },
+      registered ? 'Mobile number is registered.' : 'Mobile number is not registered.'
+    );
+  } catch (err) {
+    console.error('[PublicAuth] checkPhone error:', err.message);
+    return sendError(res, 'Failed to check mobile number.', 500);
+  }
+};
 
 // ── Send Phone OTP (Firebase sends the SMS itself from the browser) ───────────
 // Validates the number. In development it also stands in for Firebase: the code
@@ -42,6 +161,19 @@ const sendPhoneOtp = async (req, res) => {
     if (phone.length !== 10) {
       return sendError(res, 'A valid 10-digit mobile number is required.', 400);
     }
+
+    const { mode } = req.body;
+    if (mode === 'login' || mode === 'register') {
+      const existing = await findExistingVisitorByPhone(phone);
+      const isRegistered = !!(existing && existing.visitor_name);
+      if (mode === 'login' && !isRegistered) {
+        return sendError(res, 'This mobile number is not registered. Please register as a new visitor.', 404);
+      }
+      if (mode === 'register' && isRegistered) {
+        return sendError(res, 'This mobile number is already registered. Please login instead.', 409);
+      }
+    }
+
     if (process.env.NODE_ENV !== 'production') {
       const sent = await sendDevPhoneCode(phone);
       if (sent.status === 'cooldown') {
@@ -173,4 +305,96 @@ const verifyEmailOtp = async (req, res) => {
   }
 };
 
-module.exports = { sendPhoneOtp, verifyFirebasePhone, sendEmailOtp, verifyEmailOtp };
+// ── Verify Existing Visitor Phone OTP & Load Profile ──────────────────────────
+/**
+ * POST /api/public-auth/existing-visitor-verify
+ * Body: { phone, idToken, otp }
+ *
+ * Verifies the Phone OTP. If valid:
+ *  - Checks whether this phone exists in past visit_requests or visitors.
+ *  - If found: issues a full PUBLIC_VISITOR token so the visitor can directly
+ *    fill the visit details form without re-entering identity details or email OTP.
+ *  - If not found: returns found: false along with a phone_token, so the visitor
+ *    can complete first-time registration without re-verifying their phone.
+ */
+const existingVisitorVerify = async (req, res) => {
+  try {
+    const phone = normalisePhone(req.body.phone);
+    const { idToken, otp } = req.body;
+    if (phone.length !== 10 || !(idToken || otp)) {
+      return sendError(res, 'A valid 10-digit phone number and OTP are required.', 400);
+    }
+
+    if (otp) {
+      if (!(await checkDevPhoneCode(phone, otp))) {
+        return sendError(res, 'Invalid or expired OTP. Please try again.', 400);
+      }
+    } else {
+      const check = await checkFirebasePhone(idToken, phone);
+      if (check === 'invalid')  return sendError(res, 'Phone verification failed. Please try again.', 400);
+      if (check === 'mismatch') return sendError(res, 'Phone number mismatch. Please verify the correct number.', 400);
+    }
+
+    const phoneToken = jwt.sign(
+      { purpose: 'PHONE_VERIFIED', phone },
+      process.env.JWT_SECRET,
+      { expiresIn: PHONE_TOKEN_EXPIRY }
+    );
+
+    const existing = await findExistingVisitorByPhone(phone);
+
+    if (existing && existing.visitor_name) {
+      const visitorToken = jwt.sign(
+        {
+          purpose:         'PUBLIC_VISITOR',
+          visitor_name:    existing.visitor_name,
+          visitor_phone:   phone,
+          visitor_email:   existing.visitor_email || '',
+          visitor_address: existing.visitor_address || '',
+          phone_verified:  true,
+          email_verified:  true,
+          is_existing:     true,
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: VISITOR_TOKEN_EXPIRY }
+      );
+
+      return sendSuccess(
+        res,
+        {
+          found:          true,
+          phone_verified: true,
+          phone_token:    phoneToken,
+          visitor_token:  visitorToken,
+          visitor:        existing,
+        },
+        `Welcome back, ${existing.visitor_name}!`,
+        200
+      );
+    }
+
+    return sendSuccess(
+      res,
+      {
+        found:          false,
+        phone_verified: true,
+        phone_token:    phoneToken,
+        phone,
+      },
+      'Phone verified. No existing profile found. Please register as a new visitor.',
+      200
+    );
+  } catch (err) {
+    console.error('[PublicAuth] existingVisitorVerify error:', err.message);
+    return sendError(res, 'Failed to verify visitor.', 500);
+  }
+};
+
+module.exports = {
+  checkPhone,
+  sendPhoneOtp,
+  verifyFirebasePhone,
+  sendEmailOtp,
+  verifyEmailOtp,
+  existingVisitorVerify,
+};
