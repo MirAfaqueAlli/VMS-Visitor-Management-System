@@ -107,7 +107,7 @@ export default function RequestList() {
         )}
       </div>
 
-      <div className="vms-card rounded-md p-6 mb-8 ">
+      <div className="vms-card border-none  rounded-md  mb-8 ">
         {/* Tab Switcher */}
         <div className="flex items-center gap-2 mb-6 border-b border-subtle pb-4 overflow-x-auto">
           <button
@@ -161,7 +161,7 @@ export default function RequestList() {
             </div>
             <input
               type="text"
-              className="block w-full pl-11 pr-4 py-3 bg-bg-primary border border-subtle rounded-full text-loud placeholder-faint focus:outline-none focus:ring-2 focus:ring-accent transition-all duration-300"
+              className="block w-full pl-11 pr-4 py-2 bg-bg-primary border border-subtle rounded-full text-loud placeholder-faint focus:outline-none focus:ring-2 focus:ring-accent transition-all duration-300"
               placeholder="Search..."
               value={search}
               onChange={(e) => {
@@ -179,7 +179,7 @@ export default function RequestList() {
                   setStatusFilter(e.target.value);
                   setPage(1);
                 }}
-                className="block w-full sm:w-48 pl-4 pr-10 py-3 bg-bg-primary border border-subtle rounded-full text-loud focus:outline-none focus:ring-2 focus:ring-accent appearance-none cursor-pointer"
+                className="block w-full sm:w-48 pl-4 pr-10 py-2 bg-bg-primary border border-subtle rounded-full text-loud focus:outline-none focus:ring-2 focus:ring-accent appearance-none cursor-pointer"
               >
                 <option value="">All Statuses</option>
                 <option value="PENDING">Pending</option>
@@ -200,7 +200,7 @@ export default function RequestList() {
                 setDateFilter(e.target.value);
                 setPage(1);
               }}
-              className="block w-full sm:w-48 px-4 py-3 bg-bg-primary border border-subtle rounded-full text-loud focus:outline-none focus:ring-2 focus:ring-accent"
+              className="block w-full sm:w-48 px-4 py-2 bg-bg-primary border border-subtle rounded-full text-loud focus:outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
         </div>
@@ -252,7 +252,8 @@ export default function RequestList() {
                           {request.visitor_name || request.company_name || "N/A"}
                         </div>
                         {request.my_role === 'VISITOR' && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 border border-emerald-300/50">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border"
+                            style={{ background: 'var(--color-success-bg)', color: 'var(--color-success)', borderColor: 'var(--color-success)' }}>
                             You (Visitor)
                           </span>
                         )}
@@ -268,7 +269,8 @@ export default function RequestList() {
                           {getCategoryLabel(request)}
                         </span>
                         {request._cross_unit_id && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-300/40">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                            style={{ background: 'var(--color-mixed-bg)', color: 'var(--color-mixed)', borderColor: 'var(--color-mixed)' }}>
                             Cross-Unit
                           </span>
                         )}
@@ -282,7 +284,8 @@ export default function RequestList() {
                         />
                         <span>{request.Host?.full_name || request.host_name || "N/A"}</span>
                         {request.my_role === 'HOST' && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300 border border-blue-300/50">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border"
+                            style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)', borderColor: 'var(--color-info)' }}>
                             You (Host)
                           </span>
                         )}
