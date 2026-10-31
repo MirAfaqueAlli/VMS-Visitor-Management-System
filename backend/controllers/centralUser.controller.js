@@ -6,6 +6,7 @@ const { validatePassword } = require('../utils/passwordValidator.util');
 const { centralPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit } = require('../utils/auditLogger.util');
+const { rejectIfContactTaken, phoneKey } = require('../services/contactUniqueness.service');
 
 // Only super_admin can reach these endpoints (enforced in routes)
 
@@ -91,6 +92,9 @@ const createCentralUser = async (req, res) => {
     const { valid, errors } = validatePassword(password);
     if (!valid) return sendError(res, errors[0], 400);
 
+    // Email and mobile are unique across the whole system (central + every unit)
+    if (await rejectIfContactTaken(res, sendError, { email, phone })) return;
+
     const hash = await bcrypt.hash(password, 12);
 
     const [result] = await centralPool.query(
@@ -141,7 +145,7 @@ const updateCentralUser = async (req, res) => {
     }
 
     const [existing] = await centralPool.query(
-      'SELECT id FROM users WHERE id = ? AND deleted_at IS NULL', [id]
+      'SELECT id, email, phone FROM users WHERE id = ? AND deleted_at IS NULL', [id]
     );
     if (existing.length === 0) return sendError(res, 'User not found.', 404);
 
@@ -159,6 +163,18 @@ const updateCentralUser = async (req, res) => {
       if (!/^[+]?[\d\s\-]+$/.test(phone.trim()) || digits.length < 7 || digits.length > 15) {
         return sendError(res, 'Phone number must contain only digits (7–15 digits). Example: +91 9000000000', 400);
       }
+    }
+
+    // A changed email / mobile must not belong to any other account in the system.
+    // Only changed values are checked, so older duplicates don't block unrelated edits.
+    const current  = existing[0];
+    const newEmail = email && email.trim() && email.trim().toLowerCase() !== String(current.email || '').toLowerCase() ? email : null;
+    const newPhone = phone && phone.trim() && phoneKey(phone) !== phoneKey(current.phone) ? phone : null;
+    if (newEmail || newPhone) {
+      const taken = await rejectIfContactTaken(res, sendError, {
+        email: newEmail, phone: newPhone, exclude: { pool: centralPool, id: Number(id) },
+      });
+      if (taken) return;
     }
 
     await centralPool.query(

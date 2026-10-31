@@ -1,10 +1,11 @@
 // frontend/src/pages/admin/UserManagement.jsx
+// Unit users (DESIGN_RULES §6/§8/§12): title + Add user, toolbar (count · search ·
+// role), a sortable table whose rows open the edit drawer.
 import { useState, useEffect, useCallback } from "react";
-import { NavLink, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
-  Plus, Search, Edit2, UserX, X, Check, Loader2, Users,
-  ChevronRight, Briefcase, Mail, Hash, AlertTriangle, ArrowRight,
-} from "lucide-react";
+  Plus, Check, Loader2, Users, UserX, UserCog, AlertTriangle, ArrowRight,
+} from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
@@ -12,25 +13,26 @@ import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
 import { getApiErrorMessage } from "../../utils/apiError";
 import Pagination from "../../components/shared/Pagination";
+import Select from "../../components/Select";
+import {
+  PageHeader, Toolbar, SearchInput, Th, SkeletonRows, Tag, State, Empty, Field, Drawer, Modal, Note,
+} from "../../components/ui";
+import useSort from "../../lib/useSort";
 
-// ── Role styling ────────────────────────────────────────────────────────────
+// ── Role labels ─────────────────────────────────────────────────────────────
 const ROLE_CONFIG = {
-  super_admin:    { label: "Super Admin",    badgeClass: "bg-[#fef3c7] text-[#92400e]" },
-  unit_admin:     { label: "Unit Admin",     badgeClass: "bg-[#fef3c7] text-[#92400e]" },
-  employee:       { label: "Employee",       badgeClass: "bg-mixed-bg text-accent" },
-  security:       { label: "Security",       badgeClass: "bg-[#eff6ff] text-[#1d4ed8]" },
-  receptionist:   { label: "Receptionist",  badgeClass: "bg-bg-primary text-muted border border-subtle" },
-  unit_auditor:   { label: "Unit Auditor",   badgeClass: "bg-[#f0fdf4] text-[#15803d]" },
-  global_auditor: { label: "Global Auditor", badgeClass: "bg-[#f0fdf4] text-[#15803d]" },
+  super_admin:    { label: "Super Admin",    tone: "warning" },
+  unit_admin:     { label: "Unit Admin",     tone: "warning" },
+  employee:       { label: "Employee",       tone: "brand" },
+  security:       { label: "Security",       tone: "info" },
+  receptionist:   { label: "Receptionist",   tone: "neutral" },
+  unit_auditor:   { label: "Unit Auditor",   tone: "success" },
+  global_auditor: { label: "Global Auditor", tone: "success" },
 };
 
 function RoleBadge({ role }) {
-  const cfg = ROLE_CONFIG[role] ?? { label: role, badgeClass: "bg-bg-primary text-muted" };
-  return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cfg.badgeClass}`}>
-      {cfg.label}
-    </span>
-  );
+  const cfg = ROLE_CONFIG[role] ?? { label: role, tone: "neutral" };
+  return <Tag tone={cfg.tone}>{cfg.label}</Tag>;
 }
 
 // ── Slide-over form panel ───────────────────────────────────────────────────
@@ -175,184 +177,110 @@ function UserSlideOver({
     }
   };
 
-  const inputCls = "w-full bg-bg-secondary btn-secondary text-loud text-sm placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-border transition-all duration-300";
-  const labelCls = "block text-xs font-semibold text-muted uppercase tracking-widest mb-1.5";
-
   const deptId = lockedDepartmentId || form.department_id;
+  const noDeptRoleLabel = form.role_type === 'security' ? 'Security' : form.role_type === 'unit_auditor' ? 'Unit Auditor' : 'Receptionist';
 
   return (
-    <>
-      {/* Backdrop */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 backdrop-blur-sm z-40 transition-opacity duration-300 opacity-100"
-          style={{ background: 'rgba(0,0,0,0.4)' }}
-          onClick={onClose}
-        />
-      )}
-
-      {/* Panel */}
-      <aside
-        className="fixed right-0 top-0 h-full w-full max-w-md border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out"
-        style={{
-          background: 'var(--color-bg-primary)',
-          transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
-          pointerEvents: isOpen ? 'auto' : 'none',
-        }}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 py-3 border-b border-subtle">
-          <div>
-            <h2 className="text-lg font-bold text-loud">
-              {isEdit ? "Edit" : "New"} User
-            </h2>
-            <p className="text-xs text-faint mt-0.5">
-              {isEdit ? `Editing ${editUser?.full_name}` : "Create a new system account"}
-            </p>
-          </div>
+    <Drawer
+      open={isOpen}
+      onClose={onClose}
+      busy={submitting}
+      width={520}
+      icon={isEdit ? UserCog : Plus}
+      title={isEdit ? `Edit ${editUser?.full_name}` : "New user"}
+      subtitle={isEdit ? editUser?.employee_code : "Create a system account in this unit"}
+      footer={(
+        <>
+          <button type="button" onClick={onClose} className="btn-outline" disabled={submitting}>Cancel</button>
           <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-full flex items-center justify-center text-faint hover:bg-bg-primary hover:text-loud transition-colors duration-300"
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || blockForNoDepts || (!isEdit && !validatePassword(form.password).valid)}
+            className="btn-primary"
           >
-            <X strokeWidth={1.5} className="w-5 h-5" />
+            {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            {submitting ? "Saving…" : isEdit ? "Save changes" : "Create user"}
           </button>
+        </>
+      )}
+    >
+      <form onSubmit={handleSubmit} className="space-y-3">
+        {blockForNoDepts && (
+          <Note tone="warning" icon={AlertTriangle}>
+            <b>No departments yet.</b> Create a department before adding employees.{" "}
+            <Link to="/admin/departments" onClick={onClose} className="text-link font-medium inline-flex items-center gap-0.5">
+              Go to departments <ArrowRight size={11} />
+            </Link>
+          </Note>
+        )}
+
+        <div className="tile space-y-3">
+          <p className="group-heading">Person</p>
+          <Field label="Full name" htmlFor="u-name" required>
+            <input id="u-name" className="control" value={form.full_name} onChange={set("full_name")} placeholder="e.g. Priya Sharma" required autoComplete="off" />
+          </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Email" htmlFor="u-email" required>
+              <input id="u-email" className="control" type="email" value={form.email} onChange={set("email")} placeholder="priya@ohpc.co.in" required autoComplete="off" />
+            </Field>
+            <Field label="Phone" htmlFor="u-phone" required hint="WhatsApp number preferred">
+              <input id="u-phone" className="control tabular" type="tel" value={form.phone} onChange={set("phone")} placeholder="+91 98765 43210" required autoComplete="off" />
+            </Field>
+          </div>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
+        <div className="tile space-y-3">
+          <p className="group-heading">Role</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Role" required>
+              <Select value={form.role_type} onChange={set("role_type")} required aria-label="Role">
+                <option value="employee">Employee</option>
+                <option value="security">Security</option>
+                <option value="receptionist">Receptionist</option>
+                <option value="unit_auditor">Unit Auditor</option>
+              </Select>
+            </Field>
+            {!isEdit ? (
+              <Field label="Employee code" htmlFor="u-code" required hint="Suggested from the role; you can change it.">
+                <input id="u-code" className="control mono" value={form.employee_code}
+                  onChange={e => {
+                    const value = e.target.value;
+                    setForm(f => ({ ...f, employee_code: value }));
+                    setCodeEdited(value.trim() !== '');   // cleared → use the suggestion again
+                  }}
+                  placeholder="EMP-001" required autoComplete="off" />
+              </Field>
+            ) : <div className="hidden sm:block" />}
 
-          {/* ── No-departments warning banner ────────────────────────────── */}
-          {blockForNoDepts && (
-            <div
-              className="flex items-start gap-3 rounded-lg px-4 py-3.5"
-              style={{
-                background: 'var(--color-warning-bg, #fffbeb)',
-                border:     '1px solid var(--color-warning, #f59e0b)',
-                borderRadius: 'var(--radius-md)',
-              }}
-            >
-              <AlertTriangle
-                strokeWidth={2}
-                className="w-4 h-4 shrink-0 mt-0.5"
-                style={{ color: 'var(--color-warning, #f59e0b)' }}
-              />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold" style={{ color: '#92400e' }}>
-                  No departments found
-                </p>
-                <p className="text-xs mt-0.5" style={{ color: '#b45309' }}>
-                  You must create at least one department before adding employees.
-                </p>
-                <Link
-                  to="/admin/departments"
-                  onClick={onClose}
-                  className="inline-flex items-center gap-1 text-xs font-semibold mt-2 underline-offset-2 hover:underline"
-                  style={{ color: '#92400e' }}
+            <Field label="Department" required={!isNoDeptRole && form.role_type !== 'unit_admin'}>
+              {isNoDeptRole ? (
+                // Security / receptionist / auditor have no department
+                <div className="control flex items-center bg-surface-alt text-muted cursor-not-allowed select-none">
+                  Not applicable for {noDeptRoleLabel}
+                </div>
+              ) : lockedDepartmentId ? (
+                <div className="control flex items-center bg-surface-alt text-ink-2">
+                  {departments.find(d => d.id === lockedDepartmentId)?.name || 'Your department'}
+                </div>
+              ) : (
+                <Select
+                  value={form.department_id}
+                  onChange={set("department_id")}
+                  required={!isNoDeptRole && form.role_type !== 'unit_admin'}
+                  aria-label="Department"
                 >
-                  Go to Departments <ArrowRight className="w-3 h-3" />
-                </Link>
-              </div>
-            </div>
-          )}
+                  <option value="">Select department</option>
+                  {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </Select>
+              )}
+            </Field>
 
-
-          <div>
-            <label className={labelCls}>Full Name *</label>
-            <input className={inputCls} value={form.full_name} onChange={set("full_name")} placeholder="e.g. Priya Sharma" required autoComplete="off" />
-          </div>
-
-          {/* Email + Phone */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className={labelCls}>Email *</label>
-              <input className={inputCls} type="email" value={form.email} onChange={set("email")} placeholder="priya@company.in" required autoComplete="off" />
-            </div>
-            <div>
-              <label className={labelCls}>Phone * <span className="text-[10px] text-faint normal-case font-normal tracking-normal">(WhatsApp preferred)</span></label>
-              <input className={inputCls} type="tel" value={form.phone} onChange={set("phone")} placeholder="+91 9876543210" required autoComplete="off" />
-            </div>
-          </div>
-
-          {/* Employee code — create only */}
-          {!isEdit && (
-            <div>
-              <label className={labelCls}>Employee Code *</label>
-              <input className={inputCls} value={form.employee_code}
-                onChange={e => {
-                  const value = e.target.value;
-                  setForm(f => ({ ...f, employee_code: value }));
-                  setCodeEdited(value.trim() !== '');   // cleared → use the suggestion again
-                }}
-                placeholder="EMP-001" required autoComplete="off" />
-            </div>
-          )}
-
-          {/* Role + Department */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className={labelCls}>Role *</label>
-              <div className="relative">
-                <select className={`${inputCls} appearance-none pr-8 cursor-pointer`} value={form.role_type} onChange={set("role_type")} required>
-                  <option value="employee">Employee</option>
-                  <option value="security">Security</option>
-                  <option value="receptionist">Receptionist</option>
-                  <option value="unit_auditor">Unit Auditor</option>
-                </select>
-                <ChevronRight strokeWidth={1.5} className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-faint rotate-90 pointer-events-none" />
-              </div>
-            </div>
-            <div>
-              <label className={labelCls}>
-                Department {!isNoDeptRole && form.role_type !== 'unit_admin' ? '*' : ''}
-              </label>
-              <div className="relative">
-                {isNoDeptRole ? (
-                  // Blocked — security/receptionist have no department
-                  <div
-                    className="w-full text-sm px-3 py-2 rounded border select-none"
-                    style={{
-                      background:   'var(--color-bg-primary)',
-                      border:       '1px solid var(--color-border)',
-                      color:        'var(--color-text-faint)',
-                      cursor:       'not-allowed',
-                      opacity:      0.6,
-                    }}
-                  >
-                    Not applicable for {form.role_type === 'security' ? 'Security' : form.role_type === 'unit_auditor' ? 'Unit Auditor' : 'Receptionist'}
-                  </div>
-                ) : lockedDepartmentId ? (
-                  <div className="vms-input w-full text-muted text-sm">
-                    {departments.find(d => d.id === lockedDepartmentId)?.name || 'Your Department'}
-                  </div>
-                ) : (
-                  <select
-                    className={`${inputCls} appearance-none pr-8 cursor-pointer`}
-                    value={form.department_id}
-                    onChange={set("department_id")}
-                    required={!isNoDeptRole && form.role_type !== 'unit_admin'}
-                  >
-                    <option value="">Select dept...</option>
-                    {departments.map(d => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                )}
-                {!lockedDepartmentId && !isNoDeptRole && (
-                  <ChevronRight strokeWidth={1.5} className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-faint rotate-90 pointer-events-none" />
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Designation — dropdown from API, depends on selected department */}
-          <div>
-            <label className={labelCls}>Designation</label>
-            <div className="relative">
-              <select
-                className={`${inputCls} appearance-none pr-8 cursor-pointer`}
+            <Field label="Designation">
+              <Select
                 value={form.designation_id || ""}
                 onChange={set("designation_id")}
                 disabled={isNoDeptRole || !deptId || designations.length === 0}
+                aria-label="Designation"
               >
                 <option value="">
                   {isNoDeptRole
@@ -360,63 +288,29 @@ function UserSlideOver({
                     : !deptId
                     ? "Select a department first"
                     : designations.length === 0
-                    ? "No designations — add via Departments"
-                    : "Select designation..."}
+                    ? "None yet (add in Departments)"
+                    : "Select designation"}
                 </option>
-                {designations.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-              <ChevronRight strokeWidth={1.5} className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-faint rotate-90 pointer-events-none" />
-            </div>
+                {designations.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </Select>
+            </Field>
           </div>
-
-          {/* Password — create only */}
-          {!isEdit && (
-            <div>
-              <label className={labelCls}>Password *</label>
-              <input className={inputCls} type="password" value={form.password} onChange={set("password")} placeholder="Min 8 chars, uppercase, number, symbol" required={!isEdit} minLength={8} autoComplete="new-password" />
-              <PasswordStrength password={form.password} />
-            </div>
-          )}
-        </form>
-
-        {/* Footer */}
-        <div className="p-6 border-t border-subtle flex items-center justify-end gap-3">
-          <button type="button" onClick={onClose} className="btn-secondary text-xs py-2.5 px-5">Cancel</button>
-          <button
-            type="submit"
-            onClick={handleSubmit}
-            disabled={submitting || blockForNoDepts || (!isEdit && !validatePassword(form.password).valid)}
-            className="btn-primary text-xs py-2.5 px-6 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {submitting ? <Loader2 strokeWidth={2} className="w-3.5 h-3.5 animate-spin" /> : <Check strokeWidth={2} className="w-3.5 h-3.5" />}
-            {submitting ? "Saving..." : isEdit ? "Save Changes" : "Create User"}
-          </button>
         </div>
-      </aside>
-    </>
+
+        {!isEdit && (
+          <div className="tile">
+            <Field label="Password" htmlFor="u-pw" required>
+              <input id="u-pw" className="control" type="password" value={form.password} onChange={set("password")}
+                placeholder="At least 8 characters" required={!isEdit} minLength={8} autoComplete="new-password" />
+            </Field>
+            <PasswordStrength password={form.password} />
+          </div>
+        )}
+      </form>
+    </Drawer>
   );
 }
 
-// ── Deactivate Confirm ──────────────────────────────────────────────────────â”€â”€
-function DeactivateConfirm({ userId, userName, onConfirm, onCancel }) {
-  const [busy, setBusy] = useState(false);
-  const handleConfirm = async () => { setBusy(true); await onConfirm(userId); setBusy(false); };
-  return (
-    <div className="flex items-center gap-2 justify-end">
-      <span className="text-xs text-warning flex items-center gap-1">
-        <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5" />
-        Deactivate {userName}?
-      </span>
-      <button onClick={handleConfirm} disabled={busy} className="flex items-center gap-1 btn-primary transition-colors duration-300 disabled:opacity-60">
-        {busy ? <Loader2 strokeWidth={2} className="w-3 h-3 animate-spin" /> : <Check strokeWidth={2} className="w-3 h-3" />}
-        Confirm
-      </button>
-      <button onClick={onCancel} className="btn-secondary text-muted hover:bg-bg-primary transition-colors duration-300">Cancel</button>
-    </div>
-  );
-}
 
 // ── Main Page ───────────────────────────────────────────────────────────────
 export default function UserManagement() {
@@ -521,199 +415,114 @@ export default function UserManagement() {
     { label: "Receptionist", value: "receptionist" },
   ].filter(f => isUnitAdmin ? true : !['unit_admin'].includes(f.value));
 
+  const { rows, sort, onSort } = useSort(users, {
+    name: (u) => u.full_name,
+    code: (u) => u.employee_code,
+    role: (u) => ROLE_CONFIG[u.role_type]?.label ?? u.role_type,
+    dept: (u) => u.department_name,
+    status: (u) => (u.is_active ? 0 : 1),
+  });
+
+  const canEdit = (u) => !(u.role_type === "unit_admin" || u.id === currentUser?.id);
+  const deactivating = users.find(u => u.id === deactivatingId);
+  const [deactivateBusy, setDeactivateBusy] = useState(false);
+  const confirmDeactivate = async () => {
+    setDeactivateBusy(true);
+    await handleDeactivate(deactivatingId);
+    setDeactivateBusy(false);
+  };
+
   return (
-    <>
-      <div className="max-w-7xl mx-auto  animate-fade-in">
+    <div className="animate-fade-in">
+      <PageHeader
+        title="Users"
+        actions={<button type="button" onClick={openCreate} className="btn-primary"><Plus size={14} /> Add user</button>}
+      />
 
+      {!loading && departments.length === 0 && (
+        <Note tone="warning" icon={AlertTriangle} className="mb-4">
+          <b>No departments yet.</b> Security, receptionist and auditor users need no department; employees do.{" "}
+          <Link to="/admin/departments" className="text-link font-medium">Create a department</Link>
+        </Note>
+      )}
 
-
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
-          <div>
-            <h1 className="text-xl font-bold text-loud">Team Management</h1>
-          </div>
-          <button onClick={openCreate} className="btn-primary px-4 py-2 text-xs">
-            <Plus className="w-4 h-4" /> Add New User
-          </button>
-        </div>
-
-        {/* ── No departments advisory banner ────────────────────────── */}
-        {!loading && departments.length === 0 && (
-          <div
-            className="flex items-start gap-3 px-4 py-4 mb-6 rounded-lg"
-            style={{
-              background: '#fffbeb',
-              border: '1px solid var(--color-warning)',
-              borderRadius: 'var(--radius-md)',
-            }}
-          >
-            <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: 'var(--color-warning)' }} strokeWidth={2} />
-            <div>
-              <p className="text-sm font-semibold" style={{ color: '#92400e' }}>
-                No departments set up yet
-              </p>
-              <p className="text-xs mt-1" style={{ color: '#b45309' }}>
-                Security, Receptionist, and Auditor users can be created without a department.{' '}
-                <strong>Employees require a department.</strong>{' '}
-                <NavLink
-                  to="/admin/departments"
-                  className="font-bold underline underline-offset-2 hover:opacity-80"
-                  style={{ color: '#92400e' }}
-                >
-                  Create a department →
-                </NavLink>
-              </p>
-            </div>
-          </div>
+      <Toolbar count={loading ? null : totalCount} noun={totalCount === 1 ? "user" : "users"}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Search name, email or code" width={260} />
+        <Select value={roleFilter} onChange={e => { setRoleFilter(e.target.value); setPage(1); }} aria-label="Role" style={{ width: 160 }}>
+          {roleFilters.map(({ label, value }) => (
+            <option key={value} value={value}>{value ? label : "All roles"}</option>
+          ))}
+        </Select>
+        {(search || roleFilter) && (
+          <button type="button" className="btn-ghost" onClick={() => { setSearch(""); setRoleFilter(""); setPage(1); }}>Clear</button>
         )}
+      </Toolbar>
 
-        <div className=" rounded-md  ">
-          {/* Filters */}
-          <div className="flex flex-col md:flex-row gap-4 mb-6 pb-6 border-b border-subtle">
-            <div className="flex-1 relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-accent" strokeWidth={1.5} />
-              </div>
-              <input
-                type="text"
-                className="block w-full pl-11 pr-4 py-2 bg-bg-primary border border-subtle rounded-full text-loud placeholder-faint focus:outline-none focus:ring-2 focus:ring-accent transition-all duration-300"
-                placeholder="Search by name, email, or employee code..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              {roleFilters.map(({ label, value }) => (
-                <button
-                  key={value}
-                  onClick={() => { setRoleFilter(value); setPage(1); }}
-                  className={`rounded-sm px-3 py-1 ${roleFilter === value ? "bg-accent text-white" : "bg-bg-primary text-sm border border-subtle text-muted hover:border-border"}`}
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <Th sortKey="name" sort={sort} onSort={onSort}>Name</Th>
+              <Th sortKey="code" sort={sort} onSort={onSort}>Code</Th>
+              <Th sortKey="role" sort={sort} onSort={onSort}>Role</Th>
+              <Th sortKey="dept" sort={sort} onSort={onSort}>Department</Th>
+              <Th sortKey="status" sort={sort} onSort={onSort}>Status</Th>
+              <th className="w-10"><span className="sr-only">Deactivate</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <SkeletonRows rows={6} cols={6} />
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="!p-0">
+                  <Empty
+                    icon={Users}
+                    title={search || roleFilter ? "No users match these filters" : "No users yet"}
+                    hint={search || roleFilter ? "Try another search or role." : "Add the people who host, approve and guard visits."}
+                  />
+                </td>
+              </tr>
+            ) : rows.map(u => {
+              const editable = canEdit(u);
+              return (
+                <tr
+                  key={u.id}
+                  className={editable ? "is-clickable" : undefined}
+                  onClick={editable ? () => openEdit(u) : undefined}
+                  title={editable ? undefined : "Unit admin details can't be edited here"}
                 >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-subtle text-muted text-xs uppercase tracking-wider">
-                  <th className="py-4 px-4 font-medium">Member</th>
-                  <th className="py-4 px-4 font-medium">Code</th>
-                  <th className="py-4 px-4 font-medium">Role</th>
-                  <th className="py-4 px-4 font-medium">Department</th>
-                  <th className="py-4 px-4 font-medium">Status</th>
-                  <th className="py-4 px-4 font-medium text-right">Actions</th>
+                  <td>
+                    <span className={`font-medium ${u.is_active ? "" : "text-muted"}`}>{u.full_name}</span>
+                    {u.id === currentUser?.id && <span className="ml-1.5"><Tag tone="brand">You</Tag></span>}
+                    <span className="cell-sub">{u.email}</span>
+                  </td>
+                  <td className="mono">{u.employee_code}</td>
+                  <td><RoleBadge role={u.role_type} /></td>
+                  <td className="text-ink-2">{u.department_name || "—"}</td>
+                  <td>{u.is_active ? <State tone="success">Active</State> : <State tone="neutral">Inactive</State>}</td>
+                  <td>
+                    {u.is_active && u.id !== currentUser?.id && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setDeactivatingId(u.id); }}
+                        className="btn-icon"
+                        aria-label={`Deactivate ${u.full_name}`}
+                        title="Deactivate"
+                      >
+                        <UserX size={14} />
+                      </button>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  [...Array(4)].map((_, i) => (
-                    <tr key={i} className="border-b border-subtle animate-pulse">
-                      {[1,2,3,4,5,6].map(c => (
-                        <td key={c} className="py-4 px-4"><div className="h-4 bg-border rounded-full w-3/4" /></td>
-                      ))}
-                    </tr>
-                  ))
-                ) : users.length === 0 ? (
-                  <tr>
-                    <td colSpan="6" className="text-center py-16 text-faint italic">No users found.</td>
-                  </tr>
-                ) : (
-                  users.map(u => (
-                    <tr key={u.id} className={`border-b border-subtle transition-colors duration-300 ${!u.is_active ? "opacity-50" : "hover:bg-bg-primary/40"}`}>
-                      <td className="py-4 px-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-lightColor flex items-center justify-center shrink-0">
-                            <span className="text-loud font-semibold text-sm">{u.full_name?.charAt(0) ?? "?"}</span>
-                          </div>
-                          <div>
-                            <p className="font-medium text-loud text-sm flex items-center gap-1.5">
-                              <span>{u.full_name}</span>
-                              {u.id === currentUser?.id && (
-                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-accent/10 text-accent">
-                                  You
-                                </span>
-                              )}
-                            </p>
-                            <p className="text-xs text-faint flex items-center gap-1 mt-0.5">
-                              <Mail strokeWidth={1.5} className="w-3 h-3" /> {u.email}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-4 px-4">
-                        <span className="text-xs font-mono text-muted flex items-center gap-1">
-                          <Hash strokeWidth={1.5} className="w-3 h-3" /> {u.employee_code}
-                        </span>
-                      </td>
-                      <td className="py-4 px-4"><RoleBadge role={u.role_type} /></td>
-                      <td className="py-4 px-4">
-                        <span className="text-sm text-muted flex items-center gap-1">
-                          <Briefcase strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
-                          {u.department_name || "—"}
-                        </span>
-                      </td>
-                      <td className="py-4 px-4">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${u.is_active ? "text-accent" : "text-faint"}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${u.is_active ? "bg-accent" : "bg-accent/30"}`} />
-                          {u.is_active ? "Active" : "Inactive"}
-                        </span>
-                      </td>
-                      <td className="py-4 px-4 text-right">
-                        {deactivatingId === u.id ? (
-                          <DeactivateConfirm userId={u.id} userName={u.full_name} onConfirm={handleDeactivate} onCancel={() => setDeactivatingId(null)} />
-                        ) : (
-                          <div className="flex justify-end items-center gap-2">
-                            {/* Unit admin cannot edit their own details or unit admin details */}
-                            {!(u.role_type === "unit_admin" || u.id === currentUser?.id) && (
-                              <button onClick={() => openEdit(u)} title="Edit user" className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300">
-                                <Edit2 strokeWidth={1.5} className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            {u.is_active && u.id !== currentUser?.id && (
-                              <button onClick={() => setDeactivatingId(u.id)} title="Deactivate user" className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300">
-                                <UserX strokeWidth={1.5} className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            {(u.role_type === "unit_admin" || u.id === currentUser?.id) && (!u.is_active || u.id === currentUser?.id) && (
-                              <span className="text-xs text-faint italic px-2">—</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Footer: count + pagination */}
-          {!loading && (
-            <div className="mt-6 pt-4 border-t border-subtle">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-faint flex items-center gap-1.5">
-                  <Users strokeWidth={1.5} className="w-3.5 h-3.5" />
-                  {totalCount} user{totalCount !== 1 ? "s" : ""}
-                  {roleFilter ? ` · ${ROLE_CONFIG[roleFilter]?.label}` : ""}
-                </span>
-                <span className="text-xs text-faint">{users.filter(u => u.is_active).length} active (this page)</span>
-              </div>
-              <Pagination
-                page={page}
-                totalPages={totalPages}
-                totalCount={totalCount}
-                onPageChange={(p) => setPage(p)}
-              />
-            </div>
-          )}
-        </div>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
-      {/* Slide-over */}
+      {!loading && <Pagination page={page} totalPages={totalPages} totalCount={totalCount} onPageChange={(p) => setPage(p)} />}
+
       <UserSlideOver
         isOpen={panelOpen}
         onClose={() => { setPanelOpen(false); setEditUser(null); }}
@@ -725,6 +534,25 @@ export default function UserManagement() {
         designations={designations}
         onDepartmentChange={fetchDesignations}
       />
-    </>
+
+      <Modal
+        open={!!deactivating}
+        onClose={() => setDeactivatingId(null)}
+        busy={deactivateBusy}
+        width={420}
+        title={`Deactivate ${deactivating?.full_name ?? "user"}?`}
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={() => setDeactivatingId(null)} disabled={deactivateBusy}>Cancel</button>
+            <button type="button" className="btn-danger" onClick={confirmDeactivate} disabled={deactivateBusy}>
+              {deactivateBusy && <Loader2 size={14} className="animate-spin" />}
+              Deactivate
+            </button>
+          </>
+        )}
+      >
+        <p className="text-[12.5px] text-ink-2">They will no longer be able to sign in. Their past visits stay on record.</p>
+      </Modal>
+    </div>
   );
 }

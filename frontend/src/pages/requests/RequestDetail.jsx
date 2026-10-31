@@ -1,66 +1,48 @@
 // frontend/src/pages/requests/RequestDetail.jsx
+// One visit request (DESIGN_RULES §12 full screen): breadcrumb back to Visit
+// Requests, title + status tracker, the page actions; a details tile (visitor ·
+// host · visit), vendor details, companions, the timeline and the gate pass.
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, User, Building2, Calendar, Clock, QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2, Briefcase } from 'lucide-react';
+import { QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2, Briefcase, Clock, ClipboardList } from '../../components/icons';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
-import StatusBadge from '../../components/shared/StatusBadge';
+import { PageHeader, SectionTitle, KV, Status, State, Tag, Empty, Spinner, Modal, Field, Note } from '../../components/ui';
+import { fmtDate, fmtDateTime, fmtTime, orDash } from '../../lib/format';
+import { describe } from '../../lib/status';
 
-function fmtDate(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-function fmtDateTime(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
-}
+const last10 = (p) => String(p || '').replace(/\D/g, '').slice(-10);
 
-function Spinner() {
-  return (
-    <div className="flex items-center justify-center min-h-[50vh]">
-      <div className="w-7 h-7 rounded-full border-2 animate-spin"
-        style={{ borderColor: 'var(--color-border)', borderTopColor: 'var(--color-accent)' }} />
-    </div>
-  );
-}
-
-const TIMELINE_COLORS = {
-  SUBMITTED:   { bg: '#3b82f6', text: '#fff' },
-  PENDING:     { bg: '#f59e0b', text: '#fff' },
-  APPROVED:    { bg: '#16a34a', text: '#fff' },
-  REJECTED:    { bg: '#dc2626', text: '#fff' },
-  CANCELLED:   { bg: '#94a3b8', text: '#fff' },
-  CHECK_IN:    { bg: '#8b5cf6', text: '#fff' },
-  CHECK_OUT:   { bg: '#0891b2', text: '#fff' },
-  COMPLETED:   { bg: '#059669', text: '#fff' },
+// Timeline: one tone per kind of event
+const STEP = {
+  SUBMITTED: { label: 'Submitted',   tone: 'neutral' },
+  PENDING:   { label: 'Pending',     tone: 'warning' },
+  APPROVED:  { label: 'Approved',    tone: 'success' },
+  REJECTED:  { label: 'Rejected',    tone: 'danger' },
+  CANCELLED: { label: 'Cancelled',   tone: 'neutral' },
+  CHECK_IN:  { label: 'Checked in',  tone: 'brand' },
+  CHECK_OUT: { label: 'Checked out', tone: 'success' },
+  COMPLETED: { label: 'Completed',   tone: 'success' },
 };
 
 function buildTimeline(request) {
-  const events = [];
-  events.push({
-    action:        'SUBMITTED',
+  const events = [{
+    action: 'SUBMITTED',
     acted_by_name: request.visitor_name ?? request.requester_name ?? 'Visitor',
-    created_at:    request.created_at,
-    remarks:       null,
-  });
-  if (Array.isArray(request.approval_history)) {
-    request.approval_history.forEach(e => events.push(e));
-  }
+    created_at: request.created_at,
+    remarks: null,
+  }];
+  if (Array.isArray(request.approval_history)) request.approval_history.forEach((e) => events.push(e));
   if (request.checked_in_at || request.status === 'CHECKED_IN') {
-    events.push({
-      action:        'CHECK_IN',
-      acted_by_name: request.checked_in_by_name ?? 'Security',
-      created_at:    request.checked_in_at ?? null,
-      remarks:       null,
-    });
+    events.push({ action: 'CHECK_IN', acted_by_name: request.checked_in_by_name ?? 'Security', created_at: request.checked_in_at ?? null, remarks: null });
   }
   if (request.checked_out_at || request.status === 'CHECKED_OUT' || request.status === 'COMPLETED') {
     events.push({
-      action:        request.status === 'COMPLETED' ? 'COMPLETED' : 'CHECK_OUT',
+      action: request.status === 'COMPLETED' ? 'COMPLETED' : 'CHECK_OUT',
       acted_by_name: request.checked_out_by_name ?? 'Security',
-      created_at:    request.checked_out_at ?? null,
-      remarks:       null,
+      created_at: request.checked_out_at ?? null,
+      remarks: null,
     });
   }
   events.sort((a, b) => {
@@ -71,116 +53,29 @@ function buildTimeline(request) {
   return events;
 }
 
-// ── Generic in-app confirm modal ──────────────────────────────────────────────
-function ConfirmModal({ open, onClose, onConfirm, loading, icon, iconBg, iconColor, title, description, confirmLabel, confirmStyle }) {
-  if (!open) return null;
+function Timeline({ steps }) {
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center px-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !loading && onClose()} />
-      <div
-        className="relative z-10 w-full max-w-sm rounded-xl p-6 space-y-4 animate-fade-in"
-        style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: iconBg }}>
-            {icon}
-          </div>
-          <div>
-            <h3 className="text-[15px] font-bold" style={{ color: 'var(--color-text)' }}>{title}</h3>
-            <p className="text-[12px] mt-0.5" style={{ color: 'var(--color-text-faint)' }}>{description}</p>
-          </div>
-        </div>
-        <div className="flex gap-2 justify-end pt-1">
-          <button className="btn-secondary text-[12px]" onClick={onClose} disabled={loading}>
-            Cancel
-          </button>
-          <button
-            className="btn-primary text-[12px]"
-            style={confirmStyle}
-            onClick={onConfirm}
-            disabled={loading}
-          >
-            {loading ? 'Please wait…' : confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+    <ol className="relative">
+      {steps.map((s, i) => {
+        const st = STEP[s.action] ?? { label: s.action, tone: 'neutral' };
+        return (
+          <li key={s.id ?? i} className={`relative pl-6 ${i < steps.length - 1 ? 'pb-4' : ''}`}>
+            {i < steps.length - 1 && <span className="absolute left-[4px] top-3 bottom-0 w-px bg-line" aria-hidden="true" />}
+            <span className={`state-dot tone-${st.tone} absolute left-0 top-[5px]`}
+              style={{ width: 9, height: 9, background: 'var(--tone)', outline: '2px solid var(--tone-soft)' }} aria-hidden="true" />
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="text-[12.5px] font-medium">{st.label}</span>
+              {s.acted_by_name && <span className="text-[12px] text-ink-2">by {s.acted_by_name}</span>}
+              {s.created_at && <span className="ml-auto text-[11px] text-muted tabular">{fmtDateTime(s.created_at)}</span>}
+            </div>
+            {s.remarks && <p className="mt-0.5 text-[12px] text-ink-2">“{s.remarks}”</p>}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
-// ── Approval conflict modal ───────────────────────────────────────────────────
-function ApprovalConflictModal({ conflict, remarks, onClose, onForceApprove, loading }) {
-  if (!conflict) return null;
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center px-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !loading && onClose()} />
-      <div
-        className="relative z-10 w-full max-w-md rounded-xl overflow-hidden animate-fade-in"
-        style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', boxShadow: '0 24px 60px rgba(0,0,0,0.35)' }}
-      >
-        {/* Header */}
-        <div className="flex items-start justify-between px-6 pt-5 pb-4" style={{ borderBottom: '1px solid var(--color-border)' }}>
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: '#fef3c7' }}>
-              <AlertTriangle size={18} style={{ color: '#d97706' }} strokeWidth={2} />
-            </div>
-            <div>
-              <h3 className="font-bold text-[15px]" style={{ color: 'var(--color-text)' }}>Schedule Conflict Detected</h3>
-              <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-text-faint)' }}>Approving this request may cause an overlap</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-full hover:bg-black/5 transition-colors"
-            style={{ color: 'var(--color-text-faint)' }}
-          >
-            <X size={15} />
-          </button>
-        </div>
-
-        {/* Conflict detail */}
-        <div className="px-6 py-4 space-y-3">
-          <div
-            className="rounded-lg px-4 py-3 space-y-1"
-            style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}
-          >
-            <p className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#c2410c' }}>
-              🔴 Host already has an approved visit
-            </p>
-            <p className="text-[13px]" style={{ color: '#9a3412' }}>
-              <strong>{conflict.visitor_name}</strong> is already scheduled to visit the host during{' '}
-              <strong>{conflict.time_window}</strong>.
-            </p>
-          </div>
-          <p className="text-[12px]" style={{ color: 'var(--color-text-muted)' }}>
-            You can go back and adjust, or approve anyway — the request will be flagged with a ⚠ badge for reference.
-          </p>
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4" style={{ borderTop: '1px solid var(--color-border)' }}>
-          <button
-            onClick={onClose}
-            disabled={loading}
-            className="btn-secondary text-[12px] px-4 py-2"
-          >
-            Go Back
-          </button>
-          <button
-            onClick={onForceApprove}
-            disabled={loading}
-            className="btn-primary text-[12px] px-4 py-2 flex items-center gap-1.5 disabled:opacity-60"
-          >
-            <AlertTriangle size={13} strokeWidth={2} />
-            {loading ? 'Approving…' : 'Approve Anyway'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 export default function RequestDetail() {
   const { id } = useParams();
   // Set when opening a cross-unit request (stored in another unit's DB) from the list
@@ -189,22 +84,18 @@ export default function RequestDetail() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [request, setRequest]           = useState(null);
-  const [loading, setLoading]           = useState(true);
+  const [request, setRequest]             = useState(null);
+  const [loading, setLoading]             = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const [remarks, setRemarks]           = useState('');
-  const [actionMode, setActionMode]     = useState(null); // null | 'approve' | 'reject'
+  const [remarks, setRemarks]             = useState('');
+  const [remarksError, setRemarksError]   = useState('');
+  const [actionMode, setActionMode]       = useState(null); // null | 'approve' | 'reject'
 
-  // Block modal state
   const [blockModal, setBlockModal]     = useState(false);
   const [blockReason, setBlockReason]   = useState('');
   const [blocking, setBlocking]         = useState(false);
-
-  // Unblock confirm modal state (replaces window.confirm)
   const [unblockModal, setUnblockModal] = useState(false);
   const [unblocking, setUnblocking]     = useState(false);
-
-  // Approval conflict modal state
   const [approvalConflict, setApprovalConflict] = useState(null); // null | { visitor_name, time_window }
 
   const fetchRequest = useCallback(async () => {
@@ -223,42 +114,37 @@ export default function RequestDetail() {
 
   // ── Approve / Reject ───────────────────────────────────────────────────────
   const submitAction = async (type, forceApprove = false) => {
+    if (type === 'reject' && !remarks.trim()) { setRemarksError('Enter the reason for rejecting — the visitor is told it.'); return; }
     setActionLoading(true);
     try {
       if (type === 'approve') {
         await apiClient.put(`/approvals/${id}/approve`, { remarks, force_approve: forceApprove || undefined });
-        toast.success('Approved.');
+        toast.success(`Request #${id} approved — the gate pass has been sent to the visitor.`);
         setApprovalConflict(null);
       } else {
         await apiClient.put(`/approvals/${id}/reject`, { remarks });
-        toast.success('Rejected.');
+        toast.success(`Request #${id} rejected — the visitor has been told.`);
       }
       setActionMode(null);
       setRemarks('');
       fetchRequest();
     } catch (err) {
       const data = err?.response?.data;
-      // Schedule conflict returned from approval endpoint
       if (err?.response?.status === 409 && data?.conflict && type === 'approve') {
-        setApprovalConflict(data.host_conflict); // { visitor_name, time_window, clashing_request_id }
-        return; // Don't toast — the modal handles it
+        setApprovalConflict(data.host_conflict); // the conflict modal explains it
+        return;
       }
-      toast.error(data?.message || 'Failed.');
+      toast.error(data?.message || 'Could not update the request.');
     } finally { setActionLoading(false); }
   };
 
-  // Force-approve after conflict acknowledgment
-  const handleForceApprove = async () => {
-    await submitAction('approve', true);
-  };
-
-  // ── Block visitor ──────────────────────────────────────────────────────────
+  // ── Block / unblock visitor ────────────────────────────────────────────────
   const handleBlockVisitor = async () => {
-    if (!blockReason.trim()) { toast.error('Please enter a reason.'); return; }
+    if (!blockReason.trim()) return;
     setBlocking(true);
     try {
       await apiClient.post(`/visit-requests/${id}/blacklist-visitor`, { reason: blockReason.trim() });
-      toast.success('Visitor blocked. Future requests will be declined automatically.');
+      toast.success(`${request.visitor_name || 'Visitor'} blocked — their future requests to you are declined automatically.`);
       setBlockModal(false);
       setBlockReason('');
       fetchRequest();
@@ -267,12 +153,11 @@ export default function RequestDetail() {
     } finally { setBlocking(false); }
   };
 
-  // ── Unblock visitor (in-app modal, no window.confirm) ─────────────────────
   const handleUnblockVisitor = async () => {
     setUnblocking(true);
     try {
       await apiClient.delete(`/visit-requests/blocked-visitors/${request.host_block_id}`);
-      toast.success('Visitor unblocked successfully.');
+      toast.success(`${request.visitor_name || 'Visitor'} unblocked.`);
       setUnblockModal(false);
       fetchRequest();
     } catch (err) {
@@ -280,437 +165,288 @@ export default function RequestDetail() {
     } finally { setUnblocking(false); }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  if (loading) return <Spinner />;
-  if (!request) return <div className="text-center py-20" style={{ color: 'var(--color-text-faint)' }}>Request not found.</div>;
+  if (loading) return <><PageHeader title="Visit request" /><Spinner label="Loading the request…" /></>;
+  if (!request) {
+    return (
+      <>
+        <PageHeader title="Visit request" />
+        <Empty icon={ClipboardList} title="Request not found" hint="It may belong to another unit, or the link is wrong."
+          action={<button type="button" className="btn-outline" onClick={() => navigate('/requests')}>Back to visit requests</button>} />
+      </>
+    );
+  }
 
-  const role        = user?.role_type || user?.role;
-  // A cross-unit request belongs to another unit's DB: its ids (host_user_id, pass)
-  // are that unit's, and every action endpoint targets the viewer's own unit —
-  // so no host/admin actions or pass view on it.
+  const role = user?.role_type || user?.role;
+  // A cross-unit request lives in another unit's DB: its ids are that unit's and every
+  // action endpoint targets the viewer's own unit — so no host/admin actions on it.
   const isCrossUnit = !!request.cross_unit;
-  // super_admin is read-only inside a unit (no approve/reject/block/pass) — API enforces the same.
-  const isHost      = !isCrossUnit && role !== 'super_admin' && String(request.host_user_id) === String(user?.id);
-  const isVisitor   = request.my_role === 'VISITOR' || (!isHost && (
-    String(request.requester_user_id) === String(user?.id) ||
+  // super_admin is read-only inside a unit (no approve/reject/block/pass) — API enforces the same
+  const isHost    = !isCrossUnit && role !== 'super_admin' && String(request.host_user_id) === String(user?.id);
+  const isVisitor = !isHost && (
+    (String(request.requester_user_id) === String(user?.id) && request.visit_category === 'EMPLOYEE_VISIT') ||
     (user?.email && request.visitor_email?.toLowerCase() === user.email.toLowerCase()) ||
-    (user?.phone && request.visitor_phone === user.phone)
-  ));
+    (user?.phone && request.visitor_phone && last10(request.visitor_phone) === last10(user.phone)) ||
+    (isCrossUnit && request.my_role === 'VISITOR')
+  );
   const canViewPass = (!isCrossUnit && ['security', 'receptionist', 'unit_admin'].includes(role)) ||
                       (request.status === 'APPROVED' && request.pass_number && (isVisitor || role === 'employee'));
-  const isAdmin     = !isCrossUnit && role === 'unit_admin';
-  const canApprove  = (isHost || isAdmin) && request.status === 'PENDING';
-  const isBlocked   = !!request.host_block_id;
-  const canBlock    = (isHost || isAdmin) && !!request.visitor_phone;
-  const companions  = request.companions ?? [];
-  const timeline    = buildTimeline(request);
+  const isAdmin    = !isCrossUnit && role === 'unit_admin';
+  const canApprove = (isHost || isAdmin) && request.status === 'PENDING';
+  const isBlocked  = !!request.host_block_id;
+  const canBlock   = (isHost || isAdmin) && !!request.visitor_phone;
+  const companions = request.companions ?? [];
+  const timeline   = buildTimeline(request);
+  const conflictFlag = request.force_created === 1 || request.force_created === true;
 
-  // qr_code_path is a short-lived signed S3 link from the API (null for old pre-S3 passes)
-  const qrSrc   = /^https?:\/\//.test(request.qr_code_path ?? '') ? request.qr_code_path : null;
+  // qr_code_path is a short-lived signed S3 link from the API (null for older passes)
+  const qrSrc = /^https?:\/\//.test(request.qr_code_path ?? '') ? request.qr_code_path : null;
+  const passLink = `/passes/pass/${request.pass_number}${crossUnitId ? `?unit_id=${crossUnitId}` : ''}`;
+
+  const vendorDetails = (request.visit_category === 'VENDOR' || request.company_name || request.work_order_ref || request.service_type || request.vendor_email);
 
   return (
-    <div className="space-y-5 animate-fade-in">
-
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <button onClick={() => navigate(-1)}
-            className="flex items-center gap-1.5 text-[12px] mb-2"
-            style={{ color: 'var(--color-text-faint)' }}
-            onMouseEnter={e => e.currentTarget.style.color = 'var(--color-accent)'}
-            onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text-faint)'}>
-            <ArrowLeft size={13} /> Back to Requests
-          </button>
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-[16px] font-bold" style={{ color: 'var(--color-text)' }}>Request #{request.id}</h1>
-            <StatusBadge status={request.status} />
-            <StatusBadge status={request.visit_category} />
-            {isVisitor && (
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
-                You are the Visitor
-              </span>
+    <div className="animate-fade-in">
+      <PageHeader
+        title={`Visit request #${request.id}`}
+        actions={(
+          <>
+            {canViewPass && request.status === 'APPROVED' && request.pass_number && (
+              <button type="button" className="btn-outline" onClick={() => navigate(passLink)}><QrCode size={14} /> Open gate pass</button>
             )}
-            {isHost && (
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-300 dark:border-blue-700">
-                You are the Host
-              </span>
+            {canBlock && !isBlocked && (
+              <button type="button" className="btn-danger" onClick={() => { setBlockModal(true); setBlockReason(''); }}
+                title="Decline this visitor's future requests to you automatically">
+                <ShieldOff size={14} /> Block visitor
+              </button>
             )}
-            {(request.force_created === 1 || request.force_created === true) && (
-              <span
-                className="text-[10px] px-2 py-0.5 rounded font-medium"
-                style={{ background: '#fef3c7', color: '#92400e' }}
-              >
-                ⚠ Created with conflict
-              </span>
+            {canBlock && isBlocked && (
+              <button type="button" className="btn-outline" onClick={() => setUnblockModal(true)}
+                title="Let this visitor request visits to you again">
+                <Shield size={14} /> Unblock visitor
+              </button>
             )}
-          </div>
-        </div>
-
-        <div className="flex gap-2 flex-wrap">
-          {canViewPass && request.status === 'APPROVED' && request.pass_number && (
-            <button className="btn-primary" onClick={() => navigate(`/gate/pass/${request.pass_number}`)}>
-              <QrCode size={14} /> Gate Pass
-            </button>
-          )}
-          {canApprove && !actionMode && (
-            <>
-              <button className="btn-primary" onClick={() => setActionMode('approve')}><Check size={14}/> Approve</button>
-              <button className="btn-secondary" onClick={() => setActionMode('reject')}
-                style={{ borderColor: 'var(--color-error)', color: 'var(--color-error)' }}><X size={14}/> Reject</button>
-            </>
-          )}
-          {/* Block / Unblock toggle */}
-          {canBlock && !isBlocked && (
-            <button
-              className="btn-secondary"
-              onClick={() => { setBlockModal(true); setBlockReason(''); }}
-              style={{ borderColor: '#dc2626', color: '#dc2626' }}
-              title="Block this visitor — their future requests to you will be automatically declined"
-            >
-              <ShieldOff size={14} /> Block Visitor
-            </button>
-          )}
-          {canBlock && isBlocked && (
-            <button
-              className="btn-secondary"
-              onClick={() => setUnblockModal(true)}
-              style={{ borderColor: '#16a34a', color: '#16a34a' }}
-              title="Unblock this visitor — they will be able to request visits to you again"
-            >
-              <Shield size={14} /> Unblock Visitor
-            </button>
-          )}
-        </div>
-      </div>
-
-
-      {/* ── Info grid ──────────────────────────────────────────────────────── */}
-      <div className="vms-card p-5">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 divide-y md:divide-y-0 md:divide-x"
-             style={{ '--tw-divide-opacity': 1, borderColor: 'var(--color-border)' }}>
-          {[
-            {
-              label: 'Visitor', icon: User,
-              lines: [
-                request.visitor_name ?? request.company_name ?? 'Visitor TBD',
-                request.company_name && request.visitor_name ? `🏢 ${request.company_name}` : null,
-                request.visitor_phone ? `📞 ${request.visitor_phone}` : null,
-                request.visitor_email || request.vendor_email ? `✉ ${request.visitor_email || request.vendor_email}` : null,
-                request.visitor_address ? `📍 ${request.visitor_address}` : null,
-              ].filter(Boolean),
-            },
-            { label: 'Host',  icon: Building2, lines: [request.host_name, request.host_designation, request.host_email] },
-            { label: 'Visit', icon: Calendar,  lines: [fmtDate(request.visit_date), `${request.visit_start_time ?? '—'} – ${request.visit_end_time ?? '—'}`, request.department_name, request.purpose] },
-          ].map(({ label, icon: Icon, lines }) => (
-            <div key={label} className="pt-4 md:pt-0 md:pl-5 first:pl-0 first:pt-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5"
-                 style={{ color: 'var(--color-text-faint)' }}>
-                <Icon size={11} /> {label}
-              </p>
-              {lines.filter(Boolean).map((line, i) => (
-                <p key={i} className={`text-[${i === 0 ? '13px' : '12px'}] ${i === 0 ? 'font-semibold' : ''}`}
-                   style={{ color: i === 0 ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
-                  {line}
-                </p>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Vendor & Business Details Card ───────────────────────────────── */}
-      {(request.visit_category === 'VENDOR' || request.company_name || request.work_order_ref || request.service_type || request.vendor_email) && (
-        <div className="vms-card p-5">
-          <div className="flex items-center gap-2 mb-4 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
-            <Briefcase size={15} style={{ color: 'var(--color-accent)' }} />
-            <h3 className="font-semibold text-[13px]" style={{ color: 'var(--color-text)' }}>
-              Vendor &amp; Business Details
-            </h3>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-            {request.company_name && (
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Company / Organisation</p>
-                <p className="text-[13px] font-semibold text-loud">{request.company_name}</p>
-              </div>
+            {canApprove && (
+              <>
+                <button type="button" className="btn-danger" onClick={() => { setActionMode('reject'); setRemarks(''); setRemarksError(''); }}><X size={14} /> Reject</button>
+                <button type="button" className="btn-primary" onClick={() => { setActionMode('approve'); setRemarks(''); setRemarksError(''); }}><Check size={14} /> Approve</button>
+              </>
             )}
-            {request.vendor_email && (
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Vendor Email</p>
-                <p className="text-[13px] text-loud">{request.vendor_email}</p>
-              </div>
-            )}
-            {request.service_type && (
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Service Type</p>
-                <p className="text-[13px] text-loud">{request.service_type}</p>
-              </div>
-            )}
-            {request.work_order_ref && (
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-faint mb-1">Work Order Ref</p>
-                <p className="text-[13px] font-mono font-medium text-loud">{request.work_order_ref}</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ── Gate pass QR / Status info ────────────────────────────────────────── */}
-      {canViewPass && request.pass_number && (
-        <div className="vms-card p-5 flex items-center justify-between gap-4"
-             style={{ background: 'var(--color-info-bg)' }}>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--color-text-faint)' }}>Gate Pass</p>
-            <p className="font-bold text-[20px] font-mono" style={{ color: 'var(--color-text)' }}>{request.pass_number}</p>
-            <div className="mt-2"><StatusBadge status={request.gate_pass_status ?? 'ISSUED'} /></div>
-          </div>
-          {request.qr_code_path && qrSrc ? (
-            <img
-              src={qrSrc}
-              alt="Gate Pass QR Code"
-              className="w-24 h-24 object-contain rounded"
-              style={{ border: '1px solid var(--color-border)' }}
-              onError={e => { e.currentTarget.style.display = 'none'; }}
-            />
-          ) : (
-            <div className="flex items-center justify-center w-24 h-24 rounded"
-                 style={{ border: '1px dashed var(--color-border)', color: 'var(--color-text-faint)' }}>
-              <QrCode size={28} strokeWidth={1.2} />
-            </div>
-          )}
-        </div>
-      )}
-      {!canViewPass && request.status === 'APPROVED' && (
-        <div className="vms-card p-5 flex items-center gap-3.5" style={{ background: 'var(--color-info-bg)' }}>
-          <CheckCircle2 size={22} style={{ color: 'var(--color-accent)' }} className="shrink-0" />
-          <div>
-            <p className="text-[14px] font-semibold text-loud">Visit Approved &amp; Pass Issued</p>
-            <p className="text-[12px] text-muted mt-0.5">
-              The digital gate pass has been generated and emailed directly to the visitor for entry verification at security.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* ── Companions ─────────────────────────────────────────────────────── */}
-      {companions.length > 0 && (
-        <div className="vms-card overflow-hidden">
-          <div className="px-5 py-4 flex items-center gap-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
-            <Users size={15} style={{ color: 'var(--color-accent)' }} />
-            <h3 className="font-semibold text-[13px]" style={{ color: 'var(--color-text)' }}>Companions ({companions.length})</h3>
-          </div>
-          <table className="vms-table">
-            <thead><tr><th>Full Name</th><th>ID Type</th><th>ID Number</th></tr></thead>
-            <tbody>
-              {companions.map((c, i) => (
-                <tr key={c.id ?? i}>
-                  <td className="font-medium" style={{ color: 'var(--color-text)' }}>{c.full_name}</td>
-                  <td>{c.id_type ?? '—'}</td>
-                  <td className="font-mono text-[12px]">{c.id_number ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* ── Timeline ───────────────────────────────────────────────────────── */}
-      <div className="vms-card p-5">
-        <h3 className="font-semibold text-[13px] flex items-center gap-2 mb-5" style={{ color: 'var(--color-text)' }}>
-          <Clock size={15} style={{ color: 'var(--color-accent)' }} /> Visit Lifecycle
-        </h3>
-        {timeline.length === 0 ? (
-          <p className="text-[12px] text-center py-4" style={{ color: 'var(--color-text-faint)' }}>No timeline events yet</p>
-        ) : (
-          <div className="relative">
-            <div className="absolute left-[17px] top-2 bottom-2 w-0.5" style={{ background: 'var(--color-border)' }} />
-            <div className="space-y-5">
-              {timeline.map((step, i) => {
-                const tc = TIMELINE_COLORS[step.action] ?? { bg: '#94a3b8', text: '#fff' };
-                const actionLabel = step.action === 'SUBMITTED' ? 'Submitted'
-                  : step.action === 'CHECK_IN'  ? 'Checked In'
-                  : step.action === 'CHECK_OUT' ? 'Checked Out'
-                  : step.action === 'COMPLETED' ? 'Completed'
-                  : step.action;
-                return (
-                  <div key={step.id ?? i} className="relative flex gap-4 pl-10">
-                    <div className="absolute left-0 w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-bold"
-                         style={{ background: tc.bg, color: tc.text }}>
-                      {i + 1}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
-                          style={{ background: tc.bg + '22', color: tc.bg }}
-                        >
-                          {actionLabel}
-                        </span>
-                        {step.acted_by_name && (
-                          <span className="text-[12px]" style={{ color: 'var(--color-text-muted)' }}>by {step.acted_by_name}</span>
-                        )}
-                        {step.created_at && (
-                          <span className="ml-auto text-[11px]" style={{ color: 'var(--color-text-faint)' }}>{fmtDateTime(step.created_at)}</span>
-                        )}
-                      </div>
-                      {step.remarks && <p className="mt-1 text-[12px] italic" style={{ color: 'var(--color-text-muted)' }}>&#34;{step.remarks}&#34;</p>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          </>
         )}
+      />
+
+      {/* Status line */}
+      <div className="flex flex-wrap items-center gap-2 -mt-2 mb-6">
+        <Status value={request.status} />
+        <span className="text-line-strong" aria-hidden="true">·</span>
+        <Tag tone={describe(request.visit_category).tone}>{describe(request.visit_category).label}</Tag>
+        {isVisitor && <Tag tone="success">You are the visitor</Tag>}
+        {isHost && <Tag tone="brand">You are the host</Tag>}
+        {isBlocked && <Tag tone="danger">Blocked by host</Tag>}
+        {conflictFlag && <Tag tone="warning" title="Created even though the host had another visit at this time">Time conflict</Tag>}
       </div>
 
-      {/* ══════════════════════ MODALS ══════════════════════════════════════ */}
-
-      {/* Block Visitor Modal */}
-      {blockModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !blocking && setBlockModal(false)} />
-          <div
-            className="relative z-10 w-full max-w-md rounded-xl p-6 space-y-4 animate-fade-in"
-            style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'rgba(220,38,38,0.1)' }}>
-                <ShieldOff size={18} style={{ color: '#dc2626' }} />
-              </div>
-              <div>
-                <h3 className="text-[15px] font-bold" style={{ color: 'var(--color-text)' }}>Block This Visitor</h3>
-                <p className="text-[12px]" style={{ color: 'var(--color-text-faint)' }}>
-                  {request.visitor_name} &middot; {request.visitor_phone}
-                </p>
-              </div>
-            </div>
-            <p className="text-[12px]" style={{ color: 'var(--color-text-muted)' }}>
-              Future visit requests from this visitor to you will be <strong>automatically declined</strong>. You can unblock them later.
-            </p>
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-x-8 gap-y-6 items-start">
+        <div className="min-w-0">
+          {/* Visitor · host · visit */}
+          <div className="tile grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-5">
             <div>
-              <label className="block text-[12px] font-medium mb-1" style={{ color: 'var(--color-text)' }}>
-                Reason <span style={{ color: '#dc2626' }}>*</span>
-              </label>
-              <textarea
-                rows={3}
-                value={blockReason}
-                onChange={e => setBlockReason(e.target.value)}
-                placeholder="e.g. Unprofessional behaviour, security concern..."
-                className="w-full text-[13px] p-2 rounded border resize-none focus:outline-none"
-                style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)', color: 'var(--color-text)' }}
-              />
+              <p className="group-heading mb-2">Visitor</p>
+              <p className="text-[13.5px] font-semibold">{request.visitor_name ?? request.company_name ?? 'Visitor to be confirmed'}</p>
+              <dl className="mt-1 space-y-0.5 text-[12px] text-ink-2">
+                {request.company_name && request.visitor_name && <dd>{request.company_name}</dd>}
+                {request.visitor_phone && <dd className="tabular">{request.visitor_phone}</dd>}
+                {(request.visitor_email || request.vendor_email) && <dd className="break-all">{request.visitor_email || request.vendor_email}</dd>}
+                {request.visitor_address && <dd>{request.visitor_address}</dd>}
+              </dl>
             </div>
-            <div className="flex gap-2 justify-end">
-              <button className="btn-secondary text-[12px]" onClick={() => setBlockModal(false)} disabled={blocking}>
-                Cancel
-              </button>
-              <button
-                className="btn-primary text-[12px]"
-                style={{ background: '#dc2626', borderColor: '#dc2626' }}
-                onClick={handleBlockVisitor}
-                disabled={blocking || !blockReason.trim()}
-              >
-                {blocking ? 'Blocking…' : 'Confirm Block'}
-              </button>
+            <div>
+              <p className="group-heading mb-2">Host</p>
+              <p className="text-[13.5px] font-semibold">{orDash(request.host_name)}</p>
+              <dl className="mt-1 space-y-0.5 text-[12px] text-ink-2">
+                {request.host_designation && <dd>{request.host_designation}</dd>}
+                {request.department_name && <dd>{request.department_name}</dd>}
+                {request.host_email && <dd className="break-all">{request.host_email}</dd>}
+              </dl>
+            </div>
+            <div>
+              <p className="group-heading mb-2">Visit</p>
+              <p className="text-[13.5px] font-semibold tabular">{fmtDate(request.visit_date)}</p>
+              <dl className="mt-1 space-y-0.5 text-[12px] text-ink-2">
+                <dd className="tabular">{request.visit_start_time ? `${fmtTime(request.visit_start_time)}${request.visit_end_time ? ` – ${fmtTime(request.visit_end_time)}` : ''}` : 'Any time'}</dd>
+                {request.purpose && <dd>{request.purpose}</dd>}
+                {request.accompanying_count > 0 && <dd>{request.accompanying_count} accompanying</dd>}
+              </dl>
             </div>
           </div>
+
+          {vendorDetails && (
+            <section className="section">
+              <SectionTitle icon={Briefcase} title="Vendor and business details" />
+              <div className="tile">
+                <KV items={[
+                  request.company_name && ['Company', request.company_name],
+                  request.vendor_email && ['Vendor email', request.vendor_email],
+                  request.service_type && ['Service type', request.service_type],
+                  request.work_order_ref && ['Work order', <span key="w" className="mono">{request.work_order_ref}</span>],
+                ]} />
+              </div>
+            </section>
+          )}
+
+          {companions.length > 0 && (
+            <section className="section">
+              <SectionTitle icon={Users} title="Companions" meta={`${companions.length}`} />
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead><tr><th>Full name</th><th>ID type</th><th>ID number</th></tr></thead>
+                  <tbody>
+                    {companions.map((c, i) => (
+                      <tr key={c.id ?? i}>
+                        <td className="font-medium">{c.full_name}</td>
+                        <td>{c.id_type ? <Tag tone="neutral">{c.id_type}</Tag> : '—'}</td>
+                        <td className="mono">{orDash(c.id_number)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          <section className="section">
+            <SectionTitle icon={Clock} title="Timeline" />
+            {timeline.length === 0
+              ? <p className="text-[12px] text-muted">No events yet.</p>
+              : <Timeline steps={timeline} />}
+          </section>
         </div>
-      )}
 
-      {/* Unblock Visitor Confirm Modal (in-app, no window.confirm) */}
-      <ConfirmModal
-        open={unblockModal}
-        onClose={() => !unblocking && setUnblockModal(false)}
-        onConfirm={handleUnblockVisitor}
-        loading={unblocking}
-        icon={<Shield size={18} style={{ color: '#16a34a' }} />}
-        iconBg="rgba(22,163,74,0.1)"
-        iconColor="#16a34a"
-        title="Unblock This Visitor?"
-        description={`${request.visitor_name ?? 'This visitor'} will be able to send visit requests to you again.`}
-        confirmLabel="Yes, Unblock"
-        confirmStyle={{ background: '#16a34a', borderColor: '#16a34a' }}
-      />
-
-      {/* Approval Conflict Modal */}
-      <ApprovalConflictModal
-        conflict={approvalConflict}
-        remarks={remarks}
-        onClose={() => setApprovalConflict(null)}
-        onForceApprove={handleForceApprove}
-        loading={actionLoading}
-      />
-
-      {/* Approve / Reject Action Modal */}
-      {actionMode && (
-        <div className="fixed inset-0 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="vms-card max-w-md w-full p-6 space-y-4 shadow-xl border rounded-xl" style={{ background: 'var(--color-bg-secondary)', borderColor: 'var(--color-border)' }}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold flex items-center gap-2" style={{ color: 'var(--color-text-loud)' }}>
-                {actionMode === 'approve' ? (
-                  <>
-                    <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                    Approve Visit Request
-                  </>
+        {/* Gate pass */}
+        <aside className="space-y-3">
+          {canViewPass && request.pass_number ? (
+            <div className="tile">
+              <p className="group-heading mb-2">Gate pass</p>
+              <p className="mono text-[20px] font-semibold">{request.pass_number}</p>
+              <div className="mt-1.5"><Status value={request.gate_pass_status ?? 'ISSUED'} /></div>
+              <div className="inset-cell mt-3 flex items-center justify-center">
+                {qrSrc ? (
+                  <img src={qrSrc} alt="Gate pass QR code" className="w-32 h-32 object-contain"
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 ) : (
-                  <>
-                    <X className="w-5 h-5 text-red-500" />
-                    Reject Visit Request
-                  </>
+                  <div className="w-32 h-32 flex flex-col items-center justify-center text-muted text-[11px] gap-1">
+                    <QrCode size={26} />No QR image
+                  </div>
                 )}
-              </h3>
-              <button
-                onClick={() => { setActionMode(null); setRemarks(''); }}
-                className="text-faint hover:text-loud transition-colors"
-                disabled={actionLoading}
-              >
-                <X className="w-4 h-4" />
-              </button>
+              </div>
+              {request.status === 'APPROVED' && (
+                <button type="button" className="btn-outline w-full mt-3" onClick={() => navigate(passLink)}>
+                  <QrCode size={14} /> Open gate pass
+                </button>
+              )}
             </div>
-
-            <p className="text-xs text-muted">
-              {actionMode === 'approve'
-                ? 'Please confirm approval. You may optionally add remarks for reference.'
-                : 'Please state the reason for rejecting this visit request.'}
-            </p>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1">
-                Remarks {actionMode === 'reject' && <span className="text-red-500">*</span>}
-              </label>
-              <textarea
-                rows={3}
-                className="w-full text-xs p-3 rounded-lg border resize-none focus:outline-none focus:ring-2 focus:ring-accent/30"
-                placeholder={actionMode === 'reject' ? 'Enter reason for rejection (required)…' : 'Add any optional remarks or instructions…'}
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-primary)', color: 'var(--color-text)' }}
-                autoFocus
-              />
+          ) : request.status === 'APPROVED' ? (
+            <div className="tile">
+              <State tone="success">Approved — pass issued</State>
+              <p className="mt-2 text-[12px] text-ink-2">The gate pass has been emailed to the visitor for entry at security.</p>
             </div>
+          ) : null}
+        </aside>
+      </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-subtle">
-              <button
-                className="btn-secondary text-xs px-4 py-2"
-                onClick={() => { setActionMode(null); setRemarks(''); }}
-                disabled={actionLoading}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn-primary text-xs px-4 py-2 flex items-center gap-1.5"
-                style={actionMode === 'reject' ? { background: '#dc2626', borderColor: '#dc2626' } : {}}
-                onClick={() => submitAction(actionMode)}
-                disabled={actionLoading || (actionMode === 'reject' && !remarks.trim())}
-              >
-                {actionLoading ? 'Processing…' : actionMode === 'approve' ? 'Confirm Approval' : 'Confirm Rejection'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Approve / reject ─────────────────────────────────────────────────── */}
+      <Modal
+        open={!!actionMode}
+        onClose={() => { setActionMode(null); setRemarks(''); }}
+        busy={actionLoading}
+        width={460}
+        title={actionMode === 'approve' ? `Approve request #${request.id}` : `Reject request #${request.id}`}
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={() => { setActionMode(null); setRemarks(''); }} disabled={actionLoading}>Cancel</button>
+            <button type="button" className={actionMode === 'reject' ? 'btn-danger' : 'btn-primary'} onClick={() => submitAction(actionMode)} disabled={actionLoading}>
+              {actionMode === 'approve' ? <CheckCircle2 size={14} /> : <X size={14} />}
+              {actionLoading ? 'Saving…' : actionMode === 'approve' ? 'Approve request' : 'Reject request'}
+            </button>
+          </>
+        )}
+      >
+        <Field label={actionMode === 'reject' ? 'Reason for rejecting' : 'Remarks (optional)'} required={actionMode === 'reject'} error={remarksError}
+          hint={actionMode === 'approve' ? 'The visitor receives the gate pass by email and SMS.' : undefined}>
+          <textarea rows={3} autoFocus className={`control resize-none${remarksError ? ' is-invalid' : ''}`}
+            value={remarks} onChange={(e) => { setRemarks(e.target.value); setRemarksError(''); }}
+            placeholder={actionMode === 'reject' ? 'e.g. The host is on leave that day' : 'e.g. Meeting room 2B is booked'} />
+        </Field>
+      </Modal>
 
+      {/* ── Schedule conflict ────────────────────────────────────────────────── */}
+      <Modal
+        open={!!approvalConflict}
+        onClose={() => setApprovalConflict(null)}
+        busy={actionLoading}
+        width={440}
+        title="Schedule conflict"
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={() => setApprovalConflict(null)} disabled={actionLoading}>Keep it pending</button>
+            <button type="button" className="btn-primary" onClick={() => submitAction('approve', true)} disabled={actionLoading}>
+              {actionLoading ? 'Approving…' : 'Approve anyway'}
+            </button>
+          </>
+        )}
+      >
+        {approvalConflict && (
+          <Note tone="warning" icon={AlertTriangle}>
+            <b>{approvalConflict.visitor_name}</b> is already scheduled to visit the host during <b>{approvalConflict.time_window}</b>.
+            Approving anyway marks this request with a time-conflict flag.
+          </Note>
+        )}
+      </Modal>
+
+      {/* ── Block visitor ────────────────────────────────────────────────────── */}
+      <Modal
+        open={blockModal}
+        onClose={() => setBlockModal(false)}
+        busy={blocking}
+        width={460}
+        title={`Block ${request.visitor_name || 'this visitor'}`}
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={() => setBlockModal(false)} disabled={blocking}>Cancel</button>
+            <button type="button" className="btn-danger" onClick={handleBlockVisitor} disabled={blocking || !blockReason.trim()}
+              title={!blockReason.trim() ? 'Enter a reason first' : undefined}>
+              {blocking ? 'Blocking…' : 'Block visitor'}
+            </button>
+          </>
+        )}
+      >
+        <p className="text-[12.5px] text-ink-2 mb-3">
+          Future visit requests from {request.visitor_phone ? <span className="tabular">{request.visitor_phone}</span> : 'this visitor'} to you will be declined automatically. You can unblock them later.
+        </p>
+        <Field label="Reason" required>
+          <textarea rows={3} autoFocus value={blockReason} onChange={(e) => setBlockReason(e.target.value)}
+            placeholder="e.g. Repeated requests without an appointment" className="control resize-none" />
+        </Field>
+      </Modal>
+
+      {/* ── Unblock visitor ──────────────────────────────────────────────────── */}
+      <Modal
+        open={unblockModal}
+        onClose={() => setUnblockModal(false)}
+        busy={unblocking}
+        width={420}
+        title={`Unblock ${request.visitor_name || 'this visitor'}`}
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={() => setUnblockModal(false)} disabled={unblocking}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={handleUnblockVisitor} disabled={unblocking}>
+              {unblocking ? 'Unblocking…' : 'Unblock visitor'}
+            </button>
+          </>
+        )}
+      >
+        <p className="text-[12.5px] text-ink-2">They will be able to send visit requests to you again.</p>
+      </Modal>
     </div>
   );
 }

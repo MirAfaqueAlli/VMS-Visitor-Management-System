@@ -33,6 +33,7 @@ const unitRoutes = require('./routes/unit.routes');
 const designationRoutes = require('./routes/designation.routes');
 const centralUserRoutes = require('./routes/centralUser.routes');
 const publicAuthRoutes = require('./routes/publicAuth.routes');
+const visitorPortalRoutes = require('./routes/visitorPortal.routes');
 
 const app = express();
 app.set('trust proxy', 'loopback');
@@ -110,6 +111,7 @@ app.use('/api/units', unitRoutes);
 app.use('/api/designations', designationRoutes);
 app.use('/api/central-users', centralUserRoutes);
 app.use('/api/public-auth', publicAuthRoutes);
+app.use('/api/visitor-portal', visitorPortalRoutes);
 
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {

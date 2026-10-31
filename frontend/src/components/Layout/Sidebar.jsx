@@ -1,274 +1,146 @@
 // frontend/src/components/Layout/Sidebar.jsx
-import { NavLink, useNavigate } from 'react-router-dom';
-import {
-  LayoutDashboard, Users, ClipboardList, CheckSquare,
-  Shield, BarChart3, Settings, LogOut, Building2, Globe, ShieldAlert, X, UserCheck,
-} from 'lucide-react';
-
-import useAuth from '../../hooks/useAuth';
+// Sidebar (DESIGN_RULES §5): --canvas, hidden scrollbar, one shared icon for every
+// link, collapsible workflow groups with ring-dot sub-links, counts of waiting
+// work, and a 64px rail mode. The nav itself comes from lib/nav.js.
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import apiClient from '../../api/axios';
+import useAuth from '../../hooks/useAuth';
+import useSocketEvent from '../../hooks/useSocketEvent';
+import { navSections, isCurrent } from '../../lib/nav';
+import { NavIcon, ChevronRight, SidebarToggle } from '../icons';
 
-// ── Nav item sets ─────────────────────────────────────────────────────────────
-const unitNavItems = [
-  { label: 'Dashboard',      icon: LayoutDashboard, path: '/dashboard', roles: null },
-  { label: 'Visitors',       icon: Users,           path: '/visitors',  roles: ['unit_admin', 'employee', 'receptionist', 'security'] },
-  { label: 'Visit Requests', icon: ClipboardList,   path: '/requests',  roles: ['unit_admin', 'employee', 'receptionist', 'security'] },
-  { label: 'Approvals',      icon: CheckSquare,     path: '/approvals', roles: ['unit_admin', 'employee'] },
-  { label: 'Gate Security',  icon: Shield,          path: '/gate',      roles: ['security', 'receptionist', 'unit_admin'] },
-  { label: 'Reports',        icon: BarChart3,       path: '/reports',   roles: ['unit_admin', 'unit_auditor'] },
-  { label: 'Audit Logs',     icon: ShieldAlert,     path: '/audit-logs',roles: ['unit_admin', 'unit_auditor'] },
-  { label: 'User Management',icon: Settings,        path: '/admin',     roles: ['unit_admin'], end: true },
-];
+const APPROVER_ROLES = ['unit_admin', 'employee'];
 
-// Central (super admin-only) links
-const superAdminCentralItems = [
-  { label: 'Dashboard',       icon: LayoutDashboard, path: '/dashboard' },
-  { label: 'Unit Management', icon: Building2,       path: '/super/units' },
-  { label: 'Global Users',    icon: UserCheck,       path: '/super/users' },
-  { label: 'Global Reports',  icon: BarChart3,       path: '/reports' },
-  { label: 'Audit Logs',      icon: ShieldAlert,     path: '/audit-logs' },
-];
+function Count({ n }) {
+  if (!n) return null;
+  return <span className="nav-count">{n > 99 ? '99+' : n}</span>;
+}
 
-// Unit-level links shown to super admin when they are managing a unit.
-// No Gate Security: gate operations are unit staff only (segregation of duties).
-const superAdminUnitItems = [
-  { label: 'Dashboard',       icon: LayoutDashboard, path: '/unit-dashboard' },
-  { label: 'Visitors',        icon: Users,           path: '/visitors' },
-  { label: 'Visit Requests',  icon: ClipboardList,   path: '/requests' },
-  { label: 'User Management', icon: Settings,        path: '/admin', end: true },
-];
-
-const auditorNavItems = [
-  { label: 'Dashboard',    icon: LayoutDashboard, path: '/dashboard' },
-  { label: 'Reports',      icon: BarChart3,       path: '/reports' },
-  { label: 'Audit Logs',   icon: ShieldAlert,     path: '/audit-logs' },
-];
-
-
-// ── Reusable NavItem ──────────────────────────────────────────────────────────
-function NavItem({ label, icon: Icon, path, end, onClick }) {
+function Link({ link, rail, sub, counts, onNavigate }) {
+  const n = link.countKey ? counts[link.countKey] : 0;
   return (
     <NavLink
-      to={path}
-      end={!!end}
-      className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-      onClick={onClick}
+      to={link.to}
+      end={!!link.end}
+      title={rail ? link.label : undefined}
+      aria-label={rail ? link.label : undefined}
+      onClick={onNavigate}
+      className={({ isActive }) => `nav-link${sub && !rail ? ' nav-sublink' : ''}${isActive ? ' active' : ''}`}
     >
-      <Icon size={15} strokeWidth={1.8} className="shrink-0" />
-      <span>{label}</span>
+      {sub && !rail ? <span className="nav-ring" aria-hidden="true" /> : <NavIcon size={18} duo className="shrink-0" />}
+      {!rail && <span className="nav-label">{link.label}</span>}
+      <Count n={n} />
     </NavLink>
   );
 }
 
-// ── Section header label ──────────────────────────────────────────────────────
-function SectionLabel({ children, color }) {
-  return (
-    <p
-      className="text-[10px] font-bold uppercase tracking-widest px-2 pb-1.5 pt-1"
-      style={{ color: color ?? 'var(--sidebar-text)', opacity: color ? 1 : 0.5 }}
-    >
-      {children}
-    </p>
-  );
-}
+export default function Sidebar({ rail, onToggleRail, mobileOpen, onNavigate }) {
+  const { user, isSuperAdmin, isGlobalAuditor, activeUnit, setActiveUnit } = useAuth();
+  const { pathname } = useLocation();
+  const role = user?.role_type;
+  const sections = navSections({ role, isSuperAdmin, isGlobalAuditor, activeUnit });
 
-export default function Sidebar({ isOpen, onClose }) {
-  const {
-    user, hasRole, logout,
-    isSuperAdmin, isUnitAdmin, isGlobalAuditor,
-    activeUnit, setActiveUnit,
-  } = useAuth();
-  const navigate = useNavigate();
+  // Groups the user opened / closed; otherwise a group is open when it holds the current page
+  const [manual, setManual] = useState({});
+  const groupKey = (si, g) => `${si}:${g}`;
 
-  const initials = user?.full_name
-    ?.split(' ')
-    .map(n => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2) ?? '?';
+  // Count of visit requests waiting for this user's decision
+  const [counts, setCounts] = useState({ approvals: 0 });
+  const canApprove = APPROVER_ROLES.includes(role) && !isSuperAdmin;
+  const loadCounts = useCallback(() => {
+    if (!canApprove) return;
+    apiClient.get('/approvals/inbox', { params: { page: 1, limit: 1 } })
+      .then((res) => setCounts({ approvals: res.data?.data?.pagination?.total ?? 0 }))
+      .catch(() => { /* count is a convenience */ });
+  }, [canApprove]);
+  useEffect(() => { loadCounts(); }, [loadCounts]);
+  useSocketEvent('visit:request:new', loadCounts, [loadCounts]);
+  useSocketEvent('visit:actioned', loadCounts, [loadCounts]);
+
+  // On a phone the full sidebar slides in as a drawer, never as a rail
+  const asRail = rail && !mobileOpen;
 
   return (
     <aside
-      className={`sidebar-panel fixed  left-0 top-0 h-screen flex flex-col z-50${isOpen ? ' is-open' : ''}`}
-      style={{
-        width:       'var(--sidebar-width, 220px)',
-        background:  'var(--sidebar-bg)',
-        borderRight: '1px solid var(--sidebar-border)',
-      }}
+      className={`sidebar${asRail ? ' is-rail' : ''}${mobileOpen ? ' is-open' : ''}`}
+      aria-label="Main navigation"
     >
-      <div
-        className="px-4 h-16 flex items-center gap-2.5 shrink-0"
-        style={{ borderBottom: '1px solid var(--sidebar-border)' }}
-      >
-        <div
-          className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 overflow-hidden"
-        >
-          <img src="/brand/vms-icon-blue.png" alt="OHPC VMS" className="w-full h-full object-contain" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-color font-semibold text-[13px] leading-none tracking-tight">OHPC VMS</p>
-          <p className="text-[10px] mt-0.5 truncate" style={{ color: 'var(--sidebar-text)' }}>
-            {isSuperAdmin
-              ? (activeUnit ? `Managing: ${activeUnit.name}` : 'Super Admin — Central')
-              : (user?.unit_name || user?.organization_name || 'Visitor Management')}
-          </p>
-        </div>
-        {/* Close button — mobile only */}
-        <button
-          onClick={onClose}
-          className="lg:hidden p-1 rounded transition-colors"
-          style={{ color: 'var(--sidebar-text)' }}
-          onMouseEnter={e => e.currentTarget.style.color = '#fff'}
-          onMouseLeave={e => e.currentTarget.style.color = 'var(--sidebar-text)'}
-          aria-label="Close menu"
-        >
-          <X size={16} />
-        </button>
-      </div>
-
-      {/* ── Active Unit banner ────────────────────────────────────────── */}
-      {(isSuperAdmin || isGlobalAuditor) && activeUnit && (
-        <div className="px-3 py-2.5 mx-2.5 mt-3 rounded flex flex-col gap-1.5 shrink-0 bg-bg-secondary border border-sidebar"
-         >
-          <p className="text-[9px] uppercase font-bold tracking-widest leading-none text-accent "
-            >Active Unit</p> 
-          <div className="flex items-center justify-between gap-1.5">
-            <span className="text-[12px] text-color font-semibold truncate leading-none">{activeUnit.name}</span>
-            <button
-              onClick={() => {
-                setActiveUnit(null);
-                toast.success('Cleared unit context — back to central view');
-              }}
-              className="p-0.5 text-[8px] font-bold rounded-full hover:bg-white/10 transition-colors"
-              style={{ color: 'var(--color-text)' }}
-              onMouseEnter={e => e.currentTarget.style.color = 'var(--color-danger)'}
-              onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text)'}
-              title="Leave Unit View"
-            >
-              SWITCH BACK
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Navigation ───────────────────────────────────────────────── */}
-      <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-
-        {/* ══ SUPER ADMIN + active unit → TWO grouped sections ════════ */}
-        {isSuperAdmin && activeUnit ? (
-          <>
-            {/* Section 1 — Central */}
-            <SectionLabel>Central Admin</SectionLabel>
-            {superAdminCentralItems.map(item => (
-              <NavItem key={item.path} {...item} onClick={onClose} />
-            ))}
-
-            {/* Amber divider with unit name */}
-            <div className="px-2 pt-3 pb-1">
-              <div
-                className="flex items-center gap-2"
-                style={{ borderTop: '1px solid var(--sidebar-border)' }}
-              >
-                <span
-                  className="text-[9px] font-bold uppercase tracking-widest whitespace-nowrap pt-2 flex items-center gap-1"
-                  style={{ color: 'var(--sidebar-active-bg)' }}
-                >
-                  <Building2 size={9} />
-                  {activeUnit.name}
-                </span>
+      <nav className="flex-1 overflow-y-auto no-scrollbar px-2 pt-2 pb-3">
+        {sections.map((section, si) => (
+          <div key={si} className={si > 0 ? 'mt-3 pt-3 border-t border-line' : ''}>
+            {section.title && !asRail && (
+              <div className="flex items-center justify-between gap-2 px-2.5 pb-1.5">
+                <span className="group-heading truncate">{section.title}</span>
+                {si > 0 && isSuperAdmin && activeUnit && (
+                  <button
+                    type="button"
+                    className="btn-link text-[11px]"
+                    onClick={() => { setActiveUnit(null); toast.success('Back to the central view.'); }}
+                  >
+                    Switch back
+                  </button>
+                )}
               </div>
-            </div>
-
-            {/* Section 2 — Unit items */}
-            {superAdminUnitItems.map(item => (
-              <NavItem key={item.path} {...item} onClick={onClose} />
-            ))}
-            <NavLink
-              to="/admin/departments"
-              className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-              onClick={onClose}
-            >
-              <Settings size={15} strokeWidth={1.8} className="shrink-0" />
-              <span>Departments</span>
-            </NavLink>
-          </>
-
-        /* ══ SUPER ADMIN — no active unit ═════════════════════════════ */
-        ) : isSuperAdmin ? (
-          <>
-            <SectionLabel>Super Admin</SectionLabel>
-            {superAdminCentralItems.map(item => (
-              <NavItem key={item.path} {...item} onClick={onClose} />
-            ))}
-          </>
-
-        /* ══ GLOBAL AUDITOR ══════════════════════════════════════════ */
-        ) : isGlobalAuditor ? (
-          <>
-            <SectionLabel>Auditor</SectionLabel>
-            {auditorNavItems.map(item => (
-              <NavItem key={item.path} {...item} onClick={onClose} />
-            ))}
-          </>
-
-        /* ══ REGULAR UNIT USERS ══════════════════════════════════════ */
-        ) : (
-          <>
-            <SectionLabel>Main Menu</SectionLabel>
-            {unitNavItems.map(({ label, icon, path, roles, end }) => {
-              if (roles && !hasRole(...roles)) return null;
-              // `end`: /admin (User Management) must not also light up on /admin/departments
-              return <NavItem key={path} label={label} icon={icon} path={path} end={end} onClick={onClose} />;
-            })}
-            {isUnitAdmin && (
-              <>
-                <NavLink
-                  to="/admin/departments"
-                  className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-                  onClick={onClose}
-                >
-                  <Settings size={15} strokeWidth={1.8} className="shrink-0" />
-                  <span>Departments</span>
-                </NavLink>
-              </>
             )}
-          </>
-        )}
+
+            {section.entries.map((entry, ei) => {
+              if (!entry.group) {
+                return <Link key={entry.to} link={entry} rail={asRail} counts={counts} onNavigate={onNavigate} />;
+              }
+              const key = groupKey(si, entry.group);
+              const holdsCurrent = entry.items.some((l) => isCurrent(l, pathname));
+              const open = manual[key] ?? holdsCurrent;
+              const total = entry.items.reduce((s, l) => s + (l.countKey ? counts[l.countKey] || 0 : 0), 0);
+
+              if (asRail) {
+                // Rail: icons only, a hairline between groups
+                return (
+                  <Fragment key={key}>
+                    {ei > 0 && <div className="mx-3 my-1.5 border-t border-line" aria-hidden="true" />}
+                    {entry.items.map((l) => <Link key={l.to} link={l} rail counts={counts} onNavigate={onNavigate} />)}
+                  </Fragment>
+                );
+              }
+
+              return (
+                <div key={key}>
+                  <button
+                    type="button"
+                    className={`nav-group${holdsCurrent ? ' has-current' : ''}`}
+                    aria-expanded={open}
+                    onClick={() => setManual((m) => ({ ...m, [key]: !open }))}
+                  >
+                    <NavIcon size={18} duo className="shrink-0" />
+                    <span className="nav-label">{entry.group}</span>
+                    {!open && <Count n={total} />}
+                    <ChevronRight size={13} className="nav-chevron" />
+                  </button>
+                  <div className={`nav-sub${open ? ' is-open' : ''}`}>
+                    <div inert={!open}>
+                      {entry.items.map((l) => <Link key={l.to} link={l} sub counts={counts} onNavigate={onNavigate} />)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
-      {/* ── User card ────────────────────────────────────────────────── */}
-      <div className="px-2 py-2 shrink-0" style={{ borderTop: '1px solid var(--sidebar-border)' }}>
-        <div className="flex items-center gap-2.5 px-2 py-2" style={{ borderRadius: 'var(--radius-sm)' }}>
-          <button
-            onClick={() => navigate('/profile')}
-            className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
-            style={{ background: 'var(--sidebar-active-bg)', color: 'var(--sidebar-active-text)' }}
-            title="My Profile"
-          >
-            {initials}
-          </button>
-
-          <button onClick={() => navigate('/profile')} className="flex-1 min-w-0 text-left">
-            <p className="text-color text-[12px] font-medium truncate leading-tight">
-              {user?.full_name}
-            </p>
-            <p className="text-[10px] capitalize truncate mt-0.5" style={{ color: 'var(--sidebar-text)' }}>
-              {user?.role_type?.replace(/_/g, ' ')}
-              {isUnitAdmin && user?.unit_name ? ` · ${user.unit_name}` : ''}
-            </p>
-          </button>
-
-          <button
-            onClick={logout}
-            title="Sign out"
-            className="p-1 shrink-0 transition-colors duration-150"
-            style={{ color: 'var(--sidebar-text)' }}
-            onMouseEnter={e => e.currentTarget.style.color = '#ffffff'}
-            onMouseLeave={e => e.currentTarget.style.color = 'var(--sidebar-text)'}
-          >
-            <LogOut size={14} strokeWidth={1.8} />
-          </button>
-        </div>
+      {/* Footer: collapse / expand + app note */}
+      <div className={`flex items-center gap-2 h-11 shrink-0 ${asRail ? 'justify-center px-2' : 'px-3.5'}`}>
+        <button
+          type="button"
+          className="btn-icon hidden lg:inline-flex"
+          onClick={onToggleRail}
+          aria-label={rail ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={rail ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <SidebarToggle size={17} />
+        </button>
+        {!asRail && <span className="text-[11px] text-muted truncate">OHPC Visitor Management</span>}
       </div>
     </aside>
   );

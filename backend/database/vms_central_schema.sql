@@ -110,6 +110,28 @@ CREATE TABLE IF NOT EXISTS public_otp_logs (
     INDEX idx_pub_otp (identifier, identifier_type, is_used)
 );
 
+-- Visitor portal accounts (public visitors). One account per mobile number; the
+-- visitor's requests and passes in every unit are found by that number (last 10
+-- digits), so walk-ins added by staff can sign in with a mobile OTP and see them.
+-- password_hash is NULL for accounts that only ever signed in by OTP.
+CREATE TABLE IF NOT EXISTS visitor_accounts (
+    id                  INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    phone               CHAR(10)      NOT NULL UNIQUE,
+    email               VARCHAR(100)  NULL UNIQUE,
+    full_name           VARCHAR(100)  NOT NULL,
+    address             VARCHAR(255)  NULL,
+    password_hash       VARCHAR(255)  NULL,
+    phone_verified_at   DATETIME      NULL,
+    email_verified_at   DATETIME      NULL,
+    failed_logins       INT           NOT NULL DEFAULT 0,
+    locked_until        DATETIME      NULL,
+    password_changed_at DATETIME      NULL,
+    last_login_at       DATETIME      NULL,
+    is_active           BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 -- Pending staff login OTPs (step 2 of sign-in). Kept in the DB rather than in
 -- process memory so they survive pm2 reloads and work across cluster workers.
 -- Only SHA-256 hashes of the login token and the OTP are stored.

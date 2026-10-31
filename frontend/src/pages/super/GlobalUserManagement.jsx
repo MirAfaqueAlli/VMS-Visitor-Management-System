@@ -1,20 +1,27 @@
 // frontend/src/pages/super/GlobalUserManagement.jsx
+// Central users (DESIGN_RULES §6/§8/§12): title + Add auditor, stat strip,
+// toolbar, a sortable table whose rows open the edit drawer.
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, UserCheck, Shield, Eye, EyeOff, UserX, Search } from 'lucide-react';
+import { Plus, Shield, Eye, EyeOff, UserX, UserCog, Check, Loader2, Info } from '../../components/icons';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import PasswordStrength from '../../components/PasswordStrength';
 import { validatePassword } from '../../utils/passwordValidator';
 import Pagination from '../../components/shared/Pagination';
 import { getApiErrorMessage } from '../../utils/apiError';
+import {
+  PageHeader, StatStrip, Stat, Toolbar, SearchInput, Th, SkeletonRows, Tag, State, Empty, Field, Drawer, Note,
+} from '../../components/ui';
+import useSort from '../../lib/useSort';
+import { fmtDate } from '../../lib/format';
 
 const EMPTY_FORM = {
   full_name: '', email: '', phone: '', employee_code: '', password: '', role_type: 'global_auditor',
 };
 
 const ROLE_LABELS = {
-  super_admin:    { label: 'Super Admin',    color: '#7c3aed', bg: '#ede9fe' },
-  global_auditor: { label: 'Global Auditor', color: '#0369a1', bg: '#e0f2fe' },
+  super_admin:    { label: 'Super Admin',    tone: 'warning' },
+  global_auditor: { label: 'Global Auditor', tone: 'success' },
 };
 
 export default function GlobalUserManagement() {
@@ -165,333 +172,160 @@ export default function GlobalUserManagement() {
     }
   };
 
-  const filtered = users;  // server already filters
-
-  const inputCls = 'vms-input w-full';
-  const labelCls = 'block text-[11px] font-medium uppercase tracking-wider mb-1.5';
+  const { rows, sort, onSort } = useSort(users, {
+    name: (u) => u.full_name,
+    code: (u) => u.employee_code,
+    role: (u) => ROLE_LABELS[u.role_type]?.label ?? u.role_type,
+    status: (u) => (u.is_active ? 0 : 1),
+    login: (u) => u.last_login_at,
+  });
 
   return (
-    <>
-      <div className="max-w-7xl mx-auto  animate-fade-in space-y-6">
-
-        {/* Header */}
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-[18px] font-bold" style={{ color: 'var(--color-text)' }}>
-              Central User Management
-            </h1>
-          </div>
-          <button className="btn-primary" onClick={openCreate}>
-            <Plus size={14} /> Add Global Auditor
-          </button>
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {[
-            { label: 'Total Central Users', value: totalCount,                                           color: 'var(--color-info)' },
-            { label: 'Super Admins',         value: users.filter(u => u.role_type === 'super_admin').length,    color: '#7c3aed' },
-            { label: 'Global Auditors',      value: users.filter(u => u.role_type === 'global_auditor').length, color: '#0369a1' },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="vms-card p-4 flex items-center gap-3">
-              <div className="w-9 h-9 rounded flex items-start justify-center">
-                <UserCheck size={26}  style={{ color : "var(--color-text-loud)" }}  />
-              </div>
-              <div>
-                <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-text-faint)' }}>{label}</p>
-                <p className="text-[22px] font-bold leading-none" style={{ color: 'var(--color-text)' }}>{value}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Search */}
-        <div className="relative flex items-center">
-          <div className="absolute left-3.5 flex items-center pointer-events-none z-10">
-            <Search size={18} style={{ color: 'var(--color-accent)' }} />
-          </div>
-          <input
-            type="text"
-            className="w-full h-12 pl-10 pr-28 bg-bg-secondary border border-subtle rounded-md text-[14px] text-loud placeholder-faint  focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-            placeholder="Search by name, email or employee code…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-          <div className="absolute right-1.5 flex items-center gap-2 z-10">
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch('')}
-                className="text-[12px] font-medium px-2 py-1 text-faint hover:text-loud transition-colors"
-              >
-                Clear
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn-primary h-9 px-4 text-[13px] font-medium flex items-center gap-1.5 rounded-lg shadow-sm"
-            >
-              <Search size={14} />
-              <span>Search</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Table */}
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div
-              className="w-6 h-6 rounded-full border-2 animate-spin"
-              style={{ borderColor: 'var(--color-border)', borderTopColor: 'var(--color-accent)' }}
-            />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="vms-card flex flex-col items-center justify-center py-16 gap-3">
-            <Shield size={32} style={{ color: 'var(--color-text-faint)' }} />
-            <p className="text-[13px]" style={{ color: 'var(--color-text-faint)' }}>
-              {search ? 'No users match your search.' : 'No central users found.'}
-            </p>
-          </div>
-        ) : (
-          <div className="vms-card overflow-hidden">
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)' }}>
-                  {['Name', 'Email', 'Employee Code', 'Role', 'Status', 'Last Login', 'Actions'].map(h => (
-                    <th
-                      key={h}
-                      className="text-left px-4 py-3 font-semibold uppercase tracking-wider text-[10px]"
-                      style={{ color: 'var(--color-text-faint)' }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((u, i) => {
-                  const rl = ROLE_LABELS[u.role_type] ?? { label: u.role_type, color: '#888', bg: '#f3f4f6' };
-                  return (
-                    <tr
-                      key={u.id}
-                      style={{
-                        borderBottom: i < filtered.length - 1 ? '1px solid var(--color-border)' : 'none',
-                        opacity: u.is_active ? 1 : 0.5,
-                      }}
-                    >
-                      <td className="px-4 py-3 font-medium" style={{ color: 'var(--color-text)' }}>
-                        {u.full_name}
-                      </td>
-                      <td className="px-4 py-3" style={{ color: 'var(--color-text-faint)' }}>
-                        {u.email}
-                      </td>
-                      <td className="px-4 py-3 font-mono" style={{ color: 'var(--color-text-faint)' }}>
-                        {u.employee_code}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
-                          style={{ background: rl.bg, color: rl.color }}
-                        >
-                          {rl.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
-                          style={{
-                            background: u.is_active ? '#f0fdf4' : '#fef2f2',
-                            color:      u.is_active ? '#15803d' : '#b91c1c',
-                          }}
-                        >
-                          {u.is_active ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3" style={{ color: 'var(--color-text-faint)' }}>
-                        {u.last_login_at
-                          ? new Date(u.last_login_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-                          : '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => openEdit(u)}
-                            className="text-[11px] px-2 py-0.5 rounded font-medium transition-colors"
-                            style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
-                            title="Edit user"
-                          >
-                            Edit
-                          </button>
-                          {u.is_active && u.role_type !== 'super_admin' && (
-                            <button
-                              onClick={() => handleDeactivate(u)}
-                              className="text-[11px] px-2 py-0.5 rounded font-medium transition-colors"
-                              style={{ background: '#fef2f2', color: '#b91c1c' }}
-                              title="Deactivate user"
-                            >
-                              <UserX size={11} />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <Pagination
-              page={page}
-              totalPages={totalPages}
-              totalCount={totalCount}
-              onPageChange={(p) => setPage(p)}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-40 transition-opacity"
-        style={{
-          background:    'rgba(0,0,0,0.5)',
-          opacity:       isOpen ? 1 : 0,
-          pointerEvents: isOpen ? 'auto' : 'none',
-          transition:    'opacity 200ms ease',
-        }}
-        onClick={close}
+    <div className="animate-fade-in">
+      <PageHeader
+        title="Central users"
+        actions={<button type="button" className="btn-primary" onClick={openCreate}><Plus size={14} /> Add global auditor</button>}
       />
 
-      {/* Slide-over */}
-      <div
-        className="fixed right-0 top-0 h-full z-50 flex flex-col"
-        style={{
-          width: 'min(520px, 100vw)',
-          background: 'var(--color-bg-secondary)',
-          borderLeft: '1px solid var(--color-border)',
-          transform:  isOpen ? 'translateX(0)' : 'translateX(100%)',
-          transition: 'transform 250ms ease',
-          boxShadow:  isOpen ?'-8px 0 32px rgba(0,0,0,0.15)' : 'none',
-          pointerEvents: isOpen ? 'auto' : 'none',
-        }}
+      <StatStrip cols={3}>
+        <Stat label="Central users" value={totalCount} loading={loading} />
+        <Stat label="Super admins" value={users.filter(u => u.role_type === 'super_admin').length} loading={loading} hint="On this page" />
+        <Stat label="Global auditors" value={users.filter(u => u.role_type === 'global_auditor').length} loading={loading} hint="On this page" />
+      </StatStrip>
+
+      <Toolbar count={loading ? null : totalCount} noun={totalCount === 1 ? 'user' : 'users'}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Search name, email or code" width={260} />
+        {search && <button type="button" className="btn-ghost" onClick={() => setSearch('')}>Clear</button>}
+      </Toolbar>
+
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <Th sortKey="name" sort={sort} onSort={onSort}>Name</Th>
+              <Th sortKey="code" sort={sort} onSort={onSort}>Code</Th>
+              <Th sortKey="role" sort={sort} onSort={onSort}>Role</Th>
+              <Th sortKey="status" sort={sort} onSort={onSort}>Status</Th>
+              <Th sortKey="login" sort={sort} onSort={onSort}>Last sign-in</Th>
+              <th className="w-10"><span className="sr-only">Deactivate</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <SkeletonRows rows={5} cols={6} />
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="!p-0">
+                  <Empty
+                    icon={Shield}
+                    title={search ? 'No users match this search' : 'No central users yet'}
+                    hint={search ? 'Try another name, email or code.' : 'Add a global auditor for read-only access across units.'}
+                  />
+                </td>
+              </tr>
+            ) : rows.map(u => {
+              const rl = ROLE_LABELS[u.role_type] ?? { label: u.role_type, tone: 'neutral' };
+              return (
+                <tr key={u.id} className="is-clickable" onClick={() => openEdit(u)}>
+                  <td>
+                    <span className={`font-medium ${u.is_active ? '' : 'text-muted'}`}>{u.full_name}</span>
+                    <span className="cell-sub">{u.email}</span>
+                  </td>
+                  <td className="mono">{u.employee_code}</td>
+                  <td><Tag tone={rl.tone}>{rl.label}</Tag></td>
+                  <td>{u.is_active ? <State tone="success">Active</State> : <State tone="danger">Inactive</State>}</td>
+                  <td className="tabular text-ink-2">{u.last_login_at ? fmtDate(u.last_login_at) : '—'}</td>
+                  <td>
+                    {u.is_active && u.role_type !== 'super_admin' && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleDeactivate(u); }}
+                        className="btn-icon"
+                        aria-label={`Deactivate ${u.full_name}`}
+                        title="Deactivate"
+                      >
+                        <UserX size={14} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {!loading && <Pagination page={page} totalPages={totalPages} totalCount={totalCount} onPageChange={(p) => setPage(p)} />}
+
+      <Drawer
+        open={isOpen}
+        onClose={close}
+        busy={saving}
+        width={520}
+        icon={editUser ? UserCog : Plus}
+        title={editUser ? `Edit ${editUser.full_name}` : 'New global auditor'}
+        subtitle={editUser ? (ROLE_LABELS[editUser.role_type]?.label ?? editUser.role_type) : 'Read-only access across all units'}
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={close} disabled={saving}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={handleSubmit}
+              disabled={saving || (!editUser && !validatePassword(form.password).valid)}>
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              {saving ? 'Saving…' : editUser ? 'Save changes' : 'Create auditor'}
+            </button>
+          </>
+        )}
       >
-        {/* Header */}
-        <div
-          className="px-6 py-4 flex items-start justify-between shrink-0"
-          style={{ borderBottom: '1px solid var(--color-border)' }}
-        >
-          <div>
-            <h3 className="font-semibold text-[13px]" style={{ color: 'var(--color-text)' }}>
-              {editUser ? 'Edit Central User' : 'Add Global Auditor'}
-            </h3>
-            <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-text-faint)' }}>
-              {editUser
-                ? 'Update the user\'s profile details.'
-                : 'Create a new Global Auditor in the central database.'}
-            </p>
+        <div className="tile space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_150px] gap-3">
+            <Field label="Full name" htmlFor="cu-name" required>
+              <input id="cu-name" className="control" value={form.full_name} onChange={set('full_name')} placeholder="Full name" />
+            </Field>
+            <Field label="Employee code" htmlFor="cu-code" required>
+              <input id="cu-code" className="control mono" value={form.employee_code} onChange={set('employee_code')} placeholder="GA-001" />
+            </Field>
           </div>
-          <button onClick={close} style={{ color: 'var(--color-text-faint)' }}><X size={16} /></button>
-        </div>
-
-        {/* Form body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-5">
-
-          {/* Role (create only, locked to global_auditor) */}
-          {!editUser && (
-            <div>
-              <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Role</label>
-              <div
-                className="flex items-center gap-2 px-3 py-2.5 rounded text-[12px] font-semibold"
-                style={{ background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd', borderRadius: 'var(--radius-sm)' }}
-              >
-                <Shield size={13} />
-                Global Auditor — read-only access across all units
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Full Name *</label>
-              <input className={inputCls} value={form.full_name} onChange={set('full_name')} placeholder="Full Name" />
-            </div>
-            <div>
-              <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Employee Code *</label>
-              <input className={`${inputCls} font-mono`} value={form.employee_code} onChange={set('employee_code')} placeholder="GA-001" />
-            </div>
-          </div>
-
-          <div>
-            <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Email Address *</label>
-            <input className={inputCls} type="email" value={form.email} onChange={set('email')} placeholder="auditor@company.com" />
-          </div>
-
-          <div>
-            <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Phone <span style={{ fontSize: '10px', fontWeight: 400, letterSpacing: 0, textTransform: 'none', opacity: 0.6, marginLeft: '4px' }}>(WhatsApp preferred)</span></label>
-            <input className={inputCls} value={form.phone} onChange={set('phone')} placeholder="+91 9000000000" />
-          </div>
+          <Field label="Email" htmlFor="cu-email" required>
+            <input id="cu-email" className="control" type="email" value={form.email} onChange={set('email')} placeholder="auditor@ohpc.co.in" />
+          </Field>
+          <Field label="Phone" htmlFor="cu-phone" hint="WhatsApp number preferred">
+            <input id="cu-phone" className="control tabular" value={form.phone} onChange={set('phone')} placeholder="+91 90000 00000" />
+          </Field>
 
           {!editUser && (
             <div>
-              <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Password *</label>
-              <div className="relative">
-                <input
-                  className={inputCls}
-                  type={showPwd ? 'text' : 'password'}
-                  value={form.password}
-                  onChange={set('password')}
-                  placeholder="Minimum 8 characters"
-                  autoComplete="new-password"
-                  style={{ paddingRight: 36 }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPwd(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2"
-                  style={{ color: 'var(--color-text-faint)' }}
-                >
-                  {showPwd ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
+              <Field label="Password" htmlFor="cu-pw" required>
+                <div className="relative">
+                  <input
+                    id="cu-pw"
+                    className="control pr-9"
+                    type={showPwd ? 'text' : 'password'}
+                    value={form.password}
+                    onChange={set('password')}
+                    placeholder="At least 8 characters"
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPwd(v => !v)}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 btn-icon !w-7 !min-h-0 h-7"
+                    aria-label={showPwd ? 'Hide password' : 'Show password'}
+                  >
+                    {showPwd ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </Field>
               <PasswordStrength password={form.password} />
             </div>
           )}
-
-          {/* Info box */}
-          <div
-            className="text-[11px] px-3 py-2.5 rounded"
-            style={{
-              background:   'var(--color-info-bg)',
-              color:        'var(--color-info)',
-              border:       '1px solid var(--color-info)',
-              borderRadius: 'var(--radius-sm)',
-            }}
-          >
-            {editUser
-              ? 'You can update the user\'s profile details. To reset their password, they must use the Profile page or contact the DBA.'
-              : 'Global Auditors can view all unit data (visitors, reports, audit logs) in read-only mode. They cannot create or modify records.'}
-          </div>
         </div>
 
-        {/* Footer */}
-        <div
-          className="px-6 py-4 flex gap-3 shrink-0"
-          style={{ borderTop: '1px solid var(--color-border)' }}
-        >
-          <button className="btn-secondary flex-1" onClick={close} disabled={saving}>Cancel</button>
-          <button className="btn-primary flex-1" onClick={handleSubmit} disabled={saving || (!editUser && !validatePassword(form.password).valid)}>
-            {saving ? (
-              <span className="flex items-center gap-1.5 justify-center">
-                <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'rgba(15,23,42,0.2)', borderTopColor: '#0f172a' }} />
-                Saving…
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 justify-center">
-                <Plus size={13} /> {editUser ? 'Save Changes' : 'Create Auditor'}
-              </span>
-            )}
-          </button>
-        </div>
-      </div>
-    </>
+        <Note tone="info" icon={Info} className="mt-3">
+          {editUser
+            ? 'This updates the profile only. To change a password, the user signs in and uses My profile.'
+            : 'Global auditors can view visitors, reports and audit logs of every unit. They cannot create or change records.'}
+        </Note>
+      </Drawer>
+    </div>
   );
 }

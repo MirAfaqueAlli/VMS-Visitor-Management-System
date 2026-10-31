@@ -1,209 +1,138 @@
+// frontend/src/pages/gate/GatePass.jsx
+// Printable gate pass: a flat, hairline-bordered card with the OHPC letterhead,
+// visitor, host, validity and QR. Only the pass itself prints.
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { Printer, ArrowLeft, ShieldCheck } from "lucide-react";
+import { Printer, QrCode } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import BrandLogo from '../../components/BrandLogo';
+import { PageHeader, Spinner } from "../../components/ui";
+import { fmtDate, fmtTime, orDash } from "../../lib/format";
 
 export default function GatePass() {
- const { passNumber } = useParams();
- const navigate = useNavigate();
- // ?unit_id= when the pass belongs to another unit (an employee hosted there)
- const [searchParams] = useSearchParams();
- const unitId = searchParams.get("unit_id");
- const [passData, setPassData] = useState(null);
- const [loading, setLoading] = useState(true);
+  const { passNumber } = useParams();
+  const navigate = useNavigate();
+  // ?unit_id= when the pass belongs to another unit (an employee hosted there)
+  const [searchParams] = useSearchParams();
+  const unitId = searchParams.get("unit_id");
+  const [passData, setPassData] = useState(null);
+  const [loading, setLoading] = useState(true);
 
- useEffect(() => {
- const fetchPass = async () => {
- try {
- const response = await apiClient.get(`/passes/pass/${passNumber}`, { params: unitId ? { unit_id: unitId } : undefined });
- setPassData(response.data.data);
- } catch (error) {
- toast.error("Failed to load gate pass");
- navigate("/dashboard");
- } finally {
- setLoading(false);
- }
- };
- fetchPass();
- }, [passNumber, unitId, navigate]);
+  useEffect(() => {
+    const fetchPass = async () => {
+      try {
+        const response = await apiClient.get(`/passes/pass/${passNumber}`, { params: unitId ? { unit_id: unitId } : undefined });
+        setPassData(response.data.data);
+      } catch {
+        toast.error("Failed to load gate pass");
+        navigate("/dashboard");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchPass();
+  }, [passNumber, unitId, navigate]);
 
- if (loading) {
- return (
- <div className="flex justify-center items-center min-h-[60vh]">
- Loading pass...
- </div>
- );
- }
+  if (loading) return <><PageHeader title="Gate pass" /><Spinner label="Loading the pass…" /></>;
+  if (!passData) return null;
 
- if (!passData) return null;
+  const hasQr = /^https?:\/\//.test(passData.qr_code_path ?? '');
 
- return (
- <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
- {/* Controls - Hidden when printing */}
- <div className="flex justify-between items-center mb-8 print:hidden">
- <button
- onClick={() => navigate(-1)}
- className="inline-flex items-center gap-2 text-muted hover:text-accent transition-colors"
- >
- <ArrowLeft className="w-4 h-4" /> Back
- </button>
- <button
- onClick={() => window.print()}
- className="bg-accent text-white px-6 py-3 rounded-full uppercase tracking-widest text-sm font-medium hover:bg-accent transition-colors duration-300 flex items-center gap-2 shadow-card"
- >
- <Printer className="w-4 h-4" /> Print Pass
- </button>
- </div>
+  return (
+    <div className="animate-fade-in">
+      <div className="print:hidden">
+        <PageHeader
+          title="Gate pass"
+          meta={<span className="mono">{passData.pass_number}</span>}
+          actions={(
+            <>
+              <button type="button" onClick={() => navigate(-1)} className="btn-outline">Back</button>
+              <button type="button" onClick={() => window.print()} className="btn-primary">
+                <Printer size={14} /> Print pass
+              </button>
+            </>
+          )}
+        />
+      </div>
 
- {/* Pass Container */}
- <div className="flex justify-center">
- <div className="vms-card rounded-[32px] p-8 sm:p-10 w-full max-w-lg shadow-card relative overflow-hidden border border-subtle print:shadow-none print:border-2">
- {/* Decorative Elements */}
- <div className="absolute top-0 right-0 w-32 h-32 bg-mixed-bg rounded-bl-full -mr-4 -mt-4 print:bg-gray-100"></div>
- <div className="absolute bottom-0 left-0 w-24 h-24 bg-accent/5 rounded-tr-full -ml-4 -mb-4 print:hidden"></div>
+      <article className="gate-pass card mx-auto w-full max-w-[460px] p-6 sm:p-7">
+        {/* Letterhead */}
+        <header className="text-center pb-5 mb-5 border-b border-line">
+          <div className="flex justify-center mb-3"><BrandLogo height={32} /></div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted">Government of Odisha</p>
+          <p className="text-[12.5px] font-semibold text-ink-2">Odisha Hydro Power Corporation Ltd.</p>
+          <h2 className="mt-3 text-[22px] font-bold tracking-[0.12em] uppercase text-ink">Gate pass</h2>
+          <p className="mt-1 mono text-[12.5px] text-ink-2">{passData.pass_number}</p>
+        </header>
 
-  {/* Header — institutional letterhead */}
-  <div className="flex flex-col items-center mb-8 relative z-10 border-b border-subtle pb-6">
+        {/* Visitor + QR */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1 space-y-3">
+            <div>
+              <p className="group-heading mb-0.5">Visitor</p>
+              <p className="text-[20px] font-semibold leading-tight text-ink break-words">{passData.visitor_name}</p>
+              {passData.visitor_phone && <p className="mt-0.5 text-[12.5px] tabular text-ink-2">{passData.visitor_phone}</p>}
+            </div>
+            <div>
+              <p className="group-heading mb-0.5">Host</p>
+              <p className="text-[13px] font-medium text-ink">{orDash(passData.host_name)}</p>
+              {passData.department_name && <p className="text-[12px] text-muted">{passData.department_name}</p>}
+            </div>
+          </div>
 
-    {/* Product wordmark — black when printed */}
-    <div className="mb-4"><BrandLogo height={34} /></div>
+          {/* qr_code_path is a short-lived signed S3 link from the API (null for old pre-S3 passes).
+              No crossOrigin attribute: it would require a CORS rule on the private bucket. */}
+          <div className="shrink-0 p-1.5 bg-white rounded border border-line">
+            {hasQr ? (
+              <img src={passData.qr_code_path} alt={`QR code for pass ${passData.pass_number}`} className="w-24 h-24 object-contain" />
+            ) : (
+              <div className="w-24 h-24 flex flex-col items-center justify-center gap-1 text-[11px] text-muted">
+                <QrCode size={20} /> No QR
+              </div>
+            )}
+          </div>
+        </div>
 
-    {/* Pass title — hero */}
-    <h2 className="text-4xl font-black uppercase tracking-widest text-loud text-center mb-1">
-      Gate Pass
-    </h2>
+        {/* Validity */}
+        <dl className="mt-5 grid grid-cols-3 gap-3 rounded-lg bg-surface-alt px-3 py-2.5">
+          <div>
+            <dt className="group-heading mb-0.5">Visit date</dt>
+            <dd className="text-[13px] font-medium tabular text-ink">{fmtDate(passData.visit_date)}</dd>
+          </div>
+          <div>
+            <dt className="group-heading mb-0.5">From</dt>
+            <dd className="text-[13px] font-medium tabular text-ink">{passData.visit_start_time ? fmtTime(passData.visit_start_time) : '—'}</dd>
+          </div>
+          <div>
+            <dt className="group-heading mb-0.5">Until</dt>
+            <dd className="text-[13px] font-medium tabular text-ink">{passData.visit_end_time ? fmtTime(passData.visit_end_time) : '—'}</dd>
+          </div>
+        </dl>
 
-    {/* Divider rule */}
-    <div className="w-full flex items-center gap-2 my-3">
-      <div className="flex-1 h-px" style={{ background: 'var(--color-accent)' }} />
-      <span className="text-[9px] font-black uppercase tracking-[0.3em] px-2" style={{ color: 'var(--color-accent)' }}>
-        Visitor Management System
-      </span>
-      <div className="flex-1 h-px" style={{ background: 'var(--color-accent)' }} />
+        <p className="mt-5 pt-4 border-t border-line text-center text-[11px] text-muted">
+          Wear this pass where it can be seen while on the premises.
+        </p>
+      </article>
+
+      {/* Print only the pass */}
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+@media print {
+  @page { margin: 15mm; }
+  body * { visibility: hidden; }
+  .gate-pass, .gate-pass * { visibility: visible; }
+  .gate-pass {
+    position: absolute; left: 0; top: 0;
+    width: 100%; max-width: 400px; margin: 0;
+    background: #fff; color: #000; border-color: #999;
+    page-break-inside: avoid; break-inside: avoid;
+  }
+}
+`,
+        }}
+      />
     </div>
-
-    {/* Org name — small label below divider */}
-    <p className="text-[10px] uppercase tracking-[0.2em] text-faint font-semibold mb-0.5">
-      Govt. of Odisha
-    </p>
-    <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted text-center">
-      Odisha Hydro Power Corporation Ltd.
-    </p>
-
-    {/* Pass number */}
-    <div className="inline-flex items-center gap-1.5 btn-secondary text-xs font-mono text-loud font-medium shadow-soft-sm mt-3">
-      <ShieldCheck className="w-3.5 h-3.5 text-accent" />
-      {passData.pass_number}
-    </div>
-  </div>
-
- {/* Main Content */}
- <div className="relative z-10 grid grid-cols-1 gap-8">
- {/* Top Row: Info + QR */}
- <div className="flex justify-between items-start gap-4">
- <div className="flex-1">
- <p className="text-[10px] uppercase tracking-widest text-faint mb-1">
- Visitor Name
- </p>
- <p className="text-3xl font-bold text-loud leading-tight mb-4">
- {passData.visitor_name}
- </p>
- {passData.visitor_phone && (
- <p className="text-sm text-muted mb-4 flex items-center gap-1">
- 📞 {passData.visitor_phone}
- </p>
- )}
-
- <div className="space-y-3">
- <div>
- <p className="text-[10px] uppercase tracking-widest text-faint mb-0.5">
- Host & Dept
- </p>
- <p className="text-sm font-medium text-loud">
- {passData.host_name}
- </p>
- <p className="text-xs text-muted">
- {passData.department_name}
- </p>
- </div>
- </div>
- </div>
-
- {/* QR Code */}
- <div className="shrink-0 p-2 bg-white rounded-md shadow-soft-sm border border-subtle">
- {/* qr_code_path is a short-lived signed S3 link from the API (null for old pre-S3 passes).
-     No crossOrigin attribute: it would require a CORS rule on the private bucket. */}
- {/^https?:\/\//.test(passData.qr_code_path ?? '') ? (
- <img
- src={passData.qr_code_path}
- alt="QR Code"
- className="w-24 h-24 object-contain"
- />
- ) : (
- <div className="w-24 h-24 bg-gray-100 flex items-center justify-center text-xs text-gray-400">
- No QR
- </div>
- )}
- </div>
- </div>
-
- {/* Bottom Row: Validity */}
-  <div className="bg-bg-primary rounded-md p-4 border border-subtle mt-2">
-  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-  <div>
-  <p className="text-[10px] uppercase tracking-widest text-faint mb-1">Visit Date</p>
-  <p className="font-medium text-loud text-sm">
-  {new Date(passData.visit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-  </p>
-  </div>
-  <div>
-  <p className="text-[10px] uppercase tracking-widest text-faint mb-1">Start Time</p>
-  <p className="font-medium text-loud text-sm">
-  {passData.visit_start_time ? passData.visit_start_time.substring(0, 5) : '—'}
-  </p>
-  </div>
-  <div>
-  <p className="text-[10px] uppercase tracking-widest text-faint mb-1">End Time</p>
-  <p className="font-medium text-loud text-sm">
-  {passData.visit_end_time ? passData.visit_end_time.substring(0, 5) : '—'}
-  </p>
-  </div>
-  </div>
-  </div>
- </div>
-
- {/* Footer */}
- <div className="mt-8 text-center text-[10px] text-faint uppercase tracking-widest">
- Please wear this pass visibly while on premises.
- </div>
- </div>
- </div>
-
- {/* Print styles */}
- <style
- dangerouslySetInnerHTML={{
- __html: `
- @media print {
- @page { margin: 15mm; }
- body * { visibility: hidden; }
- .vms-card, .vms-card * { visibility: visible; }
- .vms-card { 
- position: absolute; 
- left: 0; 
- top: 0;
- width: 100%;
- max-width: 400px;
- margin: 0;
- page-break-inside: avoid;
- break-inside: avoid;
- box-shadow: none !important;
- }
- }
- `,
- }}
- />
- </div>
- );
+  );
 }

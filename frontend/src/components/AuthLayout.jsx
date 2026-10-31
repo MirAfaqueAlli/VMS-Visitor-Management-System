@@ -1,9 +1,10 @@
 // frontend/src/components/AuthLayout.jsx
 // Shared layout for the public auth pages (sign-in, first-time setup, password reset):
-// a navy, government-style branding panel on the left (large screens) and a
+// a flat navy, government-style branding panel on the left (large screens) and a
 // full-height white panel on the right. Small screens get a compact header instead.
-import { Lock, ShieldCheck, QrCode, ClipboardCheck } from 'lucide-react';
-import { NAVY_GRADIENT } from '../utils/authTheme';
+// Always light (data-theme="light"), flat — no gradients or shadows.
+import { Lock, ShieldCheck, QrCode, ClipboardCheck } from './icons';
+import { NAVY } from '../utils/authTheme';
 
 /* -- Organisation shown on the auth pages (set per deployment in .env) ------ */
 const ORG_NAME    = import.meta.env.VITE_ORG_NAME    || 'Odisha Hydro Power Corporation Ltd.';
@@ -24,73 +25,56 @@ const DEFAULT_DESCRIPTION = 'Secure, pre-approved and fully audited visitor acce
 const DEFAULT_FEATURES = [
   [ShieldCheck,    'Secure, role-based sign-in'],
   [QrCode,         'QR-coded gate passes'],
-  [ClipboardCheck, 'Complete entry & exit audit trail'],
+  [ClipboardCheck, 'Complete entry and exit audit trail'],
 ];
 
 /* -- Left half (large screens only) ------------------------------------------ */
 function BrandPanel({ eyebrow, title, description, features }) {
   return (
-    <aside
-      className="hidden lg:flex flex-col"
-      style={{ width: '46%', maxWidth: '640px', flexShrink: 0, position: 'relative', overflow: 'hidden', background: NAVY_GRADIENT }}
-    >
+    <aside className="hidden lg:flex flex-col relative overflow-hidden shrink-0"
+      style={{ width: '46%', maxWidth: 640, background: NAVY }}>
       <TricolourStrip />
-      {/* faint dot texture */}
-      <div aria-hidden="true" style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none',
-        backgroundImage: 'radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px)', backgroundSize: '22px 22px',
-      }} />
 
-      <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '40px 48px 32px' }}>
+      <div className="relative flex-1 min-h-0 flex flex-col px-12 pt-10 pb-8">
         {/* Organisation */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <img src="/brand/vms-icon-white.png" alt=""
-            style={{ width: '52px', height: '52px', objectFit: 'contain' }} />
+        <div className="flex items-center gap-3.5">
+          <img src="/brand/vms-icon-white.png" alt="" className="w-12 h-12 object-contain" />
           <div>
-            <p style={{ fontSize: '15px', fontWeight: 700, color: '#ffffff', lineHeight: 1.25 }}>{ORG_NAME}</p>
-            <p style={{ fontSize: '11.5px', color: '#9fb3d1', marginTop: '3px', letterSpacing: '0.04em' }}>{ORG_TAGLINE}</p>
+            <p className="text-[15px] font-semibold text-white leading-tight">{ORG_NAME}</p>
+            <p className="text-[11.5px] mt-0.5 tracking-[0.03em]" style={{ color: '#a9bad3' }}>{ORG_TAGLINE}</p>
           </div>
         </div>
 
         {/* System — the panel never scrolls; on short screens the illustration shrinks instead */}
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '40px 0 28px' }}>
-          <p style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#f4b860' }}>
+        <div className="flex-1 min-h-0 flex flex-col justify-center pt-10 pb-7">
+          <p className="text-[11px] font-semibold tracking-[0.16em] uppercase" style={{ color: '#f4b860' }}>
             {eyebrow}
           </p>
-          <h1 style={{ fontSize: 'clamp(28px, 2.6vw, 38px)', fontWeight: 800, color: '#ffffff', lineHeight: 1.15, margin: '10px 0 12px' }}>
+          <h1 className="text-white font-semibold leading-[1.15] mt-2.5 mb-3" style={{ fontSize: 'clamp(26px, 2.4vw, 34px)' }}>
             {title}
           </h1>
-          <p style={{ fontSize: '14px', color: '#b6c4da', lineHeight: 1.65, maxWidth: '440px' }}>
+          <p className="text-[13.5px] leading-relaxed max-w-[440px]" style={{ color: '#c3cfe0' }}>
             {description}
           </p>
-          <ul style={{ listStyle: 'none', padding: 0, margin: '24px 0 0', display: 'grid', gap: '12px' }}>
+          <ul className="mt-6 grid gap-2.5">
             {features.map(([Icon, text]) => (
-              <li key={text} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px', color: '#dbe4f0' }}>
-                <span style={{
-                  width: '28px', height: '28px', borderRadius: '8px', flexShrink: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <Icon size={14} color="#f4b860" strokeWidth={2} />
-                </span>
+              <li key={text} className="flex items-center gap-2.5 text-[13px]" style={{ color: '#dbe4f0' }}>
+                <Icon size={16} color="#f4b860" />
                 {text}
               </li>
             ))}
           </ul>
-          <div style={{
-            flex: '0 1 clamp(130px, 26vh, 240px)', minHeight: 0, marginTop: '32px',
-            borderRadius: '14px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.14)',
-          }}>
+          <div className="mt-8 min-h-0 rounded-[14px] overflow-hidden border"
+            style={{ flex: '0 1 clamp(130px, 26vh, 240px)', borderColor: 'rgba(255,255,255,0.14)' }}>
             <img src="/login-illustration.png" alt=""
-              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 62%', display: 'block' }} />
+              className="w-full h-full object-cover block" style={{ objectPosition: 'center 62%' }} />
           </div>
         </div>
 
         {/* Notice */}
-        <p style={{
-          display: 'flex', alignItems: 'flex-start', gap: '8px', paddingTop: '18px',
-          borderTop: '1px solid rgba(255,255,255,0.12)', fontSize: '11.5px', color: '#8ea3c2', lineHeight: 1.6,
-        }}>
-          <Lock size={12} style={{ flexShrink: 0, marginTop: '3px' }} />
+        <p className="flex items-start gap-2 pt-4 text-[11.5px] leading-relaxed border-t"
+          style={{ borderColor: 'rgba(255,255,255,0.12)', color: '#9db0cb' }}>
+          <Lock size={12} className="shrink-0 mt-[3px]" />
           This is a restricted government system for authorised users only. All activity is logged and monitored.
         </p>
       </div>
@@ -107,7 +91,7 @@ function BrandPanel({ eyebrow, title, description, features }) {
  */
 export default function AuthLayout({
   children,
-  eyebrow     = 'Official Portal',
+  eyebrow     = 'Official portal',
   title       = 'Visitor Management System',
   description = DEFAULT_DESCRIPTION,
   features    = DEFAULT_FEATURES,
@@ -116,38 +100,33 @@ export default function AuthLayout({
 }) {
   return (
     // Fixed to the viewport height so only the right-hand panel scrolls
-    <div className="h-dvh" style={{ display: 'flex', overflow: 'hidden', fontFamily: 'Inter, system-ui, sans-serif', background: '#ffffff' }}>
+    // Controls are a touch taller here (36px) — a sign-in form, not a dense table page
+    <div data-theme="light" className="h-dvh flex overflow-hidden bg-surface text-ink" style={{ '--control-h': '36px' }}>
       <BrandPanel eyebrow={eyebrow} title={title} description={description} features={features} />
 
       {/* Right: full-height form panel (the scroll container) */}
-      <main style={{ flex: 1, minWidth: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', background: '#ffffff' }}>
+      <main className="flex-1 min-w-0 overflow-y-auto flex flex-col bg-surface">
         {/* Compact brand header — replaces the left panel on small screens */}
-        <div className="lg:hidden" style={{ background: NAVY_GRADIENT }}>
+        <div className="lg:hidden" style={{ background: NAVY }}>
           <TricolourStrip height={3} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '14px 16px' }}>
-            <img src="/brand/vms-icon-white.png" alt=""
-              style={{ width: '36px', height: '36px', objectFit: 'contain' }} />
+          <div className="flex items-center gap-2.5 px-4 py-3.5">
+            <img src="/brand/vms-icon-white.png" alt="" className="w-9 h-9 object-contain" />
             <div>
-              <p style={{ color: '#ffffff', fontWeight: 700, fontSize: '13.5px', lineHeight: 1.2 }}>Visitor Management System</p>
-              <p style={{ color: '#9fb3d1', fontSize: '11px', marginTop: '2px' }}>{ORG_NAME}</p>
+              <p className="text-white font-semibold text-[13.5px] leading-tight">Visitor Management System</p>
+              <p className="text-[11px] mt-0.5" style={{ color: '#a9bad3' }}>{ORG_NAME}</p>
             </div>
           </div>
         </div>
 
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'clamp(28px, 6vh, 64px) 24px' }}>
-          <div style={{ width: '100%', maxWidth: `${maxWidth}px` }}>
+        <div className="flex-1 flex items-center justify-center px-6" style={{ paddingTop: 'clamp(28px, 6vh, 64px)', paddingBottom: 'clamp(28px, 6vh, 64px)' }}>
+          <div className="w-full" style={{ maxWidth }}>
             {/* Product wordmark above the form (small screens show the navy header instead) */}
-            <img src="/brand/vms-logo-blue.png" alt="OHPC VMS" className="hidden lg:block"
-              style={{ height: '34px', width: 'auto', marginBottom: '28px' }} />
+            <img src="/brand/vms-logo-blue.png" alt="OHPC VMS" className="hidden lg:block h-8 w-auto mb-7" />
             {children}
           </div>
         </div>
 
-        <footer style={{
-          padding: '14px 24px', borderTop: '1px solid #eef2f7',
-          display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '6px 16px',
-          fontSize: '11.5px', color: '#94a3b8',
-        }}>
+        <footer className="px-6 py-3.5 border-t border-line flex flex-wrap justify-between gap-x-4 gap-y-1.5 text-[11.5px] text-muted">
           <span>{helpText}</span>
           <span>&copy; {new Date().getFullYear()} Sobeit Technology Pvt. Ltd.</span>
         </footer>

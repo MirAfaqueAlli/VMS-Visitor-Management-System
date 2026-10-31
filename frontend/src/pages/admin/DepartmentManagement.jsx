@@ -1,11 +1,15 @@
 // frontend/src/pages/admin/DepartmentManagement.jsx
+// Departments (DESIGN_RULES §6/§8/§12): title + Add, a sortable table whose rows
+// open the edit drawer; designations are edited as removable chips.
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Trash2, Tag, RotateCcw } from 'lucide-react';
+import { Plus, X, Trash2, RotateCcw, Building2, Loader2 } from '../../components/icons';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import { getApiErrorMessage } from '../../utils/apiError';
 import useAuth from '../../hooks/useAuth';
 import Pagination from '../../components/shared/Pagination';
+import { PageHeader, Toolbar, Th, SkeletonRows, Empty, Field, Drawer } from '../../components/ui';
+import useSort from '../../lib/useSort';
 
 const EMPTY = { name: '', code: '', description: '', designations: [] };
 
@@ -156,296 +160,169 @@ export default function DepartmentManagement() {
     }
   };
 
+  const { rows, sort, onSort } = useSort(depts, {
+    name: (d) => d.name,
+    code: (d) => d.code,
+    designations: (d) => Number(d.designation_count ?? 0),
+    users: (d) => Number(d.user_count ?? 0),
+  });
+
+  const plural = (n, word) => `${n} ${word}${Number(n) === 1 ? '' : 's'}`;
+
   return (
-    <>
-      <div className="max-w-7xl mx-auto  animate-fade-in space-y-6">
-        {/* Page Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <h1 className="text-xl font-bold text-loud">Department Management</h1>
-          </div>
-          <button onClick={openAdd} className="btn-primary px-4 py-2 text-xs">
-            <Plus className="w-4 h-4" /> Add Department
-          </button>
-        </div>
+    <div className="animate-fade-in">
+      <PageHeader
+        title="Departments"
+        actions={<button type="button" onClick={openAdd} className="btn-primary"><Plus size={14} /> Add department</button>}
+      />
 
-        {/* Table card */}
-        <div className="vms-card overflow-hidden">
-          <div
-            className="px-5 py-4 flex items-center justify-between gap-4"
-            style={{ borderBottom: '1px solid var(--color-border)' }}
-          >
-            <h2 className="font-semibold text-[13px] shrink-0" style={{ color: 'var(--color-text)' }}>
-              Departments
-              <span className="ml-2 text-[11px] font-normal" style={{ color: 'var(--color-text-faint)' }}>
-                ({totalCount})
-              </span>
-            </h2>
-          </div>
+      <Toolbar count={loading ? null : totalCount} noun={totalCount === 1 ? 'department' : 'departments'} />
 
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div
-                className="w-6 h-6 rounded-full border-2 animate-spin"
-                style={{ borderColor: 'var(--color-border)', borderTopColor: 'var(--color-accent)' }}
-              />
-            </div>
-          ) : depts.length === 0 ? (
-            <p className="text-center py-10 text-[12px]" style={{ color: 'var(--color-text-faint)' }}>
-              No departments found. Add one to get started.
-            </p>
-          ) : (
-            <table className="vms-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Code</th>
-                  <th>Description</th>
-                  <th>Designations</th>
-                  <th>Users</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {depts.map(d => (
-                  <tr key={d.id}>
-                    <td className="font-medium" style={{ color: 'var(--color-text)' }}>{d.name}</td>
-                    <td>
-                      <span
-                        className="font-mono text-[11px] px-2 py-0.5"
-                        style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)', borderRadius: 'var(--radius-sm)' }}
-                      >
-                        {d.code}
-                      </span>
-                    </td>
-                    <td className="max-w-xs truncate">{d.description || '—'}</td>
-                    <td>
-                      <span className="text-[11px]" style={{ color: 'var(--color-text-faint)' }}>
-                        {d.designation_count ?? 0} designation{d.designation_count !== 1 ? 's' : ''}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="badge badge-active">
-                        {d.user_count} user{d.user_count !== 1 ? 's' : ''}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <button className="btn-secondary py-1 px-3 text-[11px]" onClick={() => openEdit(d)}>
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDeactivate(d)}
-                          className="p-1.5 transition-colors"
-                          style={{ color: 'var(--color-text-faint)', borderRadius: 'var(--radius-sm)' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-danger-bg, #fef2f2)'; e.currentTarget.style.color = 'var(--color-error, #dc2626)'; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-faint)'; }}
-                          title="Deactivate"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          {!loading && (
-            <Pagination
-              page={page}
-              totalPages={totalPages}
-              totalCount={totalCount}
-              onPageChange={(p) => setPage(p)}
-            />
-          )}
-        </div>
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <Th sortKey="name" sort={sort} onSort={onSort}>Name</Th>
+              <Th sortKey="code" sort={sort} onSort={onSort}>Code</Th>
+              <th>Description</th>
+              <Th sortKey="designations" sort={sort} onSort={onSort} align="right">Designations</Th>
+              <Th sortKey="users" sort={sort} onSort={onSort} align="right">Users</Th>
+              <th className="w-10"><span className="sr-only">Deactivate</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <SkeletonRows rows={5} cols={6} />
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="!p-0">
+                  <Empty
+                    icon={Building2}
+                    title="No departments yet"
+                    hint="Add a department, then its designations, before adding users."
+                    action={<button type="button" onClick={openAdd} className="btn-outline"><Plus size={14} /> Add department</button>}
+                  />
+                </td>
+              </tr>
+            ) : rows.map(d => (
+              <tr key={d.id} className="is-clickable" onClick={() => openEdit(d)}>
+                <td className="font-medium">{d.name}</td>
+                <td className="mono">{d.code}</td>
+                <td className="max-w-xs truncate text-ink-2">{d.description || '—'}</td>
+                <td className="num">{d.designation_count ?? 0}</td>
+                <td className="num">{d.user_count ?? 0}</td>
+                <td>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleDeactivate(d); }}
+                    className="btn-icon"
+                    aria-label={`Deactivate ${d.name}`}
+                    title={d.user_count > 0 ? `${plural(d.user_count, 'user')} still assigned` : 'Deactivate'}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      {/* Backdrop */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 backdrop-blur-sm z-40 transition-opacity duration-300 opacity-100"
-          style={{ background: 'rgba(0,0,0,0.4)' }}
-          onClick={close}
-        />
-      )}
+      {!loading && <Pagination page={page} totalPages={totalPages} totalCount={totalCount} onPageChange={(p) => setPage(p)} />}
 
-      {/* Slide-over panel — matches UserManagement panel */}
-      <aside
-        className="fixed right-0 top-0 h-full w-full max-w-md border-l border-subtle z-50 flex flex-col shadow-card transition-transform duration-500 ease-in-out"
-        style={{
-          background: 'var(--color-bg-primary)',
-          transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
-          pointerEvents: isOpen ? 'auto' : 'none',
-        }}
+      <Drawer
+        open={isOpen}
+        onClose={close}
+        busy={saving}
+        width={520}
+        icon={Building2}
+        title={editDept ? `Edit ${editDept.name}` : 'New department'}
+        subtitle={editDept ? `${plural(editDept.user_count ?? 0, 'user')} · ${plural(editDept.designation_count ?? 0, 'designation')}` : 'Add a department to this unit'}
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={close} disabled={saving}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={handleSubmit} disabled={saving}>
+              {saving && <Loader2 size={14} className="animate-spin" />}
+              {saving ? 'Saving…' : editDept ? 'Save changes' : 'Create department'}
+            </button>
+          </>
+        )}
       >
-        {/* Panel header */}
-        <div className="flex items-center justify-between p-6 border-b border-subtle shrink-0">
-          <div>
-            <h2 className="text-2xl font-bold text-loud">
-              {editDept ? 'Edit' : 'New'} <em className="italic">Department</em>
-            </h2>
-            <p className="text-xs text-faint mt-0.5">
-              {editDept ? `Editing ${editDept.name}` : 'Create a new department'}
-            </p>
+        <div className="tile space-y-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-3">
+            <Field label="Department name" htmlFor="dept-name" required>
+              <input id="dept-name" className="control" name="name" value={form.name} onChange={handleChange} placeholder="e.g. Engineering" />
+            </Field>
+            <Field label="Code" htmlFor="dept-code" required>
+              <input id="dept-code" className="control mono" name="code" value={form.code}
+                onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="ENG" />
+            </Field>
           </div>
-          <button
-            onClick={close}
-            className="w-9 h-9 rounded-full flex items-center justify-center text-faint hover:bg-bg-primary hover:text-loud transition-colors duration-300"
-          >
-            <X size={18} strokeWidth={1.5} />
-          </button>
+          <Field label="Description" htmlFor="dept-desc">
+            <textarea id="dept-desc" className="control resize-none" rows={3} name="description"
+              value={form.description} onChange={handleChange} placeholder="Optional" />
+          </Field>
         </div>
 
-        {/* Form body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-5">
+        <div className="tile mt-3">
+          <p className="field-label">Designations</p>
 
-          {/* Name */}
-          <div>
-            <label className="block text-xs font-semibold text-muted uppercase tracking-widest mb-1.5">
-              Department Name *
-            </label>
-            <input
-              className="vms-input"
-              name="name"
-              value={form.name}
-              onChange={handleChange}
-              placeholder="e.g. Engineering"
-            />
-          </div>
-
-          {/* Code */}
-          <div>
-            <label className="block text-xs font-semibold text-muted uppercase tracking-widest mb-1.5">
-              Code *
-            </label>
-            <input
-              className="vms-input font-mono"
-              name="code"
-              value={form.code}
-              onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))}
-              placeholder="e.g. ENG"
-            />
-          </div>
-
-          {/* Description */}
-          <div>
-            <label className="block text-xs font-semibold text-muted uppercase tracking-widest mb-1.5">
-              Description
-            </label>
-            <textarea
-              className="vms-input resize-none"
-              rows={3}
-              name="description"
-              value={form.description}
-              onChange={handleChange}
-              placeholder="Optional description"
-            />
-          </div>
-
-          {/* Designations — on Add and on Edit */}
-          <div>
-              <label className="block text-xs font-semibold text-muted uppercase tracking-widest mb-1">
-                Designations
-              </label>
-              <p className="text-[10px] mb-2" style={{ color: 'var(--color-text-faint)' }}>
-                Type a designation and press{' '}
-                <kbd style={{ background: 'var(--color-border)', padding: '0 4px', borderRadius: 3, fontSize: 10 }}>Enter</kbd>
-                {' '}to add. Click a chip to remove.
-                {editDept && ' Changes are applied when you save.'}
-              </p>
-
-              {/* Saved designations (edit) — click to mark for removal, click again to keep */}
-              {editDept && (
-                desigLoading ? (
-                  <p className="text-[11px] mb-2" style={{ color: 'var(--color-text-faint)' }}>Loading designations…</p>
-                ) : existingDesigs.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {existingDesigs.map(d => {
-                      const removed = removedIds.includes(d.id);
-                      return (
-                        <span
-                          key={d.id}
-                          onClick={() => toggleRemoveExisting(d.id)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] cursor-pointer select-none transition-opacity hover:opacity-70"
-                          style={removed ? {
-                            background: 'var(--color-danger-bg, #fef2f2)', color: 'var(--color-error, #dc2626)',
-                            borderRadius: 'var(--radius-sm)', border: '1px dashed var(--color-error, #dc2626)',
-                            textDecoration: 'line-through',
-                          } : {
-                            background: 'var(--color-info-bg)', color: 'var(--color-info)',
-                            borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-info)',
-                          }}
-                          title={removed ? 'Will be removed on save — click to keep' : 'Click to remove'}
-                        >
-                          <Tag size={10} />
-                          {d.name}
-                          {removed ? <RotateCcw size={10} /> : <X size={10} />}
-                        </span>
-                      );
-                    })}
-                  </div>
-                )
-              )}
-
-              {/* New designations (not saved yet) */}
-              {form.designations.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {form.designations.map(name => (
-                    <span
-                      key={name}
-                      onClick={() => removeDesignation(name)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] cursor-pointer select-none transition-opacity hover:opacity-70"
-                      style={{
-                        background:   'var(--color-info-bg)',
-                        color:        'var(--color-info)',
-                        borderRadius: 'var(--radius-sm)',
-                        border:       '1px solid var(--color-info)',
-                      }}
-                      title="Click to remove"
-                    >
-                      <Tag size={10} />
-                      {name}
-                      <X size={10} />
+          {/* Saved designations (edit) — ✕ marks one for removal, ↺ keeps it */}
+          {editDept && (
+            desigLoading ? (
+              <p className="text-[12px] text-muted mb-2 flex items-center gap-1.5"><Loader2 size={13} className="animate-spin" /> Loading designations…</p>
+            ) : existingDesigs.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {existingDesigs.map(d => {
+                  const removed = removedIds.includes(d.id);
+                  return (
+                    <span key={d.id} className={`chip${removed ? ' is-removed' : ''}`}
+                      title={removed ? 'Removed when you save' : undefined}>
+                      {d.name}
+                      <button type="button" className="chip-x" onClick={() => toggleRemoveExisting(d.id)}
+                        aria-label={removed ? `Keep ${d.name}` : `Remove ${d.name}`} title={removed ? 'Keep' : 'Remove'}>
+                        {removed ? <RotateCcw size={11} /> : <X size={11} />}
+                      </button>
                     </span>
-                  ))}
-                </div>
-              )}
-
-              {/* Input row */}
-              <div className="flex gap-2">
-                <input
-                  className="vms-input flex-1"
-                  value={desigInput}
-                  onChange={e => setDesigInput(e.target.value)}
-                  onKeyDown={handleDesigKeyDown}
-                  placeholder="e.g. Senior Engineer"
-                />
-                <button
-                  type="button"
-                  onClick={addDesignation}
-                  className="btn-secondary px-3"
-                  disabled={!desigInput.trim()}
-                >
-                  Add
-                </button>
+                  );
+                })}
               </div>
-          </div>
-        </div>
+            )
+          )}
 
-        {/* Footer */}
-        <div className="p-6 border-t border-subtle flex gap-3 shrink-0">
-          <button className="flex-1 btn-secondary" onClick={close}>Cancel</button>
-          <button
-            className="flex-1 btn-primary flex items-center justify-center gap-2"
-            onClick={handleSubmit}
-            disabled={saving}
-          >
-            {saving ? 'Saving…' : editDept ? '✓ Save Changes' : '✓ Create Department'}
-          </button>
+          {/* New designations (not saved yet) */}
+          {form.designations.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {form.designations.map(name => (
+                <span key={name} className="chip is-new" title="New, added when you save">
+                  {name}
+                  <button type="button" className="chip-x" onClick={() => removeDesignation(name)}
+                    aria-label={`Remove ${name}`} title="Remove">
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <input
+              className="control flex-1"
+              value={desigInput}
+              onChange={e => setDesigInput(e.target.value)}
+              onKeyDown={handleDesigKeyDown}
+              placeholder="e.g. Senior Engineer"
+              aria-label="New designation"
+            />
+            <button type="button" onClick={addDesignation} className="btn-outline" disabled={!desigInput.trim()}>
+              <Plus size={14} /> Add
+            </button>
+          </div>
+          <p className="field-hint">
+            Press Enter to add.{editDept && ' Changes apply when you save.'}
+          </p>
         </div>
-      </aside>
-    </>
+      </Drawer>
+    </div>
   );
 }

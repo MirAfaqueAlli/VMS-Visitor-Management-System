@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Building2, User, ChevronRight, ChevronLeft, Shield, CheckCircle2 } from "lucide-react";
+import { Building2, User, ChevronRight, ChevronLeft, CheckCircle2, Loader2 } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
 import { getApiErrorMessage } from "../../utils/apiError";
+import AuthLayout from "../../components/AuthLayout";
+import Select from "../../components/Select";
+import { Field } from "../../components/ui";
 
 const STEPS = [
   { id: 1, label: "Organization", icon: Building2 },
-  { id: 2, label: "Admin Account", icon: User },
+  { id: 2, label: "Admin account", icon: User },
 ];
 
 const ORG_TYPES = ["Government", "Industrial", "Corporate", "Educational", "Healthcare", "Other"];
@@ -102,244 +105,116 @@ export default function RegisterOrganization() {
   };
 
   return (
-    <div className="min-h-screen bg-bg-primary flex items-center justify-center px-4 py-12">
-      {/* Background decoration */}
-      <div
-        className="fixed inset-0 pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 60% at 50% -10%, rgba(59,130,246,0.08) 0%, transparent 70%)",
-        }}
-      />
-
-      <div className="w-full max-w-lg relative z-10">
-        {/* Header */}
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4"
-            style={{ background: "var(--sidebar-bg)" }}>
-            <Shield size={28} style={{ color: "var(--color-accent)" }} />
-          </div>
-          <h1 className="text-3xl font-bold text-loud">
-            Register Your <em className="italic text-accent">Organization</em>
-          </h1>
-          <p className="text-muted mt-2 text-sm">
-            Set up your VMS workspace in under 2 minutes.
-          </p>
-        </div>
-
-        {/* Step Indicator */}
-        <div className="flex items-center gap-0 mb-8">
-          {STEPS.map((s, idx) => (
-            <div key={s.id} className="flex-1 flex items-center">
-              <div className="flex flex-col items-center flex-1">
-                <div
-                  className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-300"
-                  style={{
-                    background: step >= s.id ? "var(--color-accent)" : "var(--bg-secondary, #f1f5f9)",
-                    color: step >= s.id ? "#fff" : "var(--text-muted)",
-                  }}
-                >
-                  {step > s.id ? <CheckCircle2 size={18} /> : s.id}
-                </div>
-                <p className="text-xs mt-1.5 font-medium"
-                  style={{ color: step >= s.id ? "var(--color-accent)" : "var(--text-muted)" }}>
-                  {s.label}
-                </p>
-              </div>
-              {idx < STEPS.length - 1 && (
-                <div className="h-0.5 flex-1 mx-2 rounded transition-all duration-500"
-                  style={{
-                    background: step > s.id ? "var(--color-accent)" : "var(--border-subtle, #e2e8f0)",
-                  }} />
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Step 1 — Organization Details */}
-        {step === 1 && (
-          <form onSubmit={handleStep1Submit} className="vms-card rounded-2xl p-8 shadow-card space-y-6">
-            <div>
-              <h2 className="text-lg font-semibold text-loud flex items-center gap-2">
-                <Building2 size={18} className="text-accent" />
-                Organization Details
-              </h2>
-              <p className="text-xs text-muted mt-1">Tell us about your organization.</p>
-            </div>
-
-            <div className="grid grid-cols-1 gap-5">
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-loud uppercase tracking-wider">
-                  Organization Name *
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  required
-                  value={orgData.name}
-                  onChange={handleOrgChange}
-                  placeholder="e.g. Ministry of Finance"
-                  className="vms-input w-full"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">
-                    Short Code *
-                  </label>
-                  <input
-                    type="text"
-                    name="code"
-                    required
-                    maxLength={8}
-                    value={orgData.code}
-                    onChange={handleOrgChange}
-                    placeholder="e.g. MOF"
-                    className="vms-input w-full uppercase"
-                  />
-                  <p className="text-[10px] text-faint">Auto-generated. Max 8 chars.</p>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">
-                    Type *
-                  </label>
-                  <select
-                    name="type"
-                    required
-                    value={orgData.type}
-                    onChange={handleOrgChange}
-                    className="vms-input w-full"
-                  >
-                    <option value="">Select type</option>
-                    {ORG_TYPES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">City</label>
-                  <input type="text" name="city" value={orgData.city} onChange={handleOrgChange} className="vms-input w-full" placeholder="e.g. New Delhi" />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">State</label>
-                  <input type="text" name="state" value={orgData.state} onChange={handleOrgChange} className="vms-input w-full" placeholder="e.g. Delhi" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Phone</label>
-                  <input type="tel" name="phone" value={orgData.phone} onChange={handleOrgChange} className="vms-input w-full" placeholder="Org contact no." />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Email</label>
-                  <input type="email" name="email" value={orgData.email} onChange={handleOrgChange} className="vms-input w-full" placeholder="Org email" />
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="btn-primary w-full flex items-center justify-center gap-2 py-3 text-sm font-semibold"
-            >
-              Continue <ChevronRight size={16} />
-            </button>
-          </form>
-        )}
-
-        {/* Step 2 — Admin Account */}
-        {step === 2 && (
-          <form onSubmit={handleFinalSubmit} className="vms-card rounded-2xl p-8 shadow-card space-y-6">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setStep(1)}
-                className="p-1.5 rounded-lg hover:bg-bg-secondary transition-colors"
-                title="Back"
-              >
-                <ChevronLeft size={18} className="text-muted" />
-              </button>
-              <div>
-                <h2 className="text-lg font-semibold text-loud flex items-center gap-2">
-                  <User size={18} className="text-accent" />
-                  Admin Account
-                </h2>
-                <p className="text-xs text-muted mt-0.5">This will be your Organization Administrator login.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-5">
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Full Name *</label>
-                <input type="text" name="full_name" required value={adminData.full_name} onChange={handleAdminChange} className="vms-input w-full" placeholder="Your full name" />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Email *</label>
-                  <input type="email" name="email" required value={adminData.email} onChange={handleAdminChange} className="vms-input w-full" placeholder="admin@org.com" />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Phone *</label>
-                  <input type="tel" name="phone" required value={adminData.phone} onChange={handleAdminChange} className="vms-input w-full" placeholder="Mobile number" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Employee Code *</label>
-                  <input type="text" name="employee_code" required value={adminData.employee_code} onChange={handleAdminChange} className="vms-input w-full" placeholder="e.g. EMP001" />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Designation</label>
-                  <input type="text" name="designation" value={adminData.designation} onChange={handleAdminChange} className="vms-input w-full" placeholder="e.g. IT Administrator" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Password *</label>
-                  <input type="password" name="password" required minLength={8} value={adminData.password} onChange={handleAdminChange} className="vms-input w-full" placeholder="Min 8 chars, uppercase, number, symbol" />
-                  <PasswordStrength password={adminData.password} />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-loud uppercase tracking-wider">Confirm Password *</label>
-                  <input type="password" name="confirmPassword" required value={adminData.confirmPassword} onChange={handleAdminChange} className="vms-input w-full" placeholder="Repeat password" />
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || !validatePassword(adminData.password).valid}
-              className="btn-primary w-full flex items-center justify-center gap-2 py-3 text-sm font-semibold disabled:opacity-70 disabled:cursor-not-allowed"
-            >
-              {loading ? (
-                <span className="flex items-center gap-2">
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Creating your workspace…
-                </span>
-              ) : (
-                <>
-                  <CheckCircle2 size={16} />
-                  Complete Registration
-                </>
-              )}
-            </button>
-          </form>
-        )}
-
-        <p className="text-center text-xs text-muted mt-6">
-          Already registered?{" "}
-          <Link to="/login" className="text-accent hover:underline font-medium">
-            Sign in
-          </Link>
-        </p>
+    <AuthLayout eyebrow="New workspace" maxWidth={520} helpText="Already set up? Sign in instead.">
+      <div className="mb-5">
+        <h2 className="text-[22px] font-semibold text-ink">Register your organisation</h2>
+        <p className="text-[12.5px] text-muted mt-1">Set up your VMS workspace in two short steps.</p>
       </div>
-    </div>
+
+      {/* Step indicator: two segments */}
+      <ol className="grid grid-cols-2 gap-2 mb-6" aria-label="Progress">
+        {STEPS.map((s) => {
+          const done = step > s.id;
+          const current = step === s.id;
+          return (
+            <li key={s.id} aria-current={current ? "step" : undefined}>
+              <span className={`block h-1 rounded-full ${done || current ? "bg-primary" : "bg-line"}`} />
+              <span className={`mt-1.5 flex items-center gap-1 text-[12px] ${current ? "text-ink font-semibold" : done ? "text-ink-2" : "text-muted"}`}>
+                {done && <CheckCircle2 size={12} className="text-primary-strong" />}
+                {s.id} · {s.label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+
+      {/* Step 1 — Organization Details */}
+      {step === 1 && (
+        <form onSubmit={handleStep1Submit} className="space-y-3">
+          <Field label="Organisation name" htmlFor="ro-name" required>
+            <input id="ro-name" type="text" name="name" required value={orgData.name} onChange={handleOrgChange}
+              placeholder="e.g. Odisha Hydro Power Corporation Ltd." className="control" />
+          </Field>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Short code" htmlFor="ro-code" required hint="Filled in for you. At most 8 characters.">
+              <input id="ro-code" type="text" name="code" required maxLength={8} value={orgData.code}
+                onChange={handleOrgChange} placeholder="e.g. OHPC" className="control mono uppercase" />
+            </Field>
+            <Field label="Type" required>
+              <Select name="type" required value={orgData.type} onChange={handleOrgChange} aria-label="Organisation type">
+                <option value="">Select type</option>
+                {ORG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </Select>
+            </Field>
+            <Field label="City" htmlFor="ro-city">
+              <input id="ro-city" type="text" name="city" value={orgData.city} onChange={handleOrgChange} className="control" placeholder="e.g. Bhubaneswar" />
+            </Field>
+            <Field label="State" htmlFor="ro-state">
+              <input id="ro-state" type="text" name="state" value={orgData.state} onChange={handleOrgChange} className="control" placeholder="e.g. Odisha" />
+            </Field>
+            <Field label="Phone" htmlFor="ro-phone">
+              <input id="ro-phone" type="tel" name="phone" value={orgData.phone} onChange={handleOrgChange} className="control tabular" placeholder="Office number" />
+            </Field>
+            <Field label="Email" htmlFor="ro-email">
+              <input id="ro-email" type="email" name="email" value={orgData.email} onChange={handleOrgChange} className="control" placeholder="info@ohpc.co.in" />
+            </Field>
+          </div>
+
+          <div className="pt-4 !mt-5 border-t border-line">
+            <button type="submit" className="btn-primary">
+              Continue <ChevronRight size={14} />
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Step 2 — Admin Account */}
+      {step === 2 && (
+        <form onSubmit={handleFinalSubmit} className="space-y-3">
+          <Field label="Full name" htmlFor="ro-admin-name" required>
+            <input id="ro-admin-name" type="text" name="full_name" required value={adminData.full_name} onChange={handleAdminChange} className="control" placeholder="Your full name" />
+          </Field>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Email" htmlFor="ro-admin-email" required>
+              <input id="ro-admin-email" type="email" name="email" required value={adminData.email} onChange={handleAdminChange} className="control" placeholder="admin@ohpc.co.in" />
+            </Field>
+            <Field label="Phone" htmlFor="ro-admin-phone" required>
+              <input id="ro-admin-phone" type="tel" name="phone" required value={adminData.phone} onChange={handleAdminChange} className="control tabular" placeholder="Mobile number" />
+            </Field>
+            <Field label="Employee code" htmlFor="ro-admin-code" required>
+              <input id="ro-admin-code" type="text" name="employee_code" required value={adminData.employee_code} onChange={handleAdminChange} className="control mono" placeholder="e.g. EMP001" />
+            </Field>
+            <Field label="Designation" htmlFor="ro-admin-desig">
+              <input id="ro-admin-desig" type="text" name="designation" value={adminData.designation} onChange={handleAdminChange} className="control" placeholder="e.g. IT Administrator" />
+            </Field>
+            <div>
+              <Field label="Password" htmlFor="ro-admin-pw" required>
+                <input id="ro-admin-pw" type="password" name="password" required minLength={8} value={adminData.password} onChange={handleAdminChange} className="control" placeholder="At least 8 characters" />
+              </Field>
+              <PasswordStrength password={adminData.password} />
+            </div>
+            <Field label="Confirm password" htmlFor="ro-admin-confirm" required>
+              <input id="ro-admin-confirm" type="password" name="confirmPassword" required value={adminData.confirmPassword} onChange={handleAdminChange} className="control" placeholder="Repeat the password" />
+            </Field>
+          </div>
+
+          <div className="pt-4 !mt-5 border-t border-line flex flex-wrap gap-2">
+            <button type="submit" disabled={loading || !validatePassword(adminData.password).valid} className="btn-primary">
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+              {loading ? "Creating your workspace…" : "Complete registration"}
+            </button>
+            <button type="button" onClick={() => setStep(1)} className="btn-outline">
+              <ChevronLeft size={14} /> Back
+            </button>
+          </div>
+        </form>
+      )}
+
+      <p className="text-[12px] text-muted mt-6">
+        Already registered? <Link to="/login" className="text-link font-medium">Sign in</Link>
+      </p>
+    </AuthLayout>
   );
 }

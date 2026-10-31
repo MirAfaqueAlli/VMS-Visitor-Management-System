@@ -6,13 +6,12 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Building2, User, Lock, Mail, Phone, MapPin, Hash, ChevronRight,
-  CheckCircle2, Eye, EyeOff, AlertCircle, ArrowLeft, UserCog, ShieldCheck, Loader2,
-} from "lucide-react";
+  CheckCircle2, Eye, EyeOff, AlertCircle, ArrowLeft, UserCog, ShieldCheck, Loader2, Check,
+} from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 import AuthLayout from "../../components/AuthLayout";
-import { authStyles, NAVY } from "../../utils/authTheme";
 import PasswordStrength from "../../components/PasswordStrength";
 import { validatePassword } from "../../utils/passwordValidator";
 import { getApiErrorMessage } from "../../utils/apiError";
@@ -100,37 +99,29 @@ function TextField({
   const valid   = !error && value.trim() !== "";
   const errId   = `${name}-error`;
   return (
-    <div style={{ marginBottom: "16px" }}>
-      <label htmlFor={name} style={authStyles.label}>
-        {label}{required && <span style={{ color: "#dc2626" }}> *</span>}
+    <div className="mb-3.5">
+      <label htmlFor={name} className="field-label">
+        {label}{required && <span className="req" aria-hidden="true">*</span>}
       </label>
-      <div style={{ position: "relative" }}>
-        <Icon size={14} strokeWidth={1.8} style={authStyles.icon} />
+      <div className="control-wrap">
+        <Icon size={14} className="control-icon" />
         <input
           id={name} name={name} type={type} value={value}
           onChange={onChange} onBlur={onBlur}
           placeholder={placeholder} autoComplete={autoComplete} autoFocus={autoFocus}
           aria-invalid={invalid} aria-describedby={invalid && !hideErrorText ? errId : undefined}
-          className="focus:!border-blue-500 focus:!bg-white focus:ring-2 focus:ring-blue-500/15"
-          style={{
-            ...authStyles.input,
-            paddingRight: "38px",
-            ...(mono ? { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", letterSpacing: "0.05em" } : {}),
-            borderColor: invalid ? "#f87171" : "#e2e8f0",
-            background:  invalid ? "#fef2f2" : "#f8fafc",
-          }}
+          className={`control pr-9${mono ? " mono" : ""}${invalid ? " is-invalid" : ""}`}
         />
         {trailing ?? (valid && (
-          <CheckCircle2 size={15} aria-hidden="true"
-            style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", color: "#16a34a" }} />
+          <CheckCircle2 size={15} aria-hidden="true" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-success" />
         ))}
       </div>
       {invalid && !hideErrorText ? (
-        <p id={errId} role="alert" style={{ display: "flex", alignItems: "center", gap: "5px", marginTop: "6px", fontSize: "11.5px", color: "#dc2626" }}>
-          <AlertCircle size={12} style={{ flexShrink: 0 }} /> {error}
+        <p id={errId} role="alert" className="field-error flex items-center gap-1">
+          <AlertCircle size={12} className="shrink-0" /> {error}
         </p>
       ) : hint ? (
-        <p style={{ marginTop: "6px", fontSize: "11px", color: hintSuccess ? "#16a34a" : "#94a3b8", fontWeight: hintSuccess ? 600 : 400 }}>{hint}</p>
+        <p className={`field-hint${hintSuccess ? " !text-success font-medium" : ""}`}>{hint}</p>
       ) : null}
     </div>
   );
@@ -141,16 +132,17 @@ function RevealButton({ shown, onToggle }) {
     <button
       type="button" tabIndex={-1} onClick={onToggle}
       aria-label={shown ? "Hide password" : "Show password"}
-      style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+      title={shown ? "Hide password" : "Show password"}
+      className="absolute right-1 top-1/2 -translate-y-1/2 btn-icon !w-8 !min-h-0 h-8"
     >
-      {shown ? <EyeOff size={14} strokeWidth={1.8} /> : <Eye size={14} strokeWidth={1.8} />}
+      {shown ? <EyeOff size={14} /> : <Eye size={14} />}
     </button>
   );
 }
 
 const SETUP_PANEL = {
   eyebrow:     "First-time setup",
-  description: "Register the organisation and create the super administrator account. This page is available only once  before the system is set up.",
+  description: "Register the organisation and create the super administrator account. This page is available only once, before the system is set up.",
   features: [
     [Building2,   "Register the organisation"],
     [UserCog,     "Create the super administrator"],
@@ -178,7 +170,7 @@ export default function Setup() {
 
   useEffect(() => {
     if (status === "done") {
-      toast("Setup has already been completed. Please sign in.", { icon: "🔒" });
+      toast("Setup is already complete. Please sign in.");
       navigate("/login", { replace: true });
     }
   }, [status, navigate]);
@@ -267,9 +259,9 @@ export default function Setup() {
   if (status === "checking" || status === "done") {
     return (
       <AuthLayout {...SETUP_PANEL}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", color: "#64748b", fontSize: "13px", padding: "40px 0" }}>
-          <Loader2 size={16} className="animate-spin" /> Checking system status…
-        </div>
+        <p className="flex items-center justify-center gap-2 py-10 text-[12.5px] text-muted">
+          <Loader2 size={16} className="animate-spin" /> Checking the system status…
+        </p>
       </AuthLayout>
     );
   }
@@ -277,13 +269,13 @@ export default function Setup() {
   if (status === "error") {
     return (
       <AuthLayout {...SETUP_PANEL}>
-        <div style={{ textAlign: "center", padding: "24px 0" }}>
-          <AlertCircle size={28} style={{ color: "#dc2626", margin: "0 auto 12px" }} />
-          <h2 style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a", margin: 0 }}>Can't reach the server</h2>
-          <p style={{ fontSize: "13px", color: "#64748b", margin: "8px 0 20px", lineHeight: 1.6 }}>
-            Setup can't continue until the system status is confirmed.
+        <div className="py-6">
+          <span className="head-chip tone-danger !w-10 !h-10 mb-3"><AlertCircle size={20} duo /></span>
+          <h2 className="text-[18px] font-semibold text-ink">Can&apos;t reach the server</h2>
+          <p className="text-[12.5px] text-muted mt-1 mb-5">
+            Setup can&apos;t continue until the system status is confirmed.
           </p>
-          <button type="button" style={{ ...authStyles.primaryButton, cursor: "pointer" }}
+          <button type="button" className="btn-primary"
             onClick={() => { setStatus("checking"); loadSetupStatus(setStatus); }}>
             Try again
           </button>
@@ -298,38 +290,30 @@ export default function Setup() {
 
   return (
     <AuthLayout {...SETUP_PANEL} maxWidth={520}>
-      {/* Heading */}
-      
+      <div className="mb-5">
+        <h2 className="text-[22px] font-semibold text-ink">Set up the system</h2>
+        <p className="text-[12.5px] text-muted mt-1">Two short steps. You can go back before you finish.</p>
+      </div>
 
-      {/* Stepper */}
-      <ol style={{ display: "flex", alignItems: "center", listStyle: "none", padding: 0, margin: "0 0 24px" }}>
-        {steps.map(({ n, label }, i) => {
+      {/* Stepper: two segments */}
+      <ol className="grid grid-cols-2 gap-2 mb-6" aria-label="Progress">
+        {steps.map(({ n, label }) => {
           const done = step > n;
           const current = step === n;
           return (
-            <li key={n} style={{ display: "flex", alignItems: "center", flex: i < steps.length - 1 ? 1 : "0 0 auto" }}>
+            <li key={n} aria-current={current ? "step" : undefined}>
               <button
                 type="button"
                 onClick={() => done && setStep(n)}
                 disabled={!done}
-                style={{ display: "flex", alignItems: "center", gap: "8px", background: "none", border: "none", padding: 0, cursor: done ? "pointer" : "default" }}
+                className={`w-full text-left ${done ? "cursor-pointer" : "cursor-default"}`}
               >
-                <span style={{
-                  width: "26px", height: "26px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: "12px", fontWeight: 700,
-                  background: current ? NAVY : done ? "#dcfce7" : "#f1f5f9",
-                  color:      current ? "#ffffff" : done ? "#15803d" : "#94a3b8",
-                  border:     done ? "1px solid #86efac" : "none",
-                }}>
-                  {done ? <CheckCircle2 size={14} /> : n}
-                </span>
-                <span style={{ fontSize: "12.5px", fontWeight: current || done ? 700 : 500, color: current || done ? "#0f172a" : "#94a3b8" }}>
-                  {label}
+                <span className={`block h-1 rounded-full ${done || current ? "bg-primary" : "bg-line"}`} />
+                <span className={`mt-1.5 flex items-center gap-1 text-[12px] ${current ? "text-ink font-semibold" : done ? "text-ink-2" : "text-muted"}`}>
+                  {done && <Check size={12} weight="bold" className="text-primary-strong" />}
+                  {n} · {label}
                 </span>
               </button>
-              {i < steps.length - 1 && (
-                <span aria-hidden="true" style={{ flex: 1, height: "2px", margin: "0 12px", borderRadius: "2px", background: done ? NAVY : "#e2e8f0" }} />
-              )}
             </li>
           );
         })}
@@ -351,9 +335,11 @@ export default function Setup() {
             <TextField {...field("org_state")} label="State" icon={MapPin} placeholder="e.g. Odisha" />
           </div>
 
-          <button type="submit" style={{ ...authStyles.primaryButton, cursor: "pointer", marginTop: "8px" }}>
-            Continue <ChevronRight size={16} />
-          </button>
+          <div className="mt-2 pt-4 border-t border-line">
+            <button type="submit" className="btn-primary">
+              Continue <ChevronRight size={14} />
+            </button>
+          </div>
         </form>
       )}
 
@@ -364,7 +350,7 @@ export default function Setup() {
             autoComplete="name" placeholder="e.g. Rajesh Kumar Mohanty" />
           <TextField {...field("admin_email")} label="Email" icon={Mail} type="email" required
             autoComplete="email" placeholder="e.g. superadmin@ohpc.co.in"
-            hint="A verification code will be sent to this address." />
+            hint="We will send a verification code to this address." />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
             <TextField {...field("admin_phone")} label="Mobile number" icon={Phone} type="tel" required
               autoComplete="tel" placeholder="e.g. 98765 43210"
@@ -377,7 +363,7 @@ export default function Setup() {
             placeholder="Create a strong password"
             hideErrorText={!!form.admin_password}   // the checklist below explains what's missing
             trailing={<RevealButton shown={showPwd} onToggle={() => setShowPwd((v) => !v)} />} />
-          <div style={{ marginTop: "-8px", marginBottom: "16px" }}>
+          <div className="-mt-2 mb-3.5">
             <PasswordStrength password={form.admin_password} hideWhenValid />
           </div>
 
@@ -385,22 +371,16 @@ export default function Setup() {
             type={showConfirmPwd ? "text" : "password"} autoComplete="new-password"
             placeholder="Re-enter the password"
             touched={!!touched.admin_confirm_password || (form.admin_confirm_password.length > 0 && !confirmMatches && form.admin_confirm_password.length >= form.admin_password.length)}
-            hint={confirmMatches ? "✓ Passwords match" : undefined} hintSuccess
+            hint={confirmMatches ? "Passwords match" : undefined} hintSuccess
             trailing={<RevealButton shown={showConfirmPwd} onToggle={() => setShowConfirmPwd((v) => !v)} />} />
 
-          <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
-            <button
-              type="button" onClick={() => setStep(1)}
-              style={{
-                display: "flex", alignItems: "center", gap: "6px", padding: "12px 16px", borderRadius: "10px",
-                border: "1.5px solid #e2e8f0", background: "#ffffff", color: "#334155", fontSize: "14px", fontWeight: 600, cursor: "pointer",
-              }}
-            >
-              <ArrowLeft size={15} /> Back
+          <div className="mt-2 pt-4 border-t border-line flex flex-wrap gap-2">
+            <button type="submit" disabled={loading} className="btn-primary">
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+              {loading ? "Setting up…" : "Complete setup"}
             </button>
-            <button type="submit" disabled={loading}
-              style={{ ...authStyles.primaryButton, flex: 1, width: "auto", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1 }}>
-              {loading ? <><Loader2 size={16} className="animate-spin" /> Setting up…</> : <><CheckCircle2 size={16} /> Complete setup</>}
+            <button type="button" onClick={() => setStep(1)} className="btn-outline">
+              <ArrowLeft size={14} /> Back
             </button>
           </div>
         </form>

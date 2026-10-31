@@ -1,5 +1,5 @@
 import { Navigate, Outlet } from "react-router-dom";
-import { ShieldOff } from "lucide-react";
+import { ShieldOff, Loader2 } from "../icons";
 import useAuth from "../../hooks/useAuth";
 
 export default function ProtectedRoute({ roles }) {
@@ -7,11 +7,8 @@ export default function ProtectedRoute({ roles }) {
 
  if (isLoading) {
  return (
- <div className="min-h-screen bg-bg-primary flex flex-col items-center justify-center gap-4">
- <div className="w-9 h-9 rounded-full border-2 border-border border-t-transparent animate-spin" />
- <p className="text-faint text-sm tracking-widest uppercase font-sans">
- Loading VMS
- </p>
+ <div className="min-h-screen bg-canvas flex items-center justify-center gap-2 text-[12.5px] text-muted">
+ <Loader2 size={16} className="animate-spin" /> Loading VMS…
  </div>
  );
  }
@@ -22,17 +19,14 @@ export default function ProtectedRoute({ roles }) {
 
  if (roles && !hasRole(...roles)) {
  return (
- <div className="min-h-screen bg-bg-secondary flex flex-col items-center justify-center text-center px-6">
-
- <h1 className="text-4xl font-semibold text-loud mb-3 select-none">
- Access Restricted
- </h1>
- <p className="text-faint max-w-sm mb-8 leading-relaxed">
- You don&apos;t have permission to view this area. Please contact your
- administrator if you believe this is an error.
+ <div className="min-h-screen bg-surface flex flex-col items-center justify-center text-center px-6">
+ <span className="head-chip tone-danger !w-10 !h-10 mb-4"><ShieldOff size={20} duo /></span>
+ <h1 className="text-[17px] font-semibold text-ink mb-1">You don&apos;t have access to this page</h1>
+ <p className="text-[12.5px] text-muted max-w-sm mb-5">
+ Ask your administrator if you think you should.
  </p>
- <button onClick={() => window.history.back()} className="btn-secondary">
- Go Back
+ <button type="button" onClick={() => window.history.back()} className="btn-outline">
+ Go back
  </button>
  </div>
  );

@@ -1,18 +1,19 @@
 // frontend/src/pages/approvals/ApprovalInbox.jsx
-// Visit requests waiting for the signed-in host's (or unit admin's) decision,
-// shown as one plain list. Neutral colours; the accent marks only the main action.
-import { useState, useEffect, useCallback } from "react";
+// Visit requests waiting for the signed-in host's (or unit admin's) decision.
+// List anatomy (DESIGN_RULES §6/§8): stat strip, toolbar, plain sortable table;
+// rows open the request; Approve / Reject is the row's real action.
+import { Fragment, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Check, X, Loader2, AlertTriangle, Eye, Phone, CalendarDays, Clock, UserRound,
-  Building2, FileText, RefreshCw, CornerDownRight,
-} from "lucide-react";
+import { Check, X, Loader2, AlertTriangle, RefreshCw } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import Pagination from "../../components/shared/Pagination";
 import useSocketEvent from "../../hooks/useSocketEvent";
 import useAuth from "../../hooks/useAuth";
 import useTheme from "../../context/ThemeContext";
+import { PageHeader, StatStrip, Stat, Toolbar, Th, SkeletonRows, Tag, Modal, Note } from "../../components/ui";
+import useSort from "../../lib/useSort";
+import { fmtDate, fmtTime, relTime, orDash } from "../../lib/format";
 
 const nonotifcationlight = "/No Notifications Bell Illustration.png";
 const nonotifcationdark = "/Dark 3D Notification Bell Illustration.png";
@@ -24,73 +25,10 @@ const CATEGORY_LABELS = {
   PERSONAL_VISIT: "Personal visit",
 };
 
-// Desktop column layout shared by the header row and every item row
-const COLUMNS = "md:grid md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.4fr)_minmax(0,1fr)_auto] md:items-center md:gap-6";
+const isToday = (d) => d && new Date(d).toDateString() === new Date().toDateString();
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-function timeAgo(dateStr) {
-  if (!dateStr) return "—";
-  const mins = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} hr${hrs > 1 ? "s" : ""} ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days} day${days > 1 ? "s" : ""} ago`;
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
-}
-
-const initials = (name) =>
-  String(name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
-
-const Meta = ({ icon: Icon, children }) => (
-  <span className="inline-flex items-center gap-1.5 min-w-0">
-    <Icon size={13} strokeWidth={1.8} className="shrink-0" style={{ color: "var(--color-text-faint)" }} />
-    <span className="truncate">{children}</span>
-  </span>
-);
-
-// ── Schedule conflict dialog ───────────────────────────────────────────────────
-function ConflictModal({ conflict, onContinue, onGoBack, loading }) {
-  if (!conflict) return null;
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-overlay backdrop-blur-sm" onClick={onGoBack} />
-      <div role="dialog" aria-modal="true" aria-labelledby="conflict-title"
-        className="relative w-full max-w-md vms-card rounded-lg shadow-2xl animate-fade-in overflow-hidden">
-        <div className="flex items-start gap-3 px-6 pt-5 pb-4" style={{ borderBottom: "1px solid var(--color-border)" }}>
-          <AlertTriangle size={18} strokeWidth={2} className="mt-0.5 shrink-0" style={{ color: "var(--color-warning)" }} />
-          <div className="flex-1">
-            <h2 id="conflict-title" className="text-[15px] font-semibold text-loud">Schedule conflict</h2>
-            <p className="text-xs text-faint mt-0.5">The host already has a visit at this time.</p>
-          </div>
-          <button onClick={onGoBack} className="text-faint hover:text-loud transition-colors" aria-label="Close">
-            <X size={16} />
-          </button>
-        </div>
-        <div className="px-6 py-5 text-[13px] text-loud leading-relaxed">
-          <strong>{conflict.visitor_name}</strong> is already visiting the host during <strong>{conflict.time_window}</strong>.
-          <p className="text-xs text-faint mt-3">Go back to leave the request pending, or approve it anyway.</p>
-        </div>
-        <div className="flex items-center gap-3 px-6 pb-5">
-          <button onClick={onGoBack} disabled={loading} className="flex-1 btn-secondary justify-center">Go back</button>
-          <button onClick={onContinue} disabled={loading} className="flex-1 btn-primary justify-center">
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-            Approve anyway
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── One request in the list ────────────────────────────────────────────────────
-function ApprovalRow({ item, isUnitAdmin, onActionSuccess }) {
-  const navigate                        = useNavigate();
+/* ── One request: row + (when deciding) a remarks row under it ──────────────── */
+function ApprovalRow({ item, isUnitAdmin, onActionSuccess, onOpen }) {
   const [mode,         setMode]         = useState(null);   // null | 'approve' | 'reject'
   const [remarks,      setRemarks]      = useState("");
   const [remarkError,  setRemarkError]  = useState("");
@@ -98,7 +36,6 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess }) {
   const [conflictData, setConflictData] = useState(null);
 
   const name = item.visitor_name || item.requester_name || "Unknown visitor";
-  const time = item.visit_start_time ? ` · ${String(item.visit_start_time).slice(0, 5)}` : "";
 
   const doApprove = async (forceApprove = false) => {
     setSubmitting(true);
@@ -107,7 +44,7 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess }) {
         remarks: remarks.trim() || undefined,
         force_approve: forceApprove || undefined,
       });
-      toast.success("Request approved. The gate pass has been sent to the visitor.");
+      toast.success(`${name}'s visit approved — the gate pass has been sent to the visitor.`);
       setConflictData(null);
       onActionSuccess(item.visit_request_id);
     } catch (err) {
@@ -124,7 +61,7 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess }) {
 
   const handleConfirm = async () => {
     if (mode === "reject" && !remarks.trim()) {
-      setRemarkError("A reason is required when rejecting a request.");
+      setRemarkError("Enter the reason for rejecting — the visitor is told it.");
       return;
     }
     setRemarkError("");
@@ -132,7 +69,7 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess }) {
     setSubmitting(true);
     try {
       await apiClient.put(`/approvals/${item.visit_request_id}/reject`, { remarks: remarks.trim() || undefined });
-      toast.success("Request rejected.");
+      toast.success(`${name}'s visit rejected — the visitor has been told.`);
       onActionSuccess(item.visit_request_id);
     } catch (err) {
       toast.error(err.response?.data?.message || "Failed to reject request.");
@@ -145,131 +82,107 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess }) {
   const handleCancel = () => { setMode(null); setRemarks(""); setRemarkError(""); };
 
   return (
-    <li style={{ borderBottom: "1px solid var(--color-border)", background: mode ? "var(--color-bg-primary)" : undefined }}>
-      <ConflictModal
-        conflict={conflictData}
-        loading={submitting}
-        onGoBack={() => { setConflictData(null); setSubmitting(false); }}
-        onContinue={() => doApprove(true)}
-      />
-
-      <div className={`px-5 py-4 space-y-3 md:space-y-0 ${COLUMNS}`}>
-        {/* Visitor */}
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-semibold shrink-0"
-            style={{ background: "var(--color-bg-primary)", color: "var(--color-text-muted)", border: "1px solid var(--color-border)" }}>
-            {initials(name)}
+    <Fragment>
+      <tr className={`is-clickable${mode ? " is-selected" : ""}`} onClick={onOpen}>
+        <td>
+          <span className="inline-flex items-center gap-1.5 flex-wrap">
+            <span className="font-medium">{name}</span>
+            {item.visit_category === "SPOT" && <Tag tone="warning">At the gate</Tag>}
           </span>
-          <div className="min-w-0">
-            <p className="text-[14px] font-semibold text-loud truncate">{name}</p>
-            <p className="text-[12px] flex items-center gap-3 flex-wrap" style={{ color: "var(--color-text-muted)" }}>
-              <span>{CATEGORY_LABELS[item.visit_category] ?? item.visit_category ?? "Visit"}</span>
-              {item.visitor_phone && <Meta icon={Phone}>{item.visitor_phone}</Meta>}
-            </p>
-          </div>
-        </div>
-
-        {/* Visit */}
-        <div className="min-w-0 text-[12.5px] space-y-1" style={{ color: "var(--color-text-muted)" }}>
-          <div className="text-loud font-medium"><Meta icon={CalendarDays}>{formatDate(item.visit_date)}{time}</Meta></div>
-          <div title={item.purpose || undefined}><Meta icon={FileText}>{item.purpose || "No purpose given"}</Meta></div>
-        </div>
-
-        {/* Host / received */}
-        <div className="min-w-0 text-[12.5px] space-y-1" style={{ color: "var(--color-text-muted)" }}>
+          <span className="cell-sub">
+            {CATEGORY_LABELS[item.visit_category] ?? item.visit_category ?? "Visit"}
+            {item.visitor_phone ? ` · ${item.visitor_phone}` : ""}
+          </span>
+        </td>
+        <td className="whitespace-nowrap tabular">
+          {fmtDate(item.visit_date)}
+          <span className="cell-sub">{item.visit_start_time ? fmtTime(item.visit_start_time) : "Any time"}</span>
+        </td>
+        <td className="max-w-[280px]">
+          <span className="block truncate" title={item.purpose || undefined}>{orDash(item.purpose)}</span>
           {isUnitAdmin && item.host_name && (
-            <div><Meta icon={UserRound}>{item.host_name}{item.department_name ? `, ${item.department_name}` : ""}</Meta></div>
+            <span className="cell-sub">Host: {item.host_name}{item.department_name ? `, ${item.department_name}` : ""}</span>
           )}
-          {item.requester_name && item.requester_name !== name && (
-            <div><Meta icon={Building2}>Raised by {item.requester_name}</Meta></div>
-          )}
-          <div><Meta icon={Clock}>Received {timeAgo(item.assigned_at)}</Meta></div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-2 md:justify-end">
-          <button
-            onClick={() => navigate(`/requests/${item.visit_request_id}`)}
-            className="btn-secondary px-2.5 text-[12px]"
-            title="View details"
-            aria-label={`View details for ${name}`}
-          >
-            <Eye size={14} />
-            <span className="md:hidden xl:inline">Details</span>
-          </button>
-          <button
-            onClick={() => openMode("reject")}
-            disabled={submitting}
-            className="btn-secondary px-3 text-[12px]"
-            style={mode === "reject" ? { borderColor: "var(--color-text)", color: "var(--color-text)" } : undefined}
-          >
-            <X size={14} /> Reject
-          </button>
-          <button onClick={() => openMode("approve")} disabled={submitting} className="btn-primary px-3 text-[12px]">
-            <Check size={14} /> Approve
-          </button>
-        </div>
-      </div>
-
-      {/* Remarks + confirm */}
-      {mode && (
-        <div className="px-5 pb-4 md:pl-[4.25rem] animate-fade-in">
-          <label htmlFor={`remarks-${item.visit_request_id}`}
-            className="flex items-center gap-1.5 text-[12px] font-semibold text-loud mb-1.5">
-            <CornerDownRight size={13} style={{ color: "var(--color-text-faint)" }} />
-            {mode === "approve" ? "Approve this request" : "Reject this request"}
-            <span className="font-normal" style={{ color: "var(--color-text-faint)" }}>
-              — {mode === "approve" ? "remarks are optional" : "a reason is required"}
-            </span>
-          </label>
-          <textarea
-            id={`remarks-${item.visit_request_id}`}
-            rows={2}
-            autoFocus
-            value={remarks}
-            onChange={(e) => { setRemarks(e.target.value); setRemarkError(""); }}
-            placeholder={mode === "approve" ? "e.g. Meeting room 2B is booked" : "Reason for rejecting the request"}
-            className="vms-input resize-none"
-            style={remarkError ? { borderColor: "var(--color-error)" } : undefined}
-            aria-invalid={!!remarkError}
-          />
-          {remarkError && (
-            <p className="mt-1.5 text-[12px] flex items-center gap-1" style={{ color: "var(--color-error)" }}>
-              <AlertTriangle size={12} /> {remarkError}
-            </p>
-          )}
-          <div className="flex items-center gap-2 mt-3">
-            <button onClick={handleConfirm} disabled={submitting} className="btn-primary text-[12.5px]">
-              {submitting ? <Loader2 size={14} className="animate-spin" /> : mode === "approve" ? <Check size={14} /> : <X size={14} />}
-              {submitting ? "Saving…" : mode === "approve" ? "Confirm approval" : "Confirm rejection"}
+        </td>
+        <td className="whitespace-nowrap text-muted">{relTime(item.assigned_at)}</td>
+        <td onClick={(e) => e.stopPropagation()}>
+          <div className="flex justify-end gap-1.5">
+            <button type="button" className="btn-danger btn-sm" onClick={() => openMode("reject")} disabled={submitting}>
+              <X size={13} /> Reject
             </button>
-            <button onClick={handleCancel} disabled={submitting} className="btn-secondary text-[12.5px]">Cancel</button>
+            <button type="button" className="btn-primary btn-sm" onClick={() => openMode("approve")} disabled={submitting}>
+              <Check size={13} /> Approve
+            </button>
           </div>
-        </div>
+        </td>
+      </tr>
+
+      {mode && (
+        <tr className="is-selected">
+          <td colSpan={5} onClick={(e) => e.stopPropagation()}>
+            <div className="max-w-[720px] py-1">
+              <label htmlFor={`remarks-${item.visit_request_id}`} className="field-label">
+                {mode === "approve" ? "Remarks for the visitor (optional)" : "Reason for rejecting"}
+                {mode === "reject" && <span className="req">*</span>}
+              </label>
+              <textarea
+                id={`remarks-${item.visit_request_id}`}
+                rows={2}
+                autoFocus
+                value={remarks}
+                onChange={(e) => { setRemarks(e.target.value); setRemarkError(""); }}
+                placeholder={mode === "approve" ? "e.g. Meeting room 2B is booked" : "e.g. The host is on leave that day"}
+                className={`control resize-none${remarkError ? " is-invalid" : ""}`}
+                aria-invalid={!!remarkError}
+              />
+              {remarkError && <p className="field-error" role="alert">{remarkError}</p>}
+              <div className="flex justify-end gap-2 mt-2">
+                <button type="button" onClick={handleCancel} disabled={submitting} className="btn-outline btn-sm">Cancel</button>
+                <button type="button" onClick={handleConfirm} disabled={submitting}
+                  className={mode === "approve" ? "btn-primary btn-sm" : "btn-danger btn-sm"}>
+                  {submitting ? <Loader2 size={13} className="animate-spin" /> : mode === "approve" ? <Check size={13} /> : <X size={13} />}
+                  {submitting ? "Saving…" : mode === "approve" ? `Approve ${name}'s visit` : `Reject ${name}'s visit`}
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
       )}
-    </li>
+
+      {/* Schedule conflict: the host already has a visit at this time */}
+      <Modal
+        open={!!conflictData}
+        onClose={() => { setConflictData(null); setSubmitting(false); }}
+        busy={submitting}
+        width={440}
+        title="Schedule conflict"
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={() => { setConflictData(null); setSubmitting(false); }} disabled={submitting}>
+              Keep it pending
+            </button>
+            <button type="button" className="btn-primary" onClick={() => doApprove(true)} disabled={submitting}>
+              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Approve anyway
+            </button>
+          </>
+        )}
+      >
+        {conflictData && (
+          <Note tone="warning" icon={AlertTriangle}>
+            <b>{conflictData.visitor_name}</b> is already visiting the host during <b>{conflictData.time_window}</b>.
+            Approving anyway books both visits at the same time.
+          </Note>
+        )}
+      </Modal>
+    </Fragment>
   );
 }
 
-function SkeletonRow() {
-  const bar = (w) => <div className="h-3 rounded animate-pulse" style={{ width: w, background: "var(--color-border)" }} />;
-  return (
-    <li className={`px-5 py-4 space-y-3 md:space-y-0 ${COLUMNS}`} style={{ borderBottom: "1px solid var(--color-border)" }}>
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-full animate-pulse" style={{ background: "var(--color-border)" }} />
-        <div className="space-y-2">{bar(130)}{bar(80)}</div>
-      </div>
-      <div className="space-y-2">{bar(150)}{bar(110)}</div>
-      <div className="space-y-2">{bar(100)}{bar(80)}</div>
-      <div className="flex gap-2 md:justify-end">{bar(60)}{bar(70)}</div>
-    </li>
-  );
-}
-
-// ── Page ───────────────────────────────────────────────────────────────────────
+/* ── Page ───────────────────────────────────────────────────────────────────── */
 export default function ApprovalInbox() {
   const { user }    = useAuth();
   const { theme }   = useTheme();
+  const navigate    = useNavigate();
   const isUnitAdmin = user?.role_type === "unit_admin";
   const [items,      setItems]      = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -319,7 +232,7 @@ export default function ApprovalInbox() {
       });
     }
     setTotalCount((n) => n + 1);
-    toast.success("New visit request received.", { duration: 5000 });
+    toast.success(`New visit request from ${data.visitor_name || "a visitor"}.`, { duration: 5000 });
   }, [page]);
 
   /* Socket: own approve/reject from another view */
@@ -328,22 +241,30 @@ export default function ApprovalInbox() {
     setTotalCount((n) => Math.max(0, n - 1));
   }, []);
 
-  return (
-    <div className="max-w-7xl mx-auto animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-6 gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-loud">Approvals</h1>
-        </div>
-        <button onClick={fetchInbox} disabled={loading} className="btn-secondary text-[12.5px]">
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
-        </button>
-      </div>
+  const { rows, sort, onSort } = useSort(items, {
+    visitor: (i) => i.visitor_name || i.requester_name,
+    visit: (i) => `${String(i.visit_date).slice(0, 10)} ${i.visit_start_time || ""}`,
+    purpose: (i) => i.purpose,
+    received: (i) => i.assigned_at,
+  });
 
-      {/* Nothing pending: the original illustrated empty state */}
+  const todayCount = items.filter((i) => isToday(i.visit_date)).length;
+  const walkIns    = items.filter((i) => i.visit_category === "SPOT").length;
+
+  const refresh = (
+    <button type="button" onClick={fetchInbox} disabled={loading} className="btn-outline">
+      <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+    </button>
+  );
+
+  return (
+    <div className="animate-fade-in">
+      <PageHeader title="Approvals" actions={refresh} />
+
+      {/* Nothing pending: the illustrated empty state */}
       {!loading && items.length === 0 ? (
-        <div className="vms-card rounded-md py-20 flex flex-col items-center justify-center text-center gap-5 border-none">
-          <div className="w-80 h-80 rounded-full  flex items-center justify-center">
+        <div className="py-12 flex flex-col items-center justify-center text-center gap-5">
+          <div className="w-80 h-80 flex items-center justify-center">
             <img
               className="w-full h-full object-contain"
               src={theme === "dark" ? nonotifcationdark : nonotifcationlight}
@@ -351,46 +272,55 @@ export default function ApprovalInbox() {
             />
           </div>
           <div>
-            <h2 className="text-2xl font-semibold text-loud mb-2">
-              You&apos;re all <em className="italic">caught up</em>
-            </h2>
-            <p className="text-faint max-w-xs mx-auto text-sm">
+            <h2 className="text-[17px] font-semibold mb-1">You’re all caught up</h2>
+            <p className="text-muted max-w-xs mx-auto text-[12.5px]">
               No pending approvals right now. New requests assigned to you will appear here.
             </p>
           </div>
         </div>
       ) : (
-      <div className="vms-card rounded-lg overflow-hidden">
-        {/* Column headings (desktop) */}
-        <div className={`hidden ${COLUMNS} px-5 py-2.5 text-[10.5px] font-semibold uppercase tracking-wider`}
-          style={{ color: "var(--color-text-faint)", background: "var(--color-bg-primary)", borderBottom: "1px solid var(--color-border)" }}>
-          <span>Visitor</span>
-          <span>Visit</span>
-          <span>Host / received</span>
-          <span className="text-right">Decision</span>
-        </div>
+        <>
+          <StatStrip cols={3}>
+            <Stat label="Waiting for you" value={totalCount} loading={loading} tone={totalCount > 0 ? "warning" : undefined}
+              hint="Requests that need your decision" />
+            <Stat label="Visiting today" value={todayCount} loading={loading} hint="Of the requests on this page" />
+            <Stat label="Walk-ins at the gate" value={walkIns} loading={loading} tone={walkIns > 0 ? "warning" : undefined}
+              hint="Visitors waiting at reception" />
+          </StatStrip>
 
-        {loading ? (
-          <ul>{[1, 2, 3, 4].map((n) => <SkeletonRow key={n} />)}</ul>
-        ) : (
-          <ul>
-            {items.map((item) => (
-              <ApprovalRow
-                key={item.visit_request_id}
-                item={item}
-                isUnitAdmin={isUnitAdmin}
-                onActionSuccess={handleActionSuccess}
-              />
-            ))}
-          </ul>
-        )}
+          <Toolbar count={loading ? null : totalCount} noun={totalCount === 1 ? "request waiting" : "requests waiting"} />
 
-        {!loading && items.length > 0 && (
-          <div className="px-5 pb-4">
-            <Pagination page={page} totalPages={totalPages} totalCount={totalCount} onPageChange={setPage} />
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <Th sortKey="visitor" sort={sort} onSort={onSort}>Visitor</Th>
+                  <Th sortKey="visit" sort={sort} onSort={onSort}>Visit</Th>
+                  <Th sortKey="purpose" sort={sort} onSort={onSort}>Purpose</Th>
+                  <Th sortKey="received" sort={sort} onSort={onSort}>Received</Th>
+                  <Th align="right">Decision</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <SkeletonRows rows={5} cols={5} />
+                ) : (
+                  rows.map((item) => (
+                    <ApprovalRow
+                      key={item.visit_request_id}
+                      item={item}
+                      isUnitAdmin={isUnitAdmin}
+                      onActionSuccess={handleActionSuccess}
+                      onOpen={() => navigate(`/requests/${item.visit_request_id}`)}
+                    />
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
+
+          {!loading && <Pagination page={page} totalPages={totalPages} totalCount={totalCount} onPageChange={setPage} />}
+        </>
       )}
     </div>
   );

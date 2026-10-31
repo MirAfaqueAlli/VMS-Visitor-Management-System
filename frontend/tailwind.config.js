@@ -1,85 +1,72 @@
 /** @type {import('tailwindcss').Config} */
+// Every colour / radius / size reads a token from src/index.css (DESIGN_RULES.md).
+const v = (name) => `var(--${name})`;
+
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
       fontFamily: {
-        sans:  ['Inter', 'system-ui', 'sans-serif'],
-        serif: ['Inter', 'system-ui', 'sans-serif'],
+        sans: v('font-ui'),
+        mono: v('font-code'),
+      },
+      fontSize: {
+        '2xs': ['0.6875rem', { lineHeight: '1rem' }],      // 11px
+        xs:    ['0.75rem',   { lineHeight: '1.125rem' }],  // 12px
+        sm:    ['0.8125rem', { lineHeight: '1.25rem' }],   // 13px
+        base:  ['0.875rem',  { lineHeight: '1.375rem' }],  // 14px
+      },
+      fontWeight: {
+        normal: '450',
+        medium: '560',
+        semibold: '650',
+        bold: '700',
       },
       colors: {
-        // ── Page & Content ────────────────────────────────────────────────
-        page:   '#f8fafc',
-        card:   '#ffffff',
-        border: '#e2e8f0',
+        canvas: v('canvas'),
+        surface: { DEFAULT: v('surface'), alt: v('surface-alt') },
+        'surface-alt': v('surface-alt'),
+        'neutral-soft': v('neutral-soft'),
+        tile: v('tile'),
+        line: { DEFAULT: v('line'), strong: v('line-strong') },
+        'line-strong': v('line-strong'),
+        ink: { DEFAULT: v('ink'), 2: v('ink-2') },
+        'ink-2': v('ink-2'),
+        muted: v('muted'),
+        primary: { DEFAULT: v('primary'), strong: v('primary-strong'), hover: v('primary-hover'), soft: v('primary-soft') },
+        secondary: { DEFAULT: v('secondary'), soft: v('secondary-soft') },
+        tertiary: v('tertiary'),
+        link: v('link'),
+        success: { DEFAULT: v('success'), soft: v('success-soft'), light: v('success-soft') },
+        warning: { DEFAULT: v('warning-text'), bright: v('warning'), soft: v('warning-soft'), light: v('warning-soft') },
+        danger: { DEFAULT: v('danger'), soft: v('danger-soft'), light: v('danger-soft') },
 
-        // ── Text ─────────────────────────────────────────────────────────
-        primary: '#0f172a',
-        muted:   '#475569',
-
-        // ── Accent ───────────────────────────────────────────────────────
-        accent: {
-          DEFAULT: '#f59e0b',
-          dark:    '#d97706',
-          light:   '#fef3c7',
-        },
-
-        // ── Sidebar ──────────────────────────────────────────────────────
-        sidebar: {
-          bg:            '#0f172a',
-          text:          '#94a3b8',
-          'active-bg':   '#f59e0b',
-          'active-text': '#0f172a',
-        },
-
-        // ── Status ────────────────────────────────────────────────────────
-        success: { DEFAULT: '#16a34a', light: '#f0fdf4' },
-        warning: { DEFAULT: '#f59e0b', light: '#fffbeb' },
-        danger:  { DEFAULT: '#dc2626', light: '#fef2f2' },
-        info:    { DEFAULT: '#0284c7', light: '#eff6ff' },
-
-        // ── Pastel stat card bgs ──────────────────────────────────────────
-        pastel: {
-          pink:   '#fdf2f8',
-          purple: '#f5f3ff',
-          green:  '#f0fdf4',
-          blue:   '#eff6ff',
-          orange: '#fffbeb',
-        },
-
-        // ── Botanical aliases — keeps all old pages working ───────────────
-        botanical: {
-          bg:           '#f8fafc',
-          fg:           '#0f172a',
-          primary:      '#f59e0b',
-          muted:        '#e2e8f0',
-          border:       '#e2e8f0',
-          interactive:  '#d97706',
-          card:         '#f1f5f9',
-          'card-white': '#ffffff',
-        },
+        // legacy names (older markup) → tokens
+        accent: { DEFAULT: v('primary-strong'), dark: v('primary-hover'), light: v('primary-soft') },
+        border: v('line'),
+        page: v('canvas'),
+        card: v('surface'),
+        info: { DEFAULT: v('secondary'), light: v('secondary-soft') },
       },
-
       borderRadius: {
-        sm: '6px',
-        md: '10px',
-        lg: '14px',
-        xl: '14px',    // map xl → lg (restaurant uses lg max)
-        '2xl': '14px', // flatten the very round corners
-        '4xl': '14px',
+        none: '0',
+        sm: v('radius'),
+        DEFAULT: v('radius'),
+        md: v('radius'),
+        lg: v('cell-radius'),
+        xl: v('tile-radius'),
+        '2xl': v('sheet-radius'),
+        '3xl': v('sheet-radius'),
+        full: '9999px',
       },
-
       boxShadow: {
-        'card':    '0 1px 3px rgba(15,23,42,0.06)',
-        'card-md': '0 4px 12px rgba(15,23,42,0.08)',
-        'card-lg': '0 8px 24px rgba(15,23,42,0.10)',
-        'sidebar': '1px 0 0 rgba(255,255,255,0.06)',
-        // keep old names for compat:
-        'soft-sm': '0 1px 3px rgba(0,0,0,0.06)',
-        'soft-md': '0 4px 12px rgba(0,0,0,0.08)',
-        'soft-lg': '0 8px 24px rgba(0,0,0,0.10)',
-        'soft-xl': '0 8px 24px rgba(0,0,0,0.12)',
+        none: 'none',
+        sm: 'none', DEFAULT: 'none', md: 'none', lg: 'none', xl: 'none', '2xl': 'none',
+        card: 'none', 'card-md': 'none', 'card-lg': 'none', hover: 'none',
       },
+      height: { control: v('control-h') },
+      minHeight: { control: v('control-h') },
+      transitionDuration: { fast: '120ms' },
     },
   },
   plugins: [],

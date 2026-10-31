@@ -1,293 +1,176 @@
+// frontend/src/pages/visitors/VisitorForm.jsx
+// Register a visitor (DESIGN_RULES §11): 3-column field grid, photo in a tinted
+// side tile, primary action below a hairline (left-aligned on full pages).
 import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Camera, Upload, X, Check } from "lucide-react";
+import { Camera, Paperclip, X, Check, Loader2 } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import { getApiErrorMessage } from "../../utils/apiError";
+import Select from "../../components/Select";
+import { PageHeader, Field } from "../../components/ui";
 
 export default function VisitorForm() {
- const navigate = useNavigate();
- const [loading, setLoading] = useState(false);
- const fileInputRef = useRef(null);
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef(null);
 
- const [formData, setFormData] = useState({
- full_name: "",
- visitor_type: "individual",
- email: "",
- phone: "",
- address: "",
- id_type: "AADHAAR",
- id_number: "",
- company_name: "",
- });
+  const [formData, setFormData] = useState({
+    full_name: "",
+    visitor_type: "individual",
+    email: "",
+    phone: "",
+    address: "",
+    id_type: "AADHAAR",
+    id_number: "",
+    company_name: "",
+  });
 
- const [photo, setPhoto] = useState(null);
- const [photoPreview, setPhotoPreview] = useState(null);
+  const [photo, setPhoto] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
 
- const handleInputChange = (e) => {
- const { name, value } = e.target;
- setFormData((prev) => ({ ...prev, [name]: value }));
- };
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
 
- const handlePhotoChange = (e) => {
- const file = e.target.files[0];
- if (file) {
- setPhoto(file);
- setPhotoPreview(URL.createObjectURL(file));
- }
- };
+  const handlePhotoChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setPhoto(file);
+      setPhotoPreview(URL.createObjectURL(file));
+    }
+  };
 
- const clearPhoto = () => {
- setPhoto(null);
- setPhotoPreview(null);
- if (fileInputRef.current) fileInputRef.current.value = "";
- };
+  // Reset the input too, so choosing the same file again still works
+  const clearPhoto = () => {
+    setPhoto(null);
+    setPhotoPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
- const handleSubmit = async (e) => {
- e.preventDefault();
- setLoading(true);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const data = new FormData();
+      Object.keys(formData).forEach((key) => {
+        if (formData[key]) data.append(key, formData[key]);
+      });
+      if (photo) data.append("photo", photo);
 
- try {
- const data = new FormData();
- Object.keys(formData).forEach((key) => {
- if (formData[key]) data.append(key, formData[key]);
- });
- if (photo) {
- data.append("photo", photo);
- }
+      await apiClient.post("/visitors", data);
+      toast.success(`${formData.full_name.trim()} registered as a visitor.`);
+      navigate("/visitors");
+    } catch (error) {
+      console.error("[VisitorForm] Error:", error.response?.data);
+      toast.error(getApiErrorMessage(error, "Failed to register visitor."), { duration: 6000 });
+    } finally {
+      setLoading(false);
+    }
+  };
 
- await apiClient.post("/visitors", data);
+  const isBusiness = formData.visitor_type === "business";
 
- toast.success("Visitor registered successfully");
- navigate("/visitors");
- } catch (error) {
- console.error('[VisitorForm] Error:', error.response?.data);
- toast.error(getApiErrorMessage(error, 'Failed to register visitor.'), { duration: 6000 });
- } finally {
- setLoading(false);
- }
- };
+  return (
+    <div className="animate-fade-in">
+      <PageHeader title="Register visitor" />
 
- return (
- <div className="max-w-5xl mx-auto py-12 px-4 sm:px-6 lg:px-8 animate-fade-in">
- <div className="mb-12">
- <h1 className="text-2xl font-bold text-loud">
- New <em className="italic">Visitor</em>
- </h1>
- <p className="text-muted mt-3 text-lg">
- Register a new visitor in the system.
- </p>
- </div>
+      <form onSubmit={handleSubmit} className="max-w-[1100px]">
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-x-8 gap-y-6 items-start">
+          {/* Fields */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-4 gap-y-3">
+            <Field label="Full name" htmlFor="full_name" required>
+              <input id="full_name" type="text" name="full_name" required value={formData.full_name}
+                onChange={handleInputChange} className="control" placeholder="e.g. Rajesh Kumar Mohapatra" />
+            </Field>
 
- <form
- onSubmit={handleSubmit}
- className="vms-card rounded-md p-5 sm:p-8 shadow-card"
- >
- <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
- {/* Photo Upload Column */}
- <div className="lg:col-span-4 flex flex-col items-center">
- <div className="w-full aspect-[3/4] max-w-[240px] rounded-[40px] overflow-hidden bg-bg-primary border border-subtle flex flex-col items-center justify-center relative shadow-soft-sm transition-transform duration-500 hover:shadow-hover group">
- {photoPreview ? (
- <>
- <img
- src={photoPreview}
- alt="Preview"
- className="w-full h-full object-cover"
- />
- <div className="absolute inset-0 bg-overlay opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
- <button
- type="button"
- onClick={clearPhoto}
- className="bg-white/90 p-3 rounded-full text-warning shadow-card hover:scale-110 transition-transform"
- >
- <X className="w-5 h-5" strokeWidth={2} />
- </button>
- </div>
- </>
- ) : (
- <div
- className="w-full h-full flex flex-col items-center justify-center p-6 text-center cursor-pointer"
- onClick={() => fileInputRef.current?.click()}
- >
- <div className="w-16 h-16 rounded-full bg-mixed-bg flex items-center justify-center mb-4 text-accent group-hover:bg-accent group-hover:text-white transition-colors duration-500">
- <Camera className="w-7 h-7" strokeWidth={1.5} />
- </div>
- <span className="text-lg text-loud mb-1">
- Capture Photo
- </span>
- <span className="text-xs text-faint">
- Click to upload image
- </span>
- </div>
- )}
- <input
- type="file"
- ref={fileInputRef}
- onChange={handlePhotoChange}
- accept="image/*"
- className="hidden"
- />
- </div>
- </div>
+            <Field label="Visitor type" required>
+              <Select name="visitor_type" required value={formData.visitor_type} onChange={handleInputChange} aria-label="Visitor type">
+                <option value="individual">Individual</option>
+                <option value="business">Business</option>
+              </Select>
+            </Field>
 
- {/* Form Fields Column */}
- <div className="lg:col-span-8 space-y-8">
- <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
- <div className="space-y-2">
- <label className="block text-sm font-medium text-loud">
- Full Name *
- </label>
- <input
- type="text"
- name="full_name"
- required
- value={formData.full_name}
- onChange={handleInputChange}
- className="w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300"
- placeholder="Jane Doe"
- />
- </div>
+            {isBusiness ? (
+              <Field label="Company name" htmlFor="company_name" required>
+                <input id="company_name" type="text" name="company_name" required value={formData.company_name}
+                  onChange={handleInputChange} className="control" placeholder="e.g. Odisha Power Services" />
+              </Field>
+            ) : <div className="hidden xl:block" />}
 
- <div className="space-y-2">
- <label className="block text-sm font-medium text-loud">
- Visitor Type *
- </label>
- <select
- name="visitor_type"
- required
- value={formData.visitor_type}
- onChange={handleInputChange}
- className="w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300"
- >
- <option value="individual">Individual</option>
- <option value="business">Business</option>
- </select>
- </div>
+            <Field label="Mobile number" htmlFor="phone" required hint="WhatsApp number preferred">
+              <input id="phone" type="tel" name="phone" required minLength={10} maxLength={15} value={formData.phone}
+                onChange={handleInputChange} className="control tabular" placeholder="98765 43210" />
+            </Field>
 
- <div className="space-y-2">
- <label className="block text-sm font-medium text-loud">
- Phone Number * <span className="text-xs text-faint font-normal normal-case tracking-normal">(WhatsApp preferred)</span>
- </label>
- <input
- type="tel"
- name="phone"
- required
- minLength={10}
- maxLength={15}
- value={formData.phone}
- onChange={handleInputChange}
- className="w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300"
- placeholder="+91 98765 43210"
- />
- </div>
+            <Field label="Email" htmlFor="email">
+              <input id="email" type="email" name="email" value={formData.email}
+                onChange={handleInputChange} className="control" placeholder="name@example.com" />
+            </Field>
 
- <div className="space-y-2">
- <label className="block text-sm font-medium text-loud">
- Email Address
- </label>
- <input
- type="email"
- name="email"
- value={formData.email}
- onChange={handleInputChange}
- className="w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300"
- placeholder="jane@example.com"
- />
- </div>
+            <div className="hidden xl:block" />
 
- <div className="space-y-2">
- <label className="block text-sm font-medium text-loud">
- ID Type *
- </label>
- <select
- name="id_type"
- required
- value={formData.id_type}
- onChange={handleInputChange}
- className="w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300"
- >
- <option value="AADHAAR">Aadhaar</option>
- <option value="PAN">PAN</option>
- <option value="DRIVING_LICENSE">Driving License</option>
- <option value="PASSPORT">Passport</option>
- <option value="VOTER_ID">Voter ID</option>
- <option value="OTHER">Other</option>
- </select>
- </div>
+            <Field label="ID type" required>
+              <Select name="id_type" required value={formData.id_type} onChange={handleInputChange} aria-label="ID type">
+                <option value="AADHAAR">Aadhaar</option>
+                <option value="PAN">PAN</option>
+                <option value="DRIVING_LICENSE">Driving licence</option>
+                <option value="PASSPORT">Passport</option>
+                <option value="VOTER_ID">Voter ID</option>
+                <option value="OTHER">Other</option>
+              </Select>
+            </Field>
 
- <div className="space-y-2">
- <label className="block text-sm font-medium text-loud">
- ID Number *
- </label>
- <input
- type="text"
- name="id_number"
- required
- value={formData.id_number}
- onChange={handleInputChange}
- className="w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300"
- placeholder="XXXX-XXXX-XXXX"
- />
- </div>
- </div>
+            <Field label="ID number" htmlFor="id_number" required>
+              <input id="id_number" type="text" name="id_number" required value={formData.id_number}
+                onChange={handleInputChange} className="control mono" placeholder="XXXX XXXX XXXX" />
+            </Field>
 
- {formData.visitor_type === "business" && (
- <div className="space-y-2 animate-fade-in">
- <label className="block text-sm font-medium text-loud">
- Company Name *
- </label>
- <input
- type="text"
- name="company_name"
- required
- value={formData.company_name}
- onChange={handleInputChange}
- className="w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300"
- placeholder="Acme Corp"
- />
- </div>
- )}
+            <Field label="Address" htmlFor="address" className="sm:col-span-2 xl:col-span-3">
+              <textarea id="address" name="address" rows={2} value={formData.address}
+                onChange={handleInputChange} className="control resize-none" placeholder="House, street, city, PIN" />
+            </Field>
+          </div>
 
- <div className="space-y-2">
- <label className="block text-sm font-medium text-loud">
- Address
- </label>
- <textarea
- name="address"
- rows="2"
- value={formData.address}
- onChange={handleInputChange}
- className="w-full bg-bg-primary border-0 border-b border-subtle px-0 py-2 text-loud focus:ring-0 focus:border-border transition-colors duration-300 resize-none"
- placeholder="123 Main St, City"
- ></textarea>
- </div>
+          {/* Photo */}
+          <div className="tile">
+            <p className="group-heading mb-3">Photo</p>
+            <div className="aspect-[3/4] max-w-[200px] mx-auto rounded-lg overflow-hidden bg-surface flex items-center justify-center mb-3">
+              {photoPreview ? (
+                <img src={photoPreview} alt="Visitor" className="w-full h-full object-cover" />
+              ) : (
+                <div className="text-center px-4 text-muted">
+                  <Camera size={26} duo className="mx-auto mb-2" />
+                  <p className="text-[12px]">No photo yet</p>
+                </div>
+              )}
+            </div>
+            <input type="file" ref={fileInputRef} onChange={handlePhotoChange} accept="image/*" className="hidden" />
+            <div className="flex items-stretch rounded border border-line-strong bg-surface overflow-hidden">
+              <button type="button" onClick={() => fileInputRef.current?.click()}
+                className="inline-flex items-center gap-1.5 px-2.5 text-[12.5px] font-medium bg-surface-alt border-r border-line-strong min-h-control">
+                <Paperclip size={13} /> Upload photo
+              </button>
+              <span className="flex-1 min-w-0 px-2.5 py-1.5 text-[12px] truncate text-muted">{photo ? photo.name : "No file chosen"}</span>
+              {photo && (
+                <button type="button" onClick={clearPhoto} className="btn-icon !min-h-0 !w-8" aria-label="Remove photo" title="Remove photo">
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <p className="field-hint">The gate takes a live photo at check-in; this one is optional.</p>
+          </div>
+        </div>
 
- <div className="pt-6 sm:pt-8 border-t border-subtle flex flex-col sm:flex-row sm:justify-end gap-3">
- <button
- type="button"
- onClick={() => navigate("/visitors")}
- className="btn-secondary text-accent uppercase tracking-widest text-sm font-medium hover:bg-mixed-bg transition-colors duration-300 w-full sm:w-auto justify-center"
- >
- Cancel
- </button>
- <button
- type="submit"
- disabled={loading}
- className="btn-primary text-white uppercase tracking-widest text-sm font-medium hover:bg-accent transition-colors duration-300 shadow-card hover:shadow-hover disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2 w-full sm:w-auto justify-center"
- >
- {loading ? (
- "Saving..."
- ) : (
- <>
- <Check className="w-4 h-4" />
- Register Visitor
- </>
- )}
- </button>
- </div>
- </div>
- </div>
- </form>
- </div>
- );
+        <div className="mt-6 pt-4 border-t border-line flex flex-wrap gap-2">
+          <button type="submit" disabled={loading} className="btn-primary">
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            {loading ? "Registering…" : "Register visitor"}
+          </button>
+          <button type="button" onClick={() => navigate("/visitors")} className="btn-outline">Cancel</button>
+        </div>
+      </form>
+    </div>
+  );
 }

@@ -1,18 +1,25 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+// frontend/src/pages/reports/Reports.jsx
+// Reports (DESIGN_RULES §6/§8/§14): title, collapsible overview, underline tabs;
+// each tab has a filter toolbar (scope · dates · type · search · export) above a
+// plain table. Charts use the --chart / --ramp tokens.
+import { useState, useEffect, useCallback } from 'react';
 import {
   BarChart2, Users, Building2, Building, ShieldOff, Activity,
-  Clock, Download, Filter, Search, ChevronLeft, ChevronRight,
-  RefreshCw, FileSpreadsheet, FileText, ChevronDown, Loader2,
-  TrendingUp, Eye, UserX,
-} from 'lucide-react';
+  Clock, RefreshCw, FileText, ChevronDown, Loader2, UserX, Filter,
+} from '../../components/icons';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, LineChart, Line,
 } from 'recharts';
 import apiClient from '../../api/axios';
 import toast from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 import { OFFICE_TYPES, officeTypeLabel } from '../../utils/officeTypes';
+import Select from '../../components/Select';
+import Pagination from '../../components/shared/Pagination';
+import {
+  PageHeader, Tabs, StatStrip, Stat, SearchInput, SkeletonRows, Status, Empty, ExcelIcon,
+} from '../../components/ui';
 
 const getISTDateString = (d = new Date()) => {
   return new Intl.DateTimeFormat('en-CA', {
@@ -32,52 +39,41 @@ const CATEGORY_LABELS = {
   PERSONAL_VISIT:    'Personal Visit',
 };
 
-const STATUS_BADGE = {
-  APPROVED:    { bg: 'var(--color-success-bg)', color: 'var(--color-success)' },
-  PENDING:     { bg: 'var(--color-warning-bg)', color: 'var(--color-warning)' },
-  REJECTED:    { bg: 'var(--color-error-bg)',   color: 'var(--color-error)'   },
-  COMPLETED:   { bg: 'var(--color-info-bg)',    color: 'var(--color-info)'    },
-  CANCELLED:   { bg: 'var(--color-muted-bg)',   color: 'var(--color-muted)'   },
-  NOT_ALLOWED: { bg: 'var(--color-error-bg)',   color: 'var(--color-error)'   },
-  ACTIVE:      { bg: 'var(--color-success-bg)', color: 'var(--color-success)' },
-  EXPECTED:    { bg: 'var(--color-info-bg)',    color: 'var(--color-info)'    },
-  DEBARRED:    { bg: 'var(--color-error-bg)',   color: 'var(--color-error)'   },
-  LIFTED:      { bg: 'var(--color-muted-bg)',   color: 'var(--color-muted)'   },
-};
 
-const CHART_COLORS = ['#6366f1', '#22d3ee', '#f59e0b', '#10b981', '#f43f5e', '#a78bfa', '#34d399'];
+// Chart series colours come from the theme tokens (light / dark aware)
+const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--ramp-2)', 'var(--chart-muted)', 'var(--ramp-4)', 'var(--ramp-1)', 'var(--ramp-3)'];
 const MONTH_NAMES  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 const VISITOR_TYPES = [
-  { value: '',               label: 'All Types' },
-  { value: 'EMPLOYEE_VISIT', label: 'Employee Visit' },
+  { value: '',               label: 'All types' },
+  { value: 'EMPLOYEE_VISIT', label: 'Employee visit' },
   { value: 'VENDOR',         label: 'Vendor' },
   { value: 'SPOT',           label: 'Walk-in' },
-  { value: 'PERSONAL_VISIT', label: 'Personal Visit' },
+  { value: 'PERSONAL_VISIT', label: 'Personal visit' },
 ];
 
 const VISIT_STATUSES = [
-  { value: '', label: 'All Statuses' },
+  { value: '', label: 'All statuses' },
   { value: 'APPROVED',    label: 'Approved' },
   { value: 'PENDING',     label: 'Pending' },
   { value: 'REJECTED',    label: 'Rejected' },
   { value: 'COMPLETED',   label: 'Completed' },
   { value: 'CANCELLED',   label: 'Cancelled' },
-  { value: 'NOT_ALLOWED', label: 'Not Allowed' },
+  { value: 'NOT_ALLOWED', label: 'Not allowed' },
 ];
 
 // Rejected tab: REJECTED = declined by host/admin, NOT_ALLOWED = refused at the gate
 const REJECTION_STATUSES = [
-  { value: '',            label: 'All' },
-  { value: 'REJECTED',    label: 'Rejected by Host' },
-  { value: 'NOT_ALLOWED', label: 'Not Allowed (Gate)' },
+  { value: '',            label: 'All outcomes' },
+  { value: 'REJECTED',    label: 'Rejected by host' },
+  { value: 'NOT_ALLOWED', label: 'Not allowed at gate' },
   { value: 'CANCELLED',   label: 'Cancelled' },
 ];
 
 // Debarred tab: ACTIVE = currently debarred, LIFTED = debarment lifted
 const DEBAR_STATUSES = [
-  { value: '',       label: 'All' },
-  { value: 'ACTIVE', label: 'Currently Debarred' },
+  { value: '',       label: 'All debarments' },
+  { value: 'ACTIVE', label: 'Currently debarred' },
   { value: 'LIFTED', label: 'Lifted' },
 ];
 
@@ -86,21 +82,49 @@ const fmt = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit',
 const fmtTime = (t) => t ? t.substring(0, 5) : '—';
 
 function SBadge({ status }) {
-  const s = STATUS_BADGE[status] || { bg: 'var(--color-muted-bg)', color: 'var(--color-muted)' };
-  return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider"
-      style={{ background: s.bg, color: s.color }}>
-      {status?.replace(/_/g, ' ') || '—'}
-    </span>
-  );
+  return <Status value={status} />;
 }
 
 function CatBadge({ cat }) {
+  return <Status value={cat} />;
+}
+
+/** Excel + PDF icon buttons for one row / scope. */
+function DownloadPair({ label, onExcel, onPdf, busyExcel, busyPdf, disabled }) {
   return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
-      style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}>
-      {CATEGORY_LABELS[cat] ?? cat ?? '—'}
-    </span>
+    <div className="flex items-center gap-0.5 whitespace-nowrap">
+      <button type="button" className="btn-icon" onClick={onExcel} disabled={disabled || busyExcel}
+        title={`Excel: ${label}`} aria-label={`Download ${label} as Excel`}>
+        {busyExcel ? <Loader2 size={14} className="animate-spin" /> : <ExcelIcon size={17} />}
+      </button>
+      <button type="button" className="btn-icon" onClick={onPdf} disabled={disabled || busyPdf}
+        title={`PDF: ${label}`} aria-label={`Download ${label} as PDF`}>
+        {busyPdf ? <Loader2 size={14} className="animate-spin" /> : <FileText size={16} />}
+      </button>
+    </div>
+  );
+}
+
+/** Tile offering the full report for the selected employee / department / unit. */
+function ScopeDownload({ title, meta, hint, onExcel, onPdf, busyExcel, busyPdf, disabled }) {
+  return (
+    <div className="tile flex flex-wrap items-center justify-between gap-3 mb-4 animate-fade-in">
+      <div className="min-w-0">
+        <p className="text-[13px] font-semibold text-ink">
+          {title}
+          {meta && <span className="ml-2 text-[12px] font-normal text-muted">{meta}</span>}
+        </p>
+        {hint && <p className="text-[12px] text-muted mt-0.5">{hint}</p>}
+      </div>
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={onExcel} disabled={disabled} className="btn-outline btn-sm">
+          {busyExcel ? <Loader2 size={13} className="animate-spin" /> : <ExcelIcon size={15} />} Excel
+        </button>
+        <button type="button" onClick={onPdf} disabled={disabled} className="btn-outline btn-sm">
+          {busyPdf ? <Loader2 size={13} className="animate-spin" /> : <FileText size={14} />} PDF
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -188,65 +212,53 @@ function useCascadeFilters(isCentral) {
  * showDept: boolean
  * showEmp:  boolean
  */
-function CascadeFilters({ isCentral, filters, showDept = false, showEmp = false, compact = false }) {
+function CascadeFilters({ isCentral, filters, showDept = false, showEmp = false }) {
   const { units, selUnit, setSelUnit, depts, selDept, setSelDept, loadingDepts, employees, selEmp, setSelEmp, loadingEmps } = filters;
 
-  const selClass = `block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer disabled:opacity-50`;
-  const wrap = compact ? 'flex flex-wrap gap-2' : 'flex flex-wrap gap-3';
-
   return (
-    <div className={wrap}>
+    <>
       {/* Unit selector — global users only */}
       {isCentral && (
-        <div className="relative min-w-[160px] flex-1">
-          <select value={selUnit} onChange={e => setSelUnit(e.target.value)} className={selClass} id="cascade-unit">
-            <option value="">All Units</option>
-            {units.map(u => <option key={u.db_name} value={u.db_name}>{u.name}</option>)}
-          </select>
-          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
-        </div>
+        <Select value={selUnit} onChange={e => setSelUnit(e.target.value)} id="cascade-unit" aria-label="Unit" style={{ width: 180 }}>
+          <option value="">All units</option>
+          {units.map(u => <option key={u.db_name} value={u.db_name}>{u.name}</option>)}
+        </Select>
       )}
 
       {/* Department selector — shown when applicable */}
       {showDept && (
-        <div className="relative min-w-[160px] flex-1">
-          <select
-            value={selDept}
-            onChange={e => setSelDept(e.target.value)}
-            disabled={isCentral ? !selUnit : false}
-            className={selClass}
-            id="cascade-dept"
-          >
-            <option value="">{loadingDepts ? 'Loading…' : (isCentral && !selUnit ? 'Select unit first' : 'All Departments')}</option>
-            {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
-        </div>
+        <Select
+          value={selDept}
+          onChange={e => setSelDept(e.target.value)}
+          disabled={isCentral ? !selUnit : false}
+          id="cascade-dept"
+          aria-label="Department"
+          style={{ width: 180 }}
+        >
+          <option value="">{loadingDepts ? 'Loading…' : (isCentral && !selUnit ? 'Choose a unit first' : 'All departments')}</option>
+          {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+        </Select>
       )}
 
       {/* Employee selector — only for employee-wise report */}
       {showEmp && (
-        <div className="relative min-w-[180px] flex-1">
-          <select
-            value={selEmp}
-            onChange={e => setSelEmp(e.target.value)}
-            disabled={isCentral ? !selUnit : false}
-            className={selClass}
-            id="cascade-emp"
-          >
-            <option value="">
-              {loadingEmps ? 'Loading…' : (isCentral && !selUnit ? 'Select unit first' : 'All Employees')}
+        <Select
+          value={selEmp}
+          onChange={e => setSelEmp(e.target.value)}
+          disabled={isCentral ? !selUnit : false}
+          id="cascade-emp"
+          aria-label="Employee"
+          style={{ width: 200 }}
+        >
+          <option value="">{loadingEmps ? 'Loading…' : (isCentral && !selUnit ? 'Choose a unit first' : 'All employees')}</option>
+          {employees.map(e => (
+            <option key={e.id} value={e.id}>
+              {e.full_name}{e.employee_code ? ` (${e.employee_code})` : ''}
             </option>
-            {employees.map(e => (
-              <option key={e.id} value={e.id}>
-                {e.full_name}{e.employee_code ? ` (${e.employee_code})` : ''}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
-        </div>
+          ))}
+        </Select>
       )}
-    </div>
+    </>
   );
 }
 
@@ -349,25 +361,29 @@ async function exportPDF(rows, columns, title, filename, { metadata } = {}) {
 }
 
 // ─────────────────────────── reusable table + pagination ─────────────────────
-function ReportTable({ cols, rows, loading, page, setPage, totalPages, emptyMsg = 'No data found.' }) {
+function ReportTable({ cols, rows, loading, page, setPage, totalPages, total, emptyMsg = 'No records for these filters.' }) {
   return (
     <div>
-      <div className="overflow-x-auto rounded-lg border border-subtle">
-        <table className="w-full text-left text-sm border-collapse">
+      <div className="table-wrap">
+        <table className="data-table">
           <thead>
-            <tr className="border-b border-subtle bg-bg-primary text-muted text-xs uppercase tracking-wider">
-              {cols.map(c => <th key={c.key} className="py-3 px-4 font-medium whitespace-nowrap">{c.label}</th>)}
+            <tr>
+              {cols.map(c => <th key={c.key} className={`whitespace-nowrap${c.align === 'right' ? ' num' : ''}`}>{c.label}</th>)}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={cols.length} className="py-12 text-center text-faint italic">Loading…</td></tr>
+              <SkeletonRows rows={6} cols={cols.length} />
             ) : rows.length === 0 ? (
-              <tr><td colSpan={cols.length} className="py-12 text-center text-faint italic">{emptyMsg}</td></tr>
+              <tr>
+                <td colSpan={cols.length} className="!p-0">
+                  <Empty icon={BarChart2} title={emptyMsg} hint="Change the dates, scope or search, or clear them." />
+                </td>
+              </tr>
             ) : rows.map((row, i) => (
-              <tr key={row.id ?? i} className="border-b border-subtle hover:bg-bg-primary/60 transition-colors">
+              <tr key={row.id ?? i}>
                 {cols.map(c => (
-                  <td key={c.key} className="py-3 px-4 text-loud">
+                  <td key={c.key} className={c.align === 'right' ? 'num' : undefined}>
                     {typeof c.render === 'function' ? c.render(row) : (row[c.key] ?? '—')}
                   </td>
                 ))}
@@ -376,21 +392,7 @@ function ReportTable({ cols, rows, loading, page, setPage, totalPages, emptyMsg 
           </tbody>
         </table>
       </div>
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-4 pt-4 border-t border-subtle">
-          <span className="text-xs text-muted">Page {page} of {totalPages}</span>
-          <div className="flex gap-2">
-            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-              className="p-1.5 rounded-full border border-subtle text-muted disabled:opacity-40 hover:bg-bg-primary">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-              className="p-1.5 rounded-full border border-subtle text-muted disabled:opacity-40 hover:bg-bg-primary">
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
+      {!loading && <Pagination page={page} totalPages={totalPages} totalCount={total} onPageChange={setPage} />}
     </div>
   );
 }
@@ -400,68 +402,44 @@ function FilterBar({ from, setFrom, to, setTo, visitorType, setVisitorType, sear
   status, setStatus, showStatus = false, statusOptions = VISIT_STATUSES, showVisitorType = true,
   onApply, loading,
   cascadeFilters, isCentral, showDept = false, showEmp = false,
-  onExcelExport, onPdfExport, exporting = false }) {
+  onExcelExport, onPdfExport, exporting = false, count }) {
   return (
-    <div className="space-y-3 mb-4 p-4 bg-bg-primary/50 rounded-lg border border-subtle">
-      {/* Cascade Filters (Unit → Dept → Employee) */}
+    <div className="toolbar mb-0">
+      <div className="toolbar-count basis-full sm:basis-auto">
+        {count !== undefined && count !== null && !loading && (
+          <><b>{Number(count).toLocaleString('en-IN')}</b> {Number(count) === 1 ? 'record' : 'records'}</>
+        )}
+      </div>
+
+      {/* Scope (Unit → Dept → Employee) */}
       <CascadeFilters isCentral={isCentral} filters={cascadeFilters} showDept={showDept} showEmp={showEmp} />
 
-      {/* Standard filters row */}
-      <div className="flex flex-wrap gap-2">
-        <input type="date" value={from} onChange={e => setFrom(e.target.value)}
-          className="flex-1 min-w-[130px] px-3 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50" />
-        <input type="date" value={to} onChange={e => setTo(e.target.value)}
-          className="flex-1 min-w-[130px] px-3 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50" />
+      <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="control tabular" style={{ width: 140 }}
+        aria-label="From date" title="From" />
+      <input type="date" value={to} onChange={e => setTo(e.target.value)} className="control tabular" style={{ width: 140 }}
+        aria-label="To date" title="To" />
 
-        {showVisitorType && (
-          <div className="relative flex-1 min-w-[140px]">
-            <select value={visitorType} onChange={e => setVisitorType(e.target.value)}
-              className="block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer">
-              {VISITOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
-          </div>
-        )}
+      {showVisitorType && (
+        <Select value={visitorType} onChange={e => setVisitorType(e.target.value)} aria-label="Visit type" style={{ width: 150 }}>
+          {VISITOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </Select>
+      )}
 
-        {showStatus && (
-          <div className="relative flex-1 min-w-[140px]">
-            <select value={status} onChange={e => setStatus(e.target.value)}
-              className="block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer">
-              {statusOptions.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
-          </div>
-        )}
+      {showStatus && (
+        <Select value={status} onChange={e => setStatus(e.target.value)} aria-label="Status" style={{ width: 170 }}>
+          {statusOptions.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </Select>
+      )}
 
-        <div className="relative flex-1 min-w-[160px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint" />
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
-            className="block w-full pl-8 pr-3 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud placeholder-faint focus:outline-none focus:ring-2 focus:ring-accent/50" />
-        </div>
+      <SearchInput value={search} onChange={setSearch} placeholder="Search" width={180} />
 
-        <button onClick={onApply} disabled={loading}
-          className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors">
-          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Filter className="w-3.5 h-3.5" />}
-          Apply
-        </button>
-      </div>
+      <button type="button" onClick={onApply} disabled={loading} className="btn-outline" title="Run the report again">
+        {loading ? <Loader2 size={14} className="animate-spin" /> : <Filter size={14} />}
+        Apply
+      </button>
 
-      {/* Export buttons */}
-      <div className="flex items-center gap-2 justify-end pt-1 border-t border-subtle/50">
-        <span className="text-xs text-muted font-medium mr-1">Export Full Report:</span>
-        <button onClick={onExcelExport} disabled={exporting}
-          title="Download complete report across all pages in Excel"
-          className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs font-medium text-muted hover:bg-bg-primary hover:text-loud hover:border-green-500/50 transition-colors disabled:opacity-50">
-          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />}
-          Excel
-        </button>
-        <button onClick={onPdfExport} disabled={exporting}
-          title="Download complete report across all pages in PDF"
-          className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs font-medium text-muted hover:bg-bg-primary hover:text-loud hover:border-red-500/50 transition-colors disabled:opacity-50">
-          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
-          PDF
-        </button>
-      </div>
+      <DownloadPair label="the full report" onExcel={onExcelExport} onPdf={onPdfExport}
+        busyExcel={exporting} busyPdf={exporting} disabled={exporting} />
     </div>
   );
 }
@@ -624,47 +602,24 @@ function EmployeeReport({ isCentral }) {
   const selectedEmpObj = cf.employees.find(e => String(e.id) === String(cf.selEmp));
 
   const cols = [
-    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted">{r.unit_name || '—'}</span> },
-    { key: 'host_name',       label: 'Host Employee', render: r => <div><div className="font-medium text-loud">{r.host_name || '—'}</div><div className="text-xs text-faint">{r.employee_code}</div></div> },
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-ink-2">{r.unit_name || '—'}</span> },
+    { key: 'host_name',       label: 'Host Employee', render: r => <div><div className="font-medium">{r.host_name || '—'}</div><div className="cell-sub">{r.employee_code}</div></div> },
     { key: 'department_name', label: 'Department' },
-    { key: 'visitor_name',    label: 'Visitor', render: r => <div><div>{r.visitor_name || '—'}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
+    { key: 'visitor_name',    label: 'Visitor', render: r => <div><div>{r.visitor_name || '—'}</div><div className="cell-sub">{r.visitor_phone}</div></div> },
     { key: 'visit_category',  label: 'Type', render: r => <CatBadge cat={r.visit_category} /> },
     { key: 'visit_date',      label: 'Date', render: r => fmt(r.visit_date) },
     { key: 'status',          label: 'Status', render: r => <SBadge status={r.status} /> },
     {
       key: 'actions',
-      label: 'Download Individual',
+      label: 'Report',
       render: r => (
-        <div className="flex items-center gap-1.5 whitespace-nowrap">
-          <button
-            type="button"
-            title={`Download complete Excel report for ${r.host_name || 'this employee'}`}
-            onClick={() => handleDownloadEmployee(r, 'excel')}
-            disabled={downloadingKey === `excel-${r.host_id || r.employee_code || r.host_name}`}
-            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-green-500 text-loud hover:text-green-600 transition-colors disabled:opacity-50"
-          >
-            {downloadingKey === `excel-${r.host_id || r.employee_code || r.host_name}` ? (
-              <Loader2 className="w-3 h-3 animate-spin text-green-600" />
-            ) : (
-              <FileSpreadsheet className="w-3 h-3 text-green-600" />
-            )}
-            <span className="text-[11px] font-medium">Excel</span>
-          </button>
-          <button
-            type="button"
-            title={`Download complete PDF report for ${r.host_name || 'this employee'}`}
-            onClick={() => handleDownloadEmployee(r, 'pdf')}
-            disabled={downloadingKey === `pdf-${r.host_id || r.employee_code || r.host_name}`}
-            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-red-500 text-loud hover:text-red-600 transition-colors disabled:opacity-50"
-          >
-            {downloadingKey === `pdf-${r.host_id || r.employee_code || r.host_name}` ? (
-              <Loader2 className="w-3 h-3 animate-spin text-red-600" />
-            ) : (
-              <FileText className="w-3 h-3 text-red-600" />
-            )}
-            <span className="text-[11px] font-medium">PDF</span>
-          </button>
-        </div>
+        <DownloadPair
+          label={`visits hosted by ${r.host_name || 'this employee'}`}
+          onExcel={() => handleDownloadEmployee(r, 'excel')}
+          onPdf={() => handleDownloadEmployee(r, 'pdf')}
+          busyExcel={downloadingKey === `excel-${r.host_id || r.employee_code || r.host_name}`}
+          busyPdf={downloadingKey === `pdf-${r.host_id || r.employee_code || r.host_name}`}
+        />
       ),
     },
   ].filter(Boolean);
@@ -680,56 +635,24 @@ function EmployeeReport({ isCentral }) {
         onExcelExport={() => handleExportAll('excel')}
         onPdfExport={() => handleExportAll('pdf')}
         exporting={exportingAll}
+        count={total}
       />
 
-      {/* Contextual Individual Employee Download Banner when selected in Filter */}
       {selectedEmpObj && (
-        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
-              <Users className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-loud text-sm">{selectedEmpObj.full_name}</span>
-                {selectedEmpObj.employee_code && (
-                  <span className="text-xs px-2 py-0.5 rounded bg-subtle text-muted font-mono">
-                    {selectedEmpObj.employee_code}
-                  </span>
-                )}
-                <span className="text-xs text-muted">
-                  ({cf.depts.find(d => String(d.id) === String(cf.selDept))?.name || 'Department'})
-                </span>
-              </div>
-              <p className="text-xs text-muted mt-0.5">
-                Download entire visit history report exclusively for this employee
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleDownloadEmployee(selectedEmpObj, 'excel')}
-              disabled={!!downloadingKey}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-green-500 hover:text-green-600 transition-colors shadow-sm disabled:opacity-50"
-            >
-              {downloadingKey === `excel-${selectedEmpObj.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />}
-              Download Excel
-            </button>
-            <button
-              onClick={() => handleDownloadEmployee(selectedEmpObj, 'pdf')}
-              disabled={!!downloadingKey}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-red-500 hover:text-red-600 transition-colors shadow-sm disabled:opacity-50"
-            >
-              {downloadingKey === `pdf-${selectedEmpObj.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
-              Download PDF
-            </button>
-          </div>
-        </div>
+        <ScopeDownload
+          title={selectedEmpObj.full_name}
+          meta={[selectedEmpObj.employee_code, cf.depts.find(d => String(d.id) === String(cf.selDept))?.name].filter(Boolean).join(' · ')}
+          hint="Every visit this employee hosted, for the dates above."
+          onExcel={() => handleDownloadEmployee(selectedEmpObj, 'excel')}
+          onPdf={() => handleDownloadEmployee(selectedEmpObj, 'pdf')}
+          busyExcel={downloadingKey === `excel-${selectedEmpObj.id}`}
+          busyPdf={downloadingKey === `pdf-${selectedEmpObj.id}`}
+          disabled={!!downloadingKey}
+        />
       )}
 
-      <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
-        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} />
+        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} total={total} />
     </div>
   );
 }
@@ -883,47 +806,24 @@ function DepartmentReport({ isCentral }) {
   const selectedDeptObj = cf.depts.find(d => String(d.id) === String(cf.selDept));
 
   const cols = [
-    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted">{r.unit_name || '—'}</span> },
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-ink-2">{r.unit_name || '—'}</span> },
     { key: 'department_name', label: 'Department', render: r => <span className="font-medium">{r.department_name || 'N/A'}</span> },
     { key: 'host_name',       label: 'Host',       render: r => r.host_name || '—' },
-    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
+    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="cell-sub">{r.visitor_phone}</div></div> },
     { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
     { key: 'visit_date',      label: 'Date',       render: r => fmt(r.visit_date) },
     { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
     {
       key: 'actions',
-      label: 'Download Dept',
+      label: 'Report',
       render: r => (
-        <div className="flex items-center gap-1.5 whitespace-nowrap">
-          <button
-            type="button"
-            title={`Download complete Excel report for ${r.department_name || 'this department'}`}
-            onClick={() => handleDownloadDept(r, 'excel')}
-            disabled={downloadingKey === `excel-${r.department_id || r.department_name}`}
-            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-green-500 text-loud hover:text-green-600 transition-colors disabled:opacity-50"
-          >
-            {downloadingKey === `excel-${r.department_id || r.department_name}` ? (
-              <Loader2 className="w-3 h-3 animate-spin text-green-600" />
-            ) : (
-              <FileSpreadsheet className="w-3 h-3 text-green-600" />
-            )}
-            <span className="text-[11px] font-medium">Excel</span>
-          </button>
-          <button
-            type="button"
-            title={`Download complete PDF report for ${r.department_name || 'this department'}`}
-            onClick={() => handleDownloadDept(r, 'pdf')}
-            disabled={downloadingKey === `pdf-${r.department_id || r.department_name}`}
-            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-red-500 text-loud hover:text-red-600 transition-colors disabled:opacity-50"
-          >
-            {downloadingKey === `pdf-${r.department_id || r.department_name}` ? (
-              <Loader2 className="w-3 h-3 animate-spin text-red-600" />
-            ) : (
-              <FileText className="w-3 h-3 text-red-600" />
-            )}
-            <span className="text-[11px] font-medium">PDF</span>
-          </button>
-        </div>
+        <DownloadPair
+          label={`visits to ${r.department_name || 'this department'}`}
+          onExcel={() => handleDownloadDept(r, 'excel')}
+          onPdf={() => handleDownloadDept(r, 'pdf')}
+          busyExcel={downloadingKey === `excel-${r.department_id || r.department_name}`}
+          busyPdf={downloadingKey === `pdf-${r.department_id || r.department_name}`}
+        />
       ),
     },
   ].filter(Boolean);
@@ -939,51 +839,24 @@ function DepartmentReport({ isCentral }) {
         onExcelExport={() => handleExportAll('excel')}
         onPdfExport={() => handleExportAll('pdf')}
         exporting={exportingAll}
+        count={total}
       />
 
-      {/* Contextual Individual Department Download Banner when selected in Filter */}
       {selectedDeptObj && (
-        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
-              <Building2 className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-loud text-sm">{selectedDeptObj.name}</span>
-                <span className="text-xs text-muted">
-                  ({cf.units.find(u => u.db_name === cf.selUnit)?.name || 'Selected Unit'})
-                </span>
-              </div>
-              <p className="text-xs text-muted mt-0.5">
-                Download entire visit report separated for this specific department
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleDownloadDept(selectedDeptObj, 'excel')}
-              disabled={!!downloadingKey}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-green-500 hover:text-green-600 transition-colors shadow-sm disabled:opacity-50"
-            >
-              {downloadingKey === `excel-${selectedDeptObj.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />}
-              Download Excel
-            </button>
-            <button
-              onClick={() => handleDownloadDept(selectedDeptObj, 'pdf')}
-              disabled={!!downloadingKey}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-red-500 hover:text-red-600 transition-colors shadow-sm disabled:opacity-50"
-            >
-              {downloadingKey === `pdf-${selectedDeptObj.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
-              Download PDF
-            </button>
-          </div>
-        </div>
+        <ScopeDownload
+          title={selectedDeptObj.name}
+          meta={cf.units.find(u => u.db_name === cf.selUnit)?.name}
+          hint="Every visit to this department, for the dates above."
+          onExcel={() => handleDownloadDept(selectedDeptObj, 'excel')}
+          onPdf={() => handleDownloadDept(selectedDeptObj, 'pdf')}
+          busyExcel={downloadingKey === `excel-${selectedDeptObj.id}`}
+          busyPdf={downloadingKey === `pdf-${selectedDeptObj.id}`}
+          disabled={!!downloadingKey}
+        />
       )}
 
-      <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
-        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} />
+        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} total={total} />
     </div>
   );
 }
@@ -1090,7 +963,7 @@ function UnitReport({ isCentral }) {
       { key: 'department_name', label: 'Department', render: r => <span className="font-medium">{r.department_name || 'N/A'}</span> },
       { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
       { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
-      { key: 'count',           label: 'Count',      render: r => <span className="font-bold text-accent">{r.count}</span> },
+      { key: 'count',           label: 'Visits',     align: 'right', render: r => <span className="font-semibold">{r.count}</span> },
     ];
     const expCols = [
       { header: 'Department', accessor: r => r.department_name },
@@ -1110,38 +983,15 @@ function UnitReport({ isCentral }) {
           onPdfExport={() => exportPDF(rows, expCols, 'Unit Breakdown by Department', 'unit_dept_breakdown')}
         />
 
-        {/* Detailed Visits Download Banner for Unit-level users */}
-        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
-              <Building className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="font-semibold text-loud text-sm">Download Complete Unit Visits</span>
-              <p className="text-xs text-muted mt-0.5">
-                Download all individual visitor records with timestamps, departments, and hosts for your unit
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleDownloadUnitVisits({ unit_name: 'Unit_Visits' }, 'excel')}
-              disabled={!!downloadingKey}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-green-500 hover:text-green-600 transition-colors shadow-sm disabled:opacity-50"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />
-              Detailed Visits (Excel)
-            </button>
-            <button
-              onClick={() => handleDownloadUnitVisits({ unit_name: 'Unit_Visits' }, 'pdf')}
-              disabled={!!downloadingKey}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-red-500 hover:text-red-600 transition-colors shadow-sm disabled:opacity-50"
-            >
-              <FileText className="w-3.5 h-3.5 text-red-500" />
-              Detailed Visits (PDF)
-            </button>
-          </div>
-        </div>
+        <ScopeDownload
+          title="All visits in your unit"
+          hint="Each visit with its times, department and host."
+          onExcel={() => handleDownloadUnitVisits({ unit_name: 'Unit_Visits' }, 'excel')}
+          onPdf={() => handleDownloadUnitVisits({ unit_name: 'Unit_Visits' }, 'pdf')}
+          busyExcel={downloadingKey.startsWith('unit-excel-')}
+          busyPdf={downloadingKey.startsWith('unit-pdf-')}
+          disabled={!!downloadingKey}
+        />
 
         <ReportTable cols={cols} rows={rows} loading={loading}
           page={1} setPage={() => {}} totalPages={1}
@@ -1162,128 +1012,73 @@ function UnitReport({ isCentral }) {
 
   return (
     <div>
-      {/* Office type filter */}
-      <div className="relative mb-3 max-w-xs">
-        <select value={officeType} onChange={e => setOfficeType(e.target.value)}
-          className="block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer">
-          <option value="">All Office Types</option>
-          {OFFICE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
-        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
-      </div>
-
       <FilterBar
         from={from} setFrom={setFrom} to={to} setTo={setTo}
         visitorType={visitorType} setVisitorType={setVisitorType}
         search={search} setSearch={setSearch}
         onApply={fetch} loading={loading}
         cascadeFilters={cf} isCentral
+        count={unitRows.length}
         onExcelExport={() => exportExcel(unitRows, expCols, 'unit_wise_report_summary', { title: 'Unit-wise Visit Summary Report' })}
         onPdfExport={() => exportPDF(unitRows, expCols, 'Unit-wise Visit Report', 'unit_wise_report_summary')}
       />
+      <div className="flex items-center gap-2 py-3">
+        <Select value={officeType} onChange={e => setOfficeType(e.target.value)} aria-label="Office type" style={{ width: 200 }}>
+          <option value="">All office types</option>
+          {OFFICE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </Select>
+      </div>
 
-      {/* Contextual Unit Download Banner when a Unit is Selected in CascadeFilter */}
       {selectedUnitObj && (
-        <div className="mb-4 p-4 rounded-xl border border-accent/30 bg-accent/5 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
-              <Building className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-loud text-sm">{selectedUnitObj.name}</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-subtle text-muted">
-                  {officeTypeLabel(selectedUnitObj.type || selectedUnitObj.office_type)}
-                </span>
-              </div>
-              <p className="text-xs text-muted mt-0.5">
-                Download complete individual visit records for this unit
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleDownloadUnitVisits({ unit_db: selectedUnitObj.db_name, unit_name: selectedUnitObj.name, office_type: selectedUnitObj.type }, 'excel')}
-              disabled={!!downloadingKey}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-green-500 hover:text-green-600 transition-colors shadow-sm disabled:opacity-50"
-            >
-              {downloadingKey === `unit-excel-${selectedUnitObj.db_name}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" />}
-              Download Unit Visits (Excel)
-            </button>
-            <button
-              onClick={() => handleDownloadUnitVisits({ unit_db: selectedUnitObj.db_name, unit_name: selectedUnitObj.name, office_type: selectedUnitObj.type }, 'pdf')}
-              disabled={!!downloadingKey}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-xs font-medium text-loud hover:border-red-500 hover:text-red-600 transition-colors shadow-sm disabled:opacity-50"
-            >
-              {downloadingKey === `unit-pdf-${selectedUnitObj.db_name}` ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" /> : <FileText className="w-3.5 h-3.5 text-red-500" />}
-              Download Unit Visits (PDF)
-            </button>
-          </div>
-        </div>
+        <ScopeDownload
+          title={selectedUnitObj.name}
+          meta={officeTypeLabel(selectedUnitObj.type || selectedUnitObj.office_type)}
+          hint="Each visit in this unit, for the dates above."
+          onExcel={() => handleDownloadUnitVisits({ unit_db: selectedUnitObj.db_name, unit_name: selectedUnitObj.name, office_type: selectedUnitObj.type }, 'excel')}
+          onPdf={() => handleDownloadUnitVisits({ unit_db: selectedUnitObj.db_name, unit_name: selectedUnitObj.name, office_type: selectedUnitObj.type }, 'pdf')}
+          busyExcel={downloadingKey === `unit-excel-${selectedUnitObj.db_name}`}
+          busyPdf={downloadingKey === `unit-pdf-${selectedUnitObj.db_name}`}
+          disabled={!!downloadingKey}
+        />
       )}
 
       {loading ? (
-        <div className="py-12 text-center text-faint italic">Loading…</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {[0, 1, 2].map(i => <div key={i} className="tile h-40 animate-pulse" />)}
+        </div>
       ) : unitRows.length === 0 ? (
-        <div className="py-12 text-center text-faint italic">No data found.</div>
+        <Empty icon={Building} title="No visits for these filters" hint="Change the dates, unit or office type." />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {unitRows.map((u, i) => (
-            <div key={u.unit_name || i} className="vms-card rounded-lg p-5 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h4 className="font-semibold text-loud text-sm">{u.unit_name}</h4>
-                    <p className="text-[11px] text-faint">{officeTypeLabel(u.office_type)}</p>
-                  </div>
-                  <span className="text-2xl font-bold text-accent">{u.total}</span>
+            <div key={u.unit_name || i} className="tile flex flex-col">
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="min-w-0">
+                  <h4 className="text-[13px] font-semibold text-ink truncate">{u.unit_name}</h4>
+                  <p className="text-[11.5px] text-muted">{officeTypeLabel(u.office_type)}</p>
                 </div>
-                <div className="space-y-1.5 mb-3">
-                  {(u.breakdown ?? []).map((b, j) => (
-                    <div key={j} className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <CatBadge cat={b.visit_category} />
-                        <SBadge status={b.status} />
-                      </div>
-                      <span className="font-semibold text-muted">{b.count}</span>
-                    </div>
-                  ))}
-                </div>
+                <span className="text-[22px] font-semibold tabular text-ink leading-none">{u.total}</span>
               </div>
-
-              {/* Per-Unit Detailed Visits Download Section */}
-              <div className="mt-3 pt-3 border-t border-subtle flex items-center justify-between gap-2">
-                <span className="text-[11px] text-muted font-medium">Detailed Visits:</span>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    title={`Download detailed visit report for ${u.unit_name} in Excel`}
-                    onClick={() => handleDownloadUnitVisits(u, 'excel')}
-                    disabled={downloadingKey === `unit-excel-${u.unit_db || u.unit_name}`}
-                    className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-green-500 text-loud hover:text-green-600 transition-colors disabled:opacity-50"
-                  >
-                    {downloadingKey === `unit-excel-${u.unit_db || u.unit_name}` ? (
-                      <Loader2 className="w-3 h-3 animate-spin text-green-600" />
-                    ) : (
-                      <FileSpreadsheet className="w-3 h-3 text-green-600" />
-                    )}
-                    <span className="text-[11px] font-medium">Excel</span>
-                  </button>
-                  <button
-                    type="button"
-                    title={`Download detailed visit report for ${u.unit_name} in PDF`}
-                    onClick={() => handleDownloadUnitVisits(u, 'pdf')}
-                    disabled={downloadingKey === `unit-pdf-${u.unit_db || u.unit_name}`}
-                    className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-red-500 text-loud hover:text-red-600 transition-colors disabled:opacity-50"
-                  >
-                    {downloadingKey === `unit-pdf-${u.unit_db || u.unit_name}` ? (
-                      <Loader2 className="w-3 h-3 animate-spin text-red-600" />
-                    ) : (
-                      <FileText className="w-3 h-3 text-red-600" />
-                    )}
-                    <span className="text-[11px] font-medium">PDF</span>
-                  </button>
-                </div>
+              <div className="space-y-1.5 flex-1">
+                {(u.breakdown ?? []).map((b, j) => (
+                  <div key={j} className="flex items-center justify-between gap-2 text-[12px]">
+                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                      <CatBadge cat={b.visit_category} />
+                      <SBadge status={b.status} />
+                    </div>
+                    <span className="tabular font-medium text-ink-2">{b.count}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 pt-2 border-t border-line flex items-center justify-between gap-2">
+                <span className="text-[11.5px] text-muted">Each visit</span>
+                <DownloadPair
+                  label={`visits in ${u.unit_name}`}
+                  onExcel={() => handleDownloadUnitVisits(u, 'excel')}
+                  onPdf={() => handleDownloadUnitVisits(u, 'pdf')}
+                  busyExcel={downloadingKey === `unit-excel-${u.unit_db || u.unit_name}`}
+                  busyPdf={downloadingKey === `unit-pdf-${u.unit_db || u.unit_name}`}
+                />
               </div>
             </div>
           ))}
@@ -1332,14 +1127,14 @@ function RejectedReport({ isCentral }) {
   useEffect(() => { fetch(); }, [fetch]);
 
   const cols = [
-    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted text-xs">{r.unit_name}</span> },
-    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-ink-2">{r.unit_name}</span> },
+    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="cell-sub">{r.visitor_phone}</div></div> },
     { key: 'department_name', label: 'Department', render: r => r.department_name || '—' },
     { key: 'host_name',       label: 'Host',       render: r => r.host_name || '—' },
     { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
     { key: 'visit_date',      label: 'Date',       render: r => fmt(r.visit_date) },
     { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
-    { key: 'rejection_reason', label: 'Reason',    render: r => <span className="text-xs text-muted max-w-[200px] line-clamp-2">{r.rejection_reason || '—'}</span> },
+    { key: 'rejection_reason', label: 'Reason',    render: r => <span className="block text-[12px] text-ink-2 max-w-[220px] line-clamp-2">{r.rejection_reason || '—'}</span> },
   ].filter(Boolean);
 
   const expCols = [
@@ -1411,10 +1206,10 @@ function RejectedReport({ isCentral }) {
         onExcelExport={() => handleExportAll('excel')}
         onPdfExport={() => handleExportAll('pdf')}
         exporting={exportingAll}
+        count={total}
       />
-      <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
-        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} />
+        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} total={total} />
     </div>
   );
 }
@@ -1455,13 +1250,13 @@ function DebarredReport({ isCentral }) {
   useEffect(() => { fetch(); }, [fetch]);
 
   const cols = [
-    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted text-xs">{r.unit_name}</span> },
-    { key: 'visitor_name',     label: 'Visitor',     render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
-    { key: 'reason',           label: 'Reason',      render: r => <span className="text-xs text-muted max-w-[220px] line-clamp-2">{r.reason || '—'}</span> },
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-ink-2">{r.unit_name}</span> },
+    { key: 'visitor_name',     label: 'Visitor',     render: r => <div><div>{r.visitor_name}</div><div className="cell-sub">{r.visitor_phone}</div></div> },
+    { key: 'reason',           label: 'Reason',      render: r => <span className="block text-[12px] text-ink-2 max-w-[220px] line-clamp-2">{r.reason || '—'}</span> },
     { key: 'blacklisted_at',   label: 'Debarred On', render: r => fmt(r.blacklisted_at) },
     { key: 'debarred_by_name', label: 'Debarred By', render: r => r.debarred_by_name || '—' },
     { key: 'status',           label: 'Status',      render: r => <SBadge status={r.status === 'ACTIVE' ? 'DEBARRED' : 'LIFTED'} /> },
-    { key: 'lifted_at',        label: 'Lifted',      render: r => r.lifted_at ? <div><div>{fmt(r.lifted_at)}</div><div className="text-xs text-faint line-clamp-1">{r.lift_reason || ''}</div></div> : '—' },
+    { key: 'lifted_at',        label: 'Lifted',      render: r => r.lifted_at ? <div><div>{fmt(r.lifted_at)}</div><div className="cell-sub line-clamp-1">{r.lift_reason || ''}</div></div> : '—' },
   ].filter(Boolean);
 
   const expCols = [
@@ -1529,10 +1324,10 @@ function DebarredReport({ isCentral }) {
         onExcelExport={() => handleExportAll('excel')}
         onPdfExport={() => handleExportAll('pdf')}
         exporting={exportingAll}
+        count={total}
       />
-      <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
-        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)}
+        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} total={total}
         emptyMsg="No debarred visitors." />
     </div>
   );
@@ -1567,8 +1362,8 @@ function ActiveExpectedReport({ isCentral }) {
   useEffect(() => { fetch(); }, [fetch]);
 
   const expectedCols = [
-    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted text-xs">{r.unit_name}</span> },
-    { key: 'visitor_name',    label: 'Visitor',     render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-ink-2">{r.unit_name}</span> },
+    { key: 'visitor_name',    label: 'Visitor',     render: r => <div><div>{r.visitor_name}</div><div className="cell-sub">{r.visitor_phone}</div></div> },
     { key: 'department_name', label: 'Department',  render: r => r.department_name || '—' },
     { key: 'host_name',       label: 'Host',        render: r => r.host_name || '—' },
     { key: 'visit_category',  label: 'Type',        render: r => <CatBadge cat={r.visit_category} /> },
@@ -1603,44 +1398,22 @@ function ActiveExpectedReport({ isCentral }) {
 
   return (
     <div>
-      {/* Filter bar — date replaces from/to */}
-      <div className="space-y-3 mb-4 p-4 bg-bg-primary/50 rounded-lg border border-subtle">
+      <div className="toolbar mb-0">
+        <div className="toolbar-count basis-full sm:basis-auto">
+          {!loading && <><b>{expected.length.toLocaleString('en-IN')}</b> expected</>}
+        </div>
         <CascadeFilters isCentral={isCentral} filters={cf} showDept />
-        <div className="flex flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-muted font-medium">Date:</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)}
-              className="px-3 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50" />
-          </div>
-          <div className="relative min-w-[140px]">
-            <select value={visitorType} onChange={e => setVisitorType(e.target.value)}
-              className="block w-full pl-3 pr-8 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50 appearance-none cursor-pointer">
-              {VISITOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint pointer-events-none" />
-          </div>
-          <div className="relative flex-1 min-w-[160px]">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-faint" />
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
-              className="block w-full pl-8 pr-3 py-2 bg-bg-primary border border-subtle rounded-lg text-sm text-loud placeholder-faint focus:outline-none focus:ring-2 focus:ring-accent/50" />
-          </div>
-          <button onClick={fetch} disabled={loading}
-            className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors">
-            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Filter className="w-3.5 h-3.5" />}
-            Apply
-          </button>
-        </div>
-        <div className="flex items-center gap-2 justify-end pt-1 border-t border-subtle/50">
-          <span className="text-xs text-muted font-medium mr-1">Export:</span>
-          <button onClick={() => handleExport('excel')}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs font-medium text-muted hover:bg-bg-primary hover:text-loud transition-colors">
-            <FileSpreadsheet className="w-3.5 h-3.5 text-green-500" /> Excel
-          </button>
-          <button onClick={() => handleExport('pdf')}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-subtle rounded-lg text-xs font-medium text-muted hover:bg-bg-primary hover:text-loud transition-colors">
-            <FileText className="w-3.5 h-3.5 text-red-500" /> PDF
-          </button>
-        </div>
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} className="control tabular"
+          style={{ width: 140 }} aria-label="Date" />
+        <Select value={visitorType} onChange={e => setVisitorType(e.target.value)} aria-label="Visit type" style={{ width: 150 }}>
+          {VISITOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </Select>
+        <SearchInput value={search} onChange={setSearch} placeholder="Search" width={180} />
+        <button type="button" onClick={fetch} disabled={loading} className="btn-outline">
+          {loading ? <Loader2 size={14} className="animate-spin" /> : <Filter size={14} />}
+          Apply
+        </button>
+        <DownloadPair label="the expected visitors" onExcel={() => handleExport('excel')} onPdf={() => handleExport('pdf')} />
       </div>
 
       <ReportTable cols={expectedCols} rows={expected} loading={loading}
@@ -1787,9 +1560,9 @@ function VisitHistoryReport({ isCentral }) {
   };
 
   const cols = [
-    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-muted text-xs">{r.unit_name}</span> },
-    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="text-xs text-faint">{r.visitor_phone}</div></div> },
-    { key: 'host_name',       label: 'Host',       render: r => <div><div>{r.host_name}</div><div className="text-xs text-faint">{r.department_name}</div></div> },
+    isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-ink-2">{r.unit_name}</span> },
+    { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="cell-sub">{r.visitor_phone}</div></div> },
+    { key: 'host_name',       label: 'Host',       render: r => <div><div>{r.host_name}</div><div className="cell-sub">{r.department_name}</div></div> },
     { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
     { key: 'visit_date',      label: 'Date',       render: r => fmt(r.visit_date) },
     { key: 'check_in_time',   label: 'In',         render: r => fmtTime(r.check_in_time) },
@@ -1797,38 +1570,15 @@ function VisitHistoryReport({ isCentral }) {
     { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
     {
       key: 'actions',
-      label: 'Visitor Report',
+      label: 'History',
       render: r => (
-        <div className="flex items-center gap-1.5 whitespace-nowrap">
-          <button
-            type="button"
-            title={`Download history for ${r.visitor_name} (Excel)`}
-            onClick={() => handleDownloadSingleHistory(r, 'excel')}
-            disabled={downloadingKey === `excel-${r.visitor_phone || r.id}`}
-            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-green-500 text-loud hover:text-green-600 transition-colors disabled:opacity-50"
-          >
-            {downloadingKey === `excel-${r.visitor_phone || r.id}` ? (
-              <Loader2 className="w-3 h-3 animate-spin text-green-600" />
-            ) : (
-              <FileSpreadsheet className="w-3 h-3 text-green-600" />
-            )}
-            <span className="text-[11px] font-medium">Excel</span>
-          </button>
-          <button
-            type="button"
-            title={`Download history for ${r.visitor_name} (PDF)`}
-            onClick={() => handleDownloadSingleHistory(r, 'pdf')}
-            disabled={downloadingKey === `pdf-${r.visitor_phone || r.id}`}
-            className="px-2 py-1 text-xs border border-subtle rounded flex items-center gap-1 hover:bg-bg-primary hover:border-red-500 text-loud hover:text-red-600 transition-colors disabled:opacity-50"
-          >
-            {downloadingKey === `pdf-${r.visitor_phone || r.id}` ? (
-              <Loader2 className="w-3 h-3 animate-spin text-red-600" />
-            ) : (
-              <FileText className="w-3 h-3 text-red-600" />
-            )}
-            <span className="text-[11px] font-medium">PDF</span>
-          </button>
-        </div>
+        <DownloadPair
+          label={`all visits of ${r.visitor_name || 'this visitor'}`}
+          onExcel={() => handleDownloadSingleHistory(r, 'excel')}
+          onPdf={() => handleDownloadSingleHistory(r, 'pdf')}
+          busyExcel={downloadingKey === `excel-${r.visitor_phone || r.id}`}
+          busyPdf={downloadingKey === `pdf-${r.visitor_phone || r.id}`}
+        />
       ),
     },
   ].filter(Boolean);
@@ -1844,10 +1594,10 @@ function VisitHistoryReport({ isCentral }) {
         onExcelExport={() => handleExportAll('excel')}
         onPdfExport={() => handleExportAll('pdf')}
         exporting={exportingAll}
+        count={total}
       />
-      <p className="text-xs text-muted mb-3">{total} records total</p>
       <ReportTable cols={cols} rows={rows} loading={loading}
-        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} />
+        page={page} setPage={setPage} totalPages={Math.ceil(total / limit)} total={total} />
     </div>
   );
 }
@@ -1886,106 +1636,100 @@ function OverviewCharts({ from, to, onFromChange, onToChange }) {
 
   useEffect(() => { load(); }, [load]);
 
+  const tooltipStyle = {
+    background: 'var(--surface)', border: '1px solid var(--line-strong)', borderRadius: 6, fontSize: 12, color: 'var(--ink)',
+  };
+
   return (
-    <div className="vms-card rounded-md mb-6 overflow-hidden">
-      <button onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-6 py-4 hover:bg-bg-primary/40 transition-colors">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8   flex items-center justify-center">
-            <BarChart2 className="w-6 h-6 text-muted" />
-          </div>
-          <span className="font-semibold text-loud">Overview Charts</span>
-        </div>
-        <ChevronDown className={`w-4 h-4 text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+    <section className="mb-6">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="flex items-center gap-2.5 w-full text-left py-1">
+        <span className="head-chip tone-brand"><BarChart2 size={15} duo /></span>
+        <span className="section-title">Overview</span>
+        <span className="text-[11.5px] text-muted">{open ? 'Totals and trends for the dates below' : 'Show totals and trends'}</span>
+        <ChevronDown size={14} className={`ml-auto text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
-        <div className="px-6 pb-6 space-y-6 border-t border-subtle animate-fade-in">
-          {/* Date filter */}
-          <div className="flex flex-wrap gap-3 pt-4">
-            <input type="date" value={from} onChange={e => onFromChange(e.target.value)}
-              className="px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50" />
-            <input type="date" value={to} onChange={e => onToChange(e.target.value)}
-              className="px-3 py-1.5 bg-bg-primary border border-subtle rounded-lg text-sm text-loud focus:outline-none focus:ring-2 focus:ring-accent/50" />
-            <button onClick={load} disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium hover:bg-accent/90 disabled:opacity-50">
-              {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+        <div className="mt-3 space-y-4 animate-fade-in">
+          <div className="flex flex-wrap items-center gap-2">
+            <input type="date" value={from} onChange={e => onFromChange(e.target.value)} className="control tabular"
+              style={{ width: 140 }} aria-label="From date" />
+            <input type="date" value={to} onChange={e => onToChange(e.target.value)} className="control tabular"
+              style={{ width: 140 }} aria-label="To date" />
+            <button type="button" onClick={load} disabled={loading} className="btn-outline">
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
               Refresh
             </button>
           </div>
 
-          {loading && <div className="py-8 text-center text-muted animate-pulse">Loading charts…</div>}
+          <StatStrip cols={4}>
+            <Stat label="Visits" value={data?.summary?.total ?? 0} loading={loading || !data} />
+            <Stat label="Approved" value={data?.summary?.approved ?? 0} loading={loading || !data} />
+            <Stat label="Pending" value={data?.summary?.pending ?? 0} tone={data?.summary?.pending ? 'warning' : undefined} loading={loading || !data} />
+            <Stat label="Rejected" value={data?.summary?.rejected ?? 0} tone={data?.summary?.rejected ? 'danger' : undefined} loading={loading || !data} />
+          </StatStrip>
 
           {data && !loading && (
-            <>
-              {/* Stat cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                {[
-                  { label: 'Total Visits',   value: data.summary?.total    ?? 0, color: '#6366f1' },
-                  { label: 'Approved',       value: data.summary?.approved ?? 0, color: '#10b981' },
-                  { label: 'Pending',        value: data.summary?.pending  ?? 0, color: '#f59e0b' },
-                  { label: 'Rejected',       value: data.summary?.rejected ?? 0, color: '#f43f5e' },
-                ].map(s => (
-                  <div key={s.label} className="rounded-xl p-4 border border-subtle bg-bg-primary/60">
-                    <p className="text-xs text-muted mb-1">{s.label}</p>
-                    <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
-                  </div>
-                ))}
-              </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {data.daily.length > 0 && (
+                <div className="tile">
+                  <p className="group-heading mb-3">Daily visits · last 14 days</p>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={data.daily.slice(-14)}>
+                      <CartesianGrid vertical={false} stroke="var(--line)" />
+                      <XAxis dataKey="date" tickFormatter={d => { const dt = new Date(d); return `${dt.getDate()} ${MONTH_NAMES[dt.getMonth()]}`; }}
+                        tick={{ fontSize: 10, fill: 'var(--muted)' }} axisLine={{ stroke: 'var(--line-strong)' }} tickLine={false} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: 'var(--muted)' }} axisLine={false} tickLine={false} width={28} />
+                      <Tooltip contentStyle={tooltipStyle} />
+                      <Line type="monotone" dataKey="total" name="Visits" stroke="var(--chart-1)" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
 
-              {/* Charts grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Daily traffic */}
-                {data.daily.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">Daily Traffic</p>
-                    <ResponsiveContainer width="100%" height={200}>
-                      <LineChart data={data.daily.slice(-14)}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                        <XAxis dataKey="date" tickFormatter={d => { const dt = new Date(d); return `${dt.getDate()} ${MONTH_NAMES[dt.getMonth()]}`; }} tick={{ fontSize: 10, fill: 'var(--color-muted)' }} />
-                        <YAxis tick={{ fontSize: 10, fill: 'var(--color-muted)' }} />
-                        <Tooltip contentStyle={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: 12 }} />
-                        <Line type="monotone" dataKey="total" stroke="#6366f1" strokeWidth={2} dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-
-                {/* By status (pie) */}
-                {data.byStatus.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">By Status</p>
-                    <ResponsiveContainer width="100%" height={200}>
+              {data.byStatus.length > 0 && (
+                <div className="tile">
+                  <p className="group-heading mb-3">By status</p>
+                  <div className="flex items-center gap-4">
+                    <ResponsiveContainer width="55%" height={200}>
                       <PieChart>
-                        <Pie data={data.byStatus} dataKey="count" nameKey="status" cx="50%" cy="50%" outerRadius={75}
-                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}
-                          style={{ fontSize: 11 }}>
+                        <Pie data={data.byStatus} dataKey="count" nameKey="status" cx="50%" cy="50%"
+                          innerRadius={52} outerRadius={80} paddingAngle={1} stroke="var(--tile)">
                           {data.byStatus.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
                         </Pie>
-                        <Tooltip />
+                        <Tooltip contentStyle={tooltipStyle} />
                       </PieChart>
                     </ResponsiveContainer>
+                    <ul className="flex-1 space-y-1.5 text-[12px]">
+                      {data.byStatus.map((s, i) => (
+                        <li key={s.status ?? i} className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                          <span className="text-ink-2 flex-1 truncate">{String(s.status ?? '—').replace(/_/g, ' ').toLowerCase().replace(/^\w/, c => c.toUpperCase())}</span>
+                          <span className="tabular font-medium text-ink">{s.count}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                )}
-
-              </div>
-            </>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
 // ═══════════════════════════ MAIN PAGE ════════════════════════════════════════
 const TABS = [
   { id: 'employee', label: 'Employee-wise', icon: Users },
-  { id: 'dept',     label: 'Dept-wise',     icon: Building2 },
-  { id: 'unit',     label: 'Unit/Office',   icon: Building },
+  { id: 'dept',     label: 'Department-wise', icon: Building2 },
+  { id: 'unit',     label: 'Unit / office', icon: Building },
   { id: 'rejected', label: 'Rejected',      icon: ShieldOff },
   { id: 'debarred', label: 'Debarred',      icon: UserX },
-  { id: 'active',   label: 'Expected Visitors', icon: Activity },
-  { id: 'history',  label: 'Visit History', icon: Clock },
+  { id: 'active',   label: 'Expected visitors', icon: Activity },
+  { id: 'history',  label: 'Visit history', icon: Clock },
 ];
 
 export default function Reports() {
@@ -2000,61 +1744,31 @@ export default function Reports() {
 
   if (!isAdminOrAuditor) {
     return (
-      <div className="max-w-2xl mx-auto py-20 px-6 text-center">
-        <ShieldOff className="w-12 h-12 text-muted mx-auto mb-4" />
-        <h2 className="text-xl font-bold text-loud mb-2">Access Restricted</h2>
-        <p className="text-muted">Reports are available to admins and auditors only.</p>
-      </div>
+      <>
+        <PageHeader title="Reports" />
+        <Empty icon={ShieldOff} title="Reports are for admins and auditors" hint="Ask your unit admin if you need a report." />
+      </>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto  animate-fade-in">
-      {/* ── Page Header ─────────────────────────────────────────────────── */}
-      <div className="mb-8">
-        <h1 className="text-lg font-bold text-loud flex items-center gap-3">
-          Reports &amp; <em className="italic">Analytics</em>
-        </h1>
-      </div>
+    <div className="animate-fade-in">
+      <PageHeader title="Reports" />
 
-      {/* ── Overview Charts (collapsible) ─────────────────────────────── */}
       <OverviewCharts
         from={chartFrom} to={chartTo}
         onFromChange={setChartFrom} onToChange={setChartTo}
       />
 
-      {/* ── Tab Navigation ───────────────────────────────────────────── */}
-      <div className="vms-card rounded-xl overflow-hidden">
-        <div className="flex overflow-x-auto border-b border-subtle">
-          {TABS.map(t => {
-            const Icon = t.icon;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id)}
-                className={`flex items-center gap-2 px-5 py-3.5 text-sm font-medium whitespace-nowrap border-b-2 transition-all flex-shrink-0 ${
-                  activeTab === t.id
-                    ? 'border-accent text-accent bg-accent/5'
-                    : 'border-transparent text-muted hover:text-loud hover:bg-bg-primary/60'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
+      <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} className="mb-4 overflow-x-auto no-scrollbar" />
 
-        <div className="p-6">
-          {activeTab === 'employee' && <EmployeeReport   isCentral={isCentral} />}
-          {activeTab === 'dept'     && <DepartmentReport isCentral={isCentral} />}
-          {activeTab === 'unit'     && <UnitReport       isCentral={isCentral} />}
-          {activeTab === 'rejected' && <RejectedReport   isCentral={isCentral} />}
-          {activeTab === 'debarred' && <DebarredReport   isCentral={isCentral} />}
-          {activeTab === 'active'   && <ActiveExpectedReport isCentral={isCentral} />}
-          {activeTab === 'history'  && <VisitHistoryReport   isCentral={isCentral} />}
-        </div>
-      </div>
+      {activeTab === 'employee' && <EmployeeReport   isCentral={isCentral} />}
+      {activeTab === 'dept'     && <DepartmentReport isCentral={isCentral} />}
+      {activeTab === 'unit'     && <UnitReport       isCentral={isCentral} />}
+      {activeTab === 'rejected' && <RejectedReport   isCentral={isCentral} />}
+      {activeTab === 'debarred' && <DebarredReport   isCentral={isCentral} />}
+      {activeTab === 'active'   && <ActiveExpectedReport isCentral={isCentral} />}
+      {activeTab === 'history'  && <VisitHistoryReport   isCentral={isCentral} />}
     </div>
   );
 }

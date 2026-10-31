@@ -1,380 +1,315 @@
+// frontend/src/pages/requests/RequestList.jsx
+// Visit requests (DESIGN_RULES §6 list anatomy): breadcrumb + title + New request,
+// stat strip, perspective tabs, toolbar (count · search · status · date · export),
+// a plain sortable table whose rows open the request.
 import { useState, useEffect, useCallback } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import {
-  Search,
-  Plus,
-  Eye,
-  Calendar,
-  UserCheck,
-  ChevronLeft,
-  ChevronRight,
-  Filter,
-  ArrowUpRight,
-  Layers,
-  QrCode,
-  User,
-} from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Plus, ClipboardList } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
-import StatusBadge from "../../components/shared/StatusBadge";
 import useAuth from "../../hooks/useAuth";
+import Select from "../../components/Select";
+import Pagination from "../../components/shared/Pagination";
+import {
+  PageHeader, StatStrip, Stat, Tabs, Toolbar, SearchInput, Th, SkeletonRows, Status, Tag, Empty, ExportButton,
+} from "../../components/ui";
+import useSort from "../../lib/useSort";
+import { fmtDate, fmtTime, orDash } from "../../lib/format";
+import { statusLabel } from "../../lib/status";
+import { downloadXlsx, fetchAllPages } from "../../lib/exportXlsx";
 
 const CATEGORY_LABELS = {
-  EMPLOYEE_VISIT: 'Employee Visit',
-  VENDOR: 'Vendor',
-  SPOT: 'Walk-in',
-  PERSONAL_VISIT: 'Personal Visit',
+  EMPLOYEE_VISIT: "Employee visit",
+  VENDOR: "Vendor",
+  SPOT: "Walk-in",
+  PERSONAL_VISIT: "Personal visit",
 };
 
-// Show 'Public Request' when the record came from the public self-registration form
-function getCategoryLabel(request) {
-  if (request.request_source === 'PUBLIC') return 'Public Request';
-  return CATEGORY_LABELS[request.visit_category] ?? request.visit_category;
+// 'Public request' when the record came from the public self-registration form
+const categoryLabel = (r) =>
+  r.request_source === "PUBLIC" ? "Public request" : (CATEGORY_LABELS[r.visit_category] ?? r.visit_category);
+
+const last10 = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+
+/**
+ * How the signed-in user relates to a row: 'host' | 'visitor' | null.
+ * Worked out here — the API's my_role is 'VISITOR' for every row the user
+ * doesn't host, which is wrong for an admin looking at all requests.
+ */
+function relationTo(r, user) {
+  if (!user) return null;
+  const isMe = (id) => id != null && Number(id) === Number(user.id);
+  if (r._cross_unit_id) return "visitor";     // other units' rows come back only when I'm the visitor
+  if (isMe(r.host_user_id)) return "host";
+  const emailMatch = user.email && r.visitor_email && r.visitor_email.toLowerCase() === user.email.toLowerCase();
+  const phoneMatch = user.phone && r.visitor_phone && last10(r.visitor_phone) === last10(user.phone);
+  if (emailMatch || phoneMatch || (isMe(r.requester_user_id) && r.visit_category === "EMPLOYEE_VISIT")) return "visitor";
+  return null;
 }
 
+const todayIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 export default function RequestList() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
-  const { user } = useAuth();
+  const [exporting, setExporting] = useState(false);
 
-  // Role permissions
-  const canViewPass = ['security', 'unit_admin', 'receptionist'].includes(user?.role_type);
-  const canCreate   = ['unit_admin', 'employee', 'security', 'receptionist'].includes(user?.role_type);
+  const canViewPass = ["security", "unit_admin", "receptionist"].includes(user?.role_type);
+  const canCreate   = ["unit_admin", "employee", "security", "receptionist"].includes(user?.role_type);
 
-  // Tabs: 'as_host' (Visitors to Me), 'as_visitor' (My Visits as Visitor), 'all' (All)
+  // Tabs: 'as_host' (visitors to me), 'as_visitor' (my visits), 'all'
   const [activeTab, setActiveTab] = useState(user?.role_type === "employee" ? "as_host" : "all");
 
-  // Filters
+  // Filters (the top bar's quick search opens this page with ?search=)
   const [statusFilter, setStatusFilter] = useState("");
   const [dateFilter, setDateFilter] = useState("");
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("search") || "");
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
 
   // Pagination
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
   const limit = 10;
 
-  const navigate = useNavigate();
+  // Stat strip (counts for the current tab)
+  const [stats, setStats] = useState({ total: null, pending: null, today: null, approved: null });
 
-  // Debounce search
   useEffect(() => {
     const handler = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(handler);
   }, [search]);
 
+  const baseParams = useCallback(() => {
+    const params = {};
+    if (activeTab && activeTab !== "all") params.tab = activeTab;
+    return params;
+  }, [activeTab]);
+
   const fetchRequests = useCallback(async () => {
     try {
       setLoading(true);
-      const params = { page, limit };
-      if (activeTab && activeTab !== "all") params.tab = activeTab;
+      const params = { ...baseParams(), page, limit };
       if (statusFilter) params.status = statusFilter;
       if (dateFilter) params.visit_date = dateFilter;
       if (debouncedSearch) params.search = debouncedSearch;
 
       const response = await apiClient.get("/visit-requests", { params });
-      setRequests(response.data.data?.requests || response.data.data || []);
-      setTotalPages(response.data.data?.pagination?.pages || 1);
+      const data = response.data.data;
+      setRequests(data?.requests || data || []);
+      setTotalPages(data?.pagination?.pages || 1);
+      setTotalCount(data?.pagination?.total ?? 0);
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || "Failed to fetch visit requests",
-      );
+      toast.error(error.response?.data?.message || "Failed to fetch visit requests");
     } finally {
       setLoading(false);
     }
-  }, [page, activeTab, statusFilter, dateFilter, debouncedSearch]);
+  }, [baseParams, page, statusFilter, dateFilter, debouncedSearch]);
 
+  useEffect(() => { fetchRequests(); }, [fetchRequests]);
+
+  // Counts for the stat strip — one light query per number (limit 1, total only)
   useEffect(() => {
-    fetchRequests();
-  }, [fetchRequests]);
+    let cancelled = false;
+    const count = (extra) => apiClient
+      .get("/visit-requests", { params: { ...baseParams(), page: 1, limit: 1, ...extra } })
+      .then((r) => r.data?.data?.pagination?.total ?? 0)
+      .catch(() => null);
+    Promise.all([count({}), count({ status: "PENDING" }), count({ visit_date: todayIso() }), count({ status: "APPROVED" })])
+      .then(([total, pending, today, approved]) => { if (!cancelled) setStats({ total, pending, today, approved }); });
+    return () => { cancelled = true; };
+  }, [baseParams]);
+
+  const { rows, sort, onSort } = useSort(requests, {
+    visitor: (r) => r.visitor_name || r.company_name,
+    host: (r) => r.host_name,
+    date: (r) => `${String(r.visit_date).slice(0, 10)} ${r.visit_start_time || ""}`,
+    status: (r) => r.status,
+    pass: (r) => r.pass_number,
+  });
+
+  const detailLink = (r) => (r._cross_unit_id ? `/requests/${r.id}?unit_id=${r._cross_unit_id}` : `/requests/${r.id}`);
+  const passLink   = (r) => `/passes/pass/${r.pass_number}${r._cross_unit_id ? `?unit_id=${r._cross_unit_id}` : ""}`;
+
+  const onExport = async () => {
+    setExporting(true);
+    try {
+      const all = await fetchAllPages(async (p) => {
+        const params = { ...baseParams(), page: p, limit: 100 };
+        if (statusFilter) params.status = statusFilter;
+        if (dateFilter) params.visit_date = dateFilter;
+        if (debouncedSearch) params.search = debouncedSearch;
+        const res = await apiClient.get("/visit-requests", { params });
+        return { rows: res.data?.data?.requests || [], pages: res.data?.data?.pagination?.pages || 1 };
+      });
+      await downloadXlsx(all, [
+        { header: "REQUEST_ID", value: (r) => r.id },
+        { header: "VISITOR", value: (r) => r.visitor_name || r.company_name },
+        { header: "PHONE", value: (r) => r.visitor_phone },
+        { header: "TYPE", value: (r) => categoryLabel(r) },
+        { header: "HOST", value: (r) => r.host_name },
+        { header: "DEPARTMENT", value: (r) => r.department_name },
+        { header: "VISIT_DATE", value: (r) => fmtDate(r.visit_date) },
+        { header: "START", value: (r) => r.visit_start_time?.slice(0, 5) },
+        { header: "END", value: (r) => r.visit_end_time?.slice(0, 5) },
+        { header: "STATUS", value: (r) => statusLabel(r.status) },
+        { header: "GATE_PASS", value: (r) => r.pass_number },
+        { header: "PURPOSE", value: (r) => r.purpose },
+      ], `visit-requests_${activeTab}`);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Could not export the requests.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const switchTab = (id) => { setActiveTab(id); setPage(1); };
+  const hasFilters = !!(statusFilter || dateFilter || search);
 
   return (
-    <div className="max-w-7xl mx-auto  animate-fade-in">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-loud">
-            Visit Requests
-          </h1>
-        </div>
-        {canCreate && (
-          <Link
-            to="/requests/new"
-            className="btn-primary px-4 py-2 text-xs"
-          >
-            <Plus className="w-4 h-4" />
-            New Request
-          </Link>
+    <div className="animate-fade-in">
+      <PageHeader
+        title="Visit Requests"
+        actions={canCreate && (
+          <Link to="/requests/new" className="btn-primary"><Plus size={14} /> New request</Link>
         )}
-      </div>
+      />
 
-      <div className="vms-card border-none  rounded-md  mb-8 ">
-        {/* Tab Switcher */}
-        <div className="flex items-center gap-2 mb-6 border-b border-subtle pb-4 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => { setActiveTab("as_host"); setPage(1); }}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer ${
-              activeTab === "as_host"
-                ? "bg-accent text-white shadow-sm shadow-accent/20"
-                : "bg-bg-primary text-muted hover:text-loud hover:bg-bg-subtle border border-subtle"
-            }`}
-          >
-            <UserCheck className="w-3.5 h-3.5" />
-            <span>Visitors to Me</span>
+      <StatStrip cols={4}>
+        <Stat label="Requests" value={stats.total ?? "—"} loading={stats.total === null} hint="In this view" />
+        <Stat label="Waiting for approval" value={stats.pending ?? "—"} loading={stats.pending === null}
+          tone={stats.pending > 0 ? "warning" : undefined} hint="Pending a host's decision" />
+        <Stat label="Visiting today" value={stats.today ?? "—"} loading={stats.today === null} hint={fmtDate(new Date())} />
+        <Stat label="Approved" value={stats.approved ?? "—"} loading={stats.approved === null} hint="Gate pass issued" />
+      </StatStrip>
+
+      <Tabs
+        className="mb-3"
+        value={activeTab}
+        onChange={switchTab}
+        tabs={[
+          { id: "as_host", label: "Visitors to me" },
+          { id: "as_visitor", label: "My visits" },
+          { id: "all", label: "All requests" },
+        ]}
+      />
+
+      <Toolbar count={loading ? null : totalCount} noun={totalCount === 1 ? "request" : "requests"}>
+        <SearchInput
+          value={search}
+          onChange={(v) => { setSearch(v); setPage(1); }}
+          placeholder="Search visitor, phone, host or pass"
+          width={260}
+        />
+        <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+          aria-label="Status" style={{ width: 160 }}>
+          <option value="">All statuses</option>
+          <option value="PENDING">Pending</option>
+          <option value="APPROVED">Approved</option>
+          <option value="REJECTED">Rejected</option>
+          <option value="COMPLETED">Completed</option>
+          <option value="CANCELLED">Cancelled</option>
+        </Select>
+        <input
+          type="date"
+          className="control"
+          style={{ width: 150 }}
+          value={dateFilter}
+          onChange={(e) => { setDateFilter(e.target.value); setPage(1); }}
+          aria-label="Visit date"
+          title="Visit date"
+        />
+        {hasFilters && (
+          <button type="button" className="btn-ghost" onClick={() => { setStatusFilter(""); setDateFilter(""); setSearch(""); setPage(1); }}>
+            Clear
           </button>
+        )}
+        <ExportButton onClick={onExport} busy={exporting} disabled={!totalCount} title="Export these requests to Excel" />
+      </Toolbar>
 
-          <button
-            type="button"
-            onClick={() => { setActiveTab("as_visitor"); setPage(1); }}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer ${
-              activeTab === "as_visitor"
-                ? "bg-accent text-white shadow-sm shadow-accent/20"
-                : "bg-bg-primary text-muted hover:text-loud hover:bg-bg-subtle border border-subtle"
-            }`}
-          >
-            <ArrowUpRight className="w-3.5 h-3.5" />
-            <span>My Visits (As Visitor)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => { setActiveTab("all"); setPage(1); }}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer ${
-              activeTab === "all"
-                ? "bg-accent text-white shadow-sm shadow-accent/20"
-                : "bg-bg-primary text-muted hover:text-loud hover:bg-bg-subtle border border-subtle"
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>All Requests</span>
-          </button>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-col md:flex-row gap-4 mb-6 pb-6 border-b border-subtle">
-          <div className="flex-1 relative">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <Search
-                className="h-5 w-5 text-accent"
-                strokeWidth={1.5}
-              />
-            </div>
-            <input
-              type="text"
-              className="block w-full pl-11 pr-4 py-2 bg-bg-primary border border-subtle rounded-full text-loud placeholder-faint focus:outline-none focus:ring-2 focus:ring-accent transition-all duration-300"
-              placeholder="Search..."
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-            />
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative">
-              <select
-                value={statusFilter}
-                onChange={(e) => {
-                  setStatusFilter(e.target.value);
-                  setPage(1);
-                }}
-                className="block w-full sm:w-48 pl-4 pr-10 py-2 bg-bg-primary border border-subtle rounded-full text-loud focus:outline-none focus:ring-2 focus:ring-accent appearance-none cursor-pointer"
-              >
-                <option value="">All Statuses</option>
-                <option value="PENDING">Pending</option>
-                <option value="APPROVED">Approved</option>
-                <option value="REJECTED">Rejected</option>
-                <option value="COMPLETED">Completed</option>
-                <option value="CANCELLED">Cancelled</option>
-              </select>
-              <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
-                <Filter className="h-4 w-4 text-faint" />
-              </div>
-            </div>
-
-            <input
-              type="date"
-              value={dateFilter}
-              onChange={(e) => {
-                setDateFilter(e.target.value);
-                setPage(1);
-              }}
-              className="block w-full sm:w-48 px-4 py-2 bg-bg-primary border border-subtle rounded-full text-loud focus:outline-none focus:ring-2 focus:ring-accent"
-            />
-          </div>
-        </div>
-
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-subtle text-muted text-sm uppercase tracking-wider">
-                <th className="py-4 px-4 font-medium">Visitor</th>
-                <th className="py-4 px-4 font-medium">Host & Dept</th>
-                <th className="py-4 px-4 font-medium">Date</th>
-                <th className="py-4 px-4 font-medium">Status</th>
-                <th className="py-4 px-4 font-medium text-right">Actions</th>
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <Th sortKey="visitor" sort={sort} onSort={onSort}>Visitor</Th>
+              <Th sortKey="host" sort={sort} onSort={onSort}>Host</Th>
+              <Th sortKey="date" sort={sort} onSort={onSort}>Visit</Th>
+              <Th sortKey="status" sort={sort} onSort={onSort}>Status</Th>
+              <Th sortKey="pass" sort={sort} onSort={onSort}>Gate pass</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <SkeletonRows rows={6} cols={5} />
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="!p-0">
+                  <Empty
+                    icon={ClipboardList}
+                    title={hasFilters ? "No requests match these filters" : "No visit requests yet"}
+                    hint={hasFilters
+                      ? "Try another status or date, or clear the filters."
+                      : activeTab === "as_visitor"
+                        ? "Visits you make to other people appear here once they are requested."
+                        : "Requests appear here when a visitor is registered or asks to visit."}
+                  />
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td
-                    colSpan="5"
-                    className="text-center py-12 text-faint italic"
-                  >
-                    Loading requests...
-                  </td>
-                </tr>
-              ) : requests.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan="5"
-                    className="text-center py-12 text-faint italic"
-                  >
-                    {activeTab === 'as_visitor'
-                      ? 'No visit requests found where you are the visitor.'
-                      : activeTab === 'as_host'
-                      ? 'No visitor requests to you found.'
-                      : 'No visit requests found.'}
-                  </td>
-                </tr>
-              ) : (
-                requests.map((request) => (
-                  <tr
-                    key={`${request._cross_unit_id ?? "own"}-${request.id}`}
-                    className="border-b border-subtle hover:bg-bg-primary/50 transition-colors duration-300"
-                  >
-                    <td className="py-4 px-4">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <div className="font-medium text-loud">
-                          {request.visitor_name || request.company_name || "N/A"}
-                        </div>
-                        {request.my_role === 'VISITOR' && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border"
-                            style={{ background: 'var(--color-success-bg)', color: 'var(--color-success)', borderColor: 'var(--color-success)' }}>
-                            You (Visitor)
-                          </span>
-                        )}
-                      </div>
-                      {request.visitor_phone && (
-                        <div className="text-xs text-faint mt-0.5">{request.visitor_phone}</div>
-                      )}
-                      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                        <span
-                          className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider"
-                          style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
-                        >
-                          {getCategoryLabel(request)}
-                        </span>
-                        {request._cross_unit_id && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border"
-                            style={{ background: 'var(--color-mixed-bg)', color: 'var(--color-mixed)', borderColor: 'var(--color-mixed)' }}>
-                            Cross-Unit
-                          </span>
-                        )}
-                      </div>
+            ) : (
+              rows.map((r) => {
+                const rel = relationTo(r, user);
+                const showPass = (canViewPass || rel || user?.role_type === "employee") && r.status === "APPROVED" && r.pass_number;
+                return (
+                  <tr key={`${r._cross_unit_id ?? "own"}-${r.id}`} className="is-clickable" onClick={() => navigate(detailLink(r))}>
+                    <td>
+                      <span className="inline-flex items-center gap-1.5 flex-wrap">
+                        <span className="font-medium">{r.visitor_name || r.company_name || "—"}</span>
+                        {rel === "visitor" && <Tag tone="success">You</Tag>}
+                        {r._cross_unit_id && <Tag tone="info">Other unit</Tag>}
+                      </span>
+                      <span className="cell-sub">{categoryLabel(r)}{r.visitor_phone ? ` · ${r.visitor_phone}` : ""}</span>
                     </td>
-                    <td className="py-4 px-4">
-                      <div className="text-loud flex items-center gap-1.5 flex-wrap">
-                        <UserCheck
-                          className="w-4 h-4 text-accent shrink-0"
-                          strokeWidth={1.5}
-                        />
-                        <span>{request.Host?.full_name || request.host_name || "N/A"}</span>
-                        {request.my_role === 'HOST' && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border"
-                            style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)', borderColor: 'var(--color-info)' }}>
-                            You (Host)
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-sm text-muted mt-1 pl-5.5">
-                        {request.Department?.name ||
-                          request.department_name ||
-                          "N/A"}
-                      </div>
+                    <td>
+                      <span className="inline-flex items-center gap-1.5">
+                        {orDash(r.Host?.full_name || r.host_name)}
+                        {rel === "host" && <Tag tone="brand">You</Tag>}
+                      </span>
+                      <span className="cell-sub">{orDash(r.Department?.name || r.department_name)}</span>
                     </td>
-                    <td className="py-4 px-4">
-                      <div className="text-loud flex items-center gap-1.5">
-                        <Calendar
-                          className="w-4 h-4 text-accent"
-                          strokeWidth={1.5}
-                        />
-                        {new Date(request.visit_date).toLocaleDateString()}
-                      </div>
-                      <div className="text-sm text-muted mt-1 pl-5.5">
-                        {request.visit_start_time
-                          ? request.visit_start_time.substring(0, 5)
-                          : "Any time"}
-                      </div>
+                    <td className="tabular whitespace-nowrap">
+                      {fmtDate(r.visit_date)}
+                      <span className="cell-sub">
+                        {r.visit_start_time ? `${fmtTime(r.visit_start_time)}${r.visit_end_time ? `–${fmtTime(r.visit_end_time)}` : ""}` : "Any time"}
+                      </span>
                     </td>
-                    <td className="py-4 px-4">
-                      <StatusBadge status={request.status} />
-                    </td>
-                    <td className="py-4 px-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        {(canViewPass || request.my_role === 'VISITOR' || user?.role_type === 'employee') &&
-                          request.status === "APPROVED" &&
-                          request.pass_number && (
-                            <button
-                              onClick={() =>
-                                navigate(`/gate/pass/${request.pass_number}`)
-                              }
-                              className="inline-flex items-center gap-1 justify-center px-3 h-8 rounded-full bg-mixed-bg text-accent hover:bg-accent hover:text-white transition-colors duration-300 text-xs font-semibold uppercase tracking-wider"
-                              title="View Gate Pass"
-                            >
-                              <QrCode className="w-3.5 h-3.5" />
-                              Pass
-                            </button>
-                          )}
-                        <button
-                          onClick={() => navigate(
-                            // Cross-unit rows live in another unit's DB — tell the detail page which one
-                            request._cross_unit_id
-                              ? `/requests/${request.id}?unit_id=${request._cross_unit_id}`
-                              : `/requests/${request.id}`
-                          )}
-                          className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-bg-primary text-muted hover:bg-accent hover:text-white transition-colors duration-300"
-                          title="View Details"
-                        >
-                          <Eye className="w-4 h-4" strokeWidth={1.5} />
+                    <td><Status value={r.status} /></td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {showPass ? (
+                        <button type="button" className="btn-link mono" onClick={() => navigate(passLink(r))} title="Open the gate pass">
+                          {r.pass_number}
                         </button>
-                      </div>
+                      ) : (
+                        <span className="mono text-muted">{r.pass_number || "—"}</span>
+                      )}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        {!loading && totalPages > 1 && (
-          <div className="flex items-center justify-between mt-8 pt-6 border-t border-subtle">
-            <span className="text-sm text-muted">
-              Page {page} of {totalPages}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="p-2 rounded-full border border-subtle text-loud disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-primary transition-colors duration-300"
-              >
-                <ChevronLeft className="w-5 h-5" strokeWidth={1.5} />
-              </button>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="p-2 rounded-full border border-subtle text-loud disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-primary transition-colors duration-300"
-              >
-                <ChevronRight className="w-5 h-5" strokeWidth={1.5} />
-              </button>
-            </div>
-          </div>
-        )}
+                );
+              })
+            )}
+          </tbody>
+        </table>
       </div>
+
+      {!loading && (
+        <Pagination page={page} totalPages={totalPages} totalCount={totalCount} onPageChange={setPage} />
+      )}
     </div>
   );
 }

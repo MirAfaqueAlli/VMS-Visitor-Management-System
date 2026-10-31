@@ -5,8 +5,6 @@ import { lazy, Suspense } from "react";
 import { AuthProvider }   from "./context/AuthContext";
 import { SocketProvider } from "./context/SocketContext";
 import { ThemeProvider }  from "./context/ThemeContext";
-import useTheme           from "./context/ThemeContext";
-import useAuth            from "./hooks/useAuth";
 
 // ── Always-eager: layout scaffolding needed on every route ───────────────────
 import AppLayout      from "./components/Layout/AppLayout";
@@ -17,6 +15,7 @@ const Login                 = lazy(() => import("./pages/auth/Login"));
 const Setup                 = lazy(() => import("./pages/auth/Setup"));
 const RegisterOrganization  = lazy(() => import("./pages/auth/RegisterOrganization"));
 const PublicRequest         = lazy(() => import("./pages/requests/PublicRequest"));
+const VisitorPortal         = lazy(() => import("./pages/visitor/VisitorPortal"));
 const ResetPassword         = lazy(() => import("./pages/auth/ResetPassword"));
 
 // Dashboard — default export is SuperAdmin view; named export AdminDashboard is unit view.
@@ -44,29 +43,19 @@ const Reports                = lazy(() => import("./pages/reports/Reports"));
 const AuditLog               = lazy(() => import("./pages/audit/AuditLog"));
 const Profile                = lazy(() => import("./pages/profile/Profile"));
 
-// ── Minimal page-level loading spinner ───────────────────────────────────────
+// ── Minimal page-level loading spinner (brand-blue ring, token colours) ───────
 function PageLoader() {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100vh",
-        width: "100%",
-      }}
-    >
+    <div className="flex items-center justify-center w-full" style={{ minHeight: "40vh" }} role="status" aria-label="Loading">
       <div
+        className="animate-spin rounded-full"
         style={{
-          width: "36px",
-          height: "36px",
-          borderRadius: "50%",
-          border: "3px solid rgba(134,59,255,0.15)",
-          borderTopColor: "#863bff",
-          animation: "vms-spin 0.7s linear infinite",
+          width: "28px",
+          height: "28px",
+          border: "3px solid var(--primary-soft)",
+          borderTopColor: "var(--primary-strong)",
         }}
       />
-      <style>{`@keyframes vms-spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
@@ -92,7 +81,10 @@ const router = createBrowserRouter([
   { path: "/login",           element: <S><Login /></S> },
   { path: "/login/:unitCode", element: <S><Login /></S> },
   { path: "/register",        element: <S><RegisterOrganization /></S> },
-  { path: "/public-request",  element: <S><PublicRequest /></S> },
+  // Visitor portal: sign-in / register / dashboard, and the new-visit form
+  { path: "/public-request",      element: <S><VisitorPortal /></S> },
+  { path: "/public-request/new",  element: <S><PublicRequest /></S> },
+  { path: "/visitor",             element: <Navigate to="/public-request" replace /> },
   { path: "/reset-password",  element: <S><ResetPassword /></S> },
 
   {
@@ -195,28 +187,35 @@ const router = createBrowserRouter([
   { path: "*", element: <Navigate to="/dashboard" replace /> },
 ]);
 
-// ── Theme-aware toaster ───────────────────────────────────────────────────────
+// ── Toasts (DESIGN_RULES §16): bottom-right, 320px white card with a tinted
+// border; 3.5s, errors 6s. Colours are tokens, so dark mode follows by itself.
 function ThemedToaster() {
-  const { theme } = useTheme();
-  const dark = theme === "dark";
   return (
     <Toaster
-      position="top-right"
+      position="bottom-right"
       toastOptions={{
+        duration: 3500,
         style: {
-          borderRadius: "6px",
-          background:   dark ? "#1e293b" : "#ffffff",
-          color:        dark ? "#f1f5f9" : "#0f172a",
-          fontFamily:   "Inter, system-ui, sans-serif",
-          fontSize:     "13px",
-          border:       dark ? "1px solid #334155" : "1px solid #e2e8f0",
-          boxShadow:    dark
-            ? "0 4px 16px rgba(0,0,0,0.5)"
-            : "0 1px 3px rgba(15,23,42,0.08)",
-          padding: "10px 14px",
+          width: 320,
+          maxWidth: "calc(100vw - 32px)",
+          borderRadius: "var(--radius)",
+          background: "var(--surface)",
+          color: "var(--ink)",
+          fontFamily: "var(--font-ui)",
+          fontSize: "12.5px",
+          border: "1px solid var(--line-strong)",
+          boxShadow: "none",
+          padding: "10px 12px",
         },
-        success: { iconTheme: { primary: dark ? "#4ade80" : "#16a34a", secondary: dark ? "#1e293b" : "#ffffff" } },
-        error:   { iconTheme: { primary: dark ? "#f87171" : "#dc2626", secondary: dark ? "#1e293b" : "#ffffff" } },
+        success: {
+          style: { borderColor: "color-mix(in srgb, var(--success) 45%, transparent)" },
+          iconTheme: { primary: "var(--success)", secondary: "var(--surface)" },
+        },
+        error: {
+          duration: 6000,
+          style: { borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)" },
+          iconTheme: { primary: "var(--danger)", secondary: "var(--surface)" },
+        },
       }}
     />
   );

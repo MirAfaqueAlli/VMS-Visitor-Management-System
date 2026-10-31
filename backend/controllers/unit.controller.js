@@ -7,6 +7,7 @@ const { logAudit }                              = require('../utils/auditLogger.
 const { isSuperAdmin, isGlobalAuditor }         = require('../middlewares/rbac.middleware');
 const bcrypt = require('bcrypt');
 const { validatePassword } = require('../utils/passwordValidator.util');
+const { rejectIfContactTaken } = require('../services/contactUniqueness.service');
 
 // ── List Units ────────────────────────────────────────────────────────────────
 /**
@@ -142,6 +143,10 @@ const createUnit = async (req, res) => {
       // provisioned without an admin and a retry fails with "code already exists"
       const { valid, errors } = validatePassword(adminPass);
       if (!valid) return sendError(res, `Unit admin password: ${errors[0]}`, 400);
+
+      // Same reason: the admin's email / mobile must be free system-wide before the
+      // unit is provisioned (one person = one account across central and all units)
+      if (await rejectIfContactTaken(res, sendError, { email: adminEmail, phone: unit_admin.phone })) return;
     }
 
     const sanitizedCode = code.toUpperCase().trim();

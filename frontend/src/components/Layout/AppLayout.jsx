@@ -1,66 +1,53 @@
 // frontend/src/components/Layout/AppLayout.jsx
+// App shell (DESIGN_RULES §5): flat top bar + sidebar on --canvas, and the page on
+// a white sheet with a rounded top-left corner. The sidebar collapses to a rail
+// (remembered) and folds automatically while any side drawer is open.
 import { useState, useCallback, useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
+import NotifyPermissionBar from './NotifyPermissionBar';
 import NotificationManager from '../NotificationManager';
+import { onDrawerChange, anyDrawerOpen } from '../../lib/drawerBus';
+
+const RAIL_KEY = 'vms_sidebar_rail';
+const readRail = () => { try { return localStorage.getItem(RAIL_KEY) === '1'; } catch { return false; } };
 
 export default function AppLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [bannerVisible, setBannerVisible] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [rail, setRail] = useState(readRail);              // the user's saved choice
+  const [drawerOpen, setDrawerOpen] = useState(anyDrawerOpen);
+  const { pathname } = useLocation();
 
-  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
-  const toggleSidebar = useCallback(() => setSidebarOpen(o => !o), []);
+  // Auto-fold while a drawer is open — never changes the saved choice
+  useEffect(() => onDrawerChange(setDrawerOpen), []);
 
-  // Lock body scroll when mobile sidebar is open
-  useEffect(() => {
-    if (sidebarOpen) {
-      document.body.classList.add('sidebar-overlay-open');
-    } else {
-      document.body.classList.remove('sidebar-overlay-open');
-    }
-    return () => document.body.classList.remove('sidebar-overlay-open');
-  }, [sidebarOpen]);
-
-  // Close sidebar on desktop resize (avoids stuck-open state)
-  useEffect(() => {
-    const onResize = () => {
-      if (window.innerWidth >= 1024) setSidebarOpen(false);
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+  const toggleRail = useCallback(() => {
+    setRail((r) => {
+      try { localStorage.setItem(RAIL_KEY, r ? '0' : '1'); } catch { /* storage blocked */ }
+      return !r;
+    });
   }, []);
 
+  const closeMobile = useCallback(() => setMobileOpen(false), []);
+  const isRail = rail || drawerOpen;
+
   return (
-    <div className="min-h-screen" style={{ background: 'var(--color-bg-primary)' }}>
+    <div className="app-shell">
       {/* Invisible push-notification watcher */}
       <NotificationManager />
 
-      {/* Mobile backdrop — tapping it closes the sidebar */}
-      <div
-        className={`fixed inset-0 z-40 lg:hidden transition-opacity duration-250 ${
-          sidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
-        style={{ background: 'rgba(0,0,0,0.5)' }}
-        onClick={closeSidebar}
-        aria-hidden="true"
-      />
+      <Navbar onMenuToggle={() => setMobileOpen((o) => !o)} />
 
-      <Sidebar isOpen={sidebarOpen} onClose={closeSidebar} />
+      <div className={`sidebar-backdrop lg:hidden${mobileOpen ? ' is-open' : ''}`} onClick={closeMobile} aria-hidden="true" />
+      <Sidebar rail={isRail} onToggleRail={toggleRail} mobileOpen={mobileOpen} onNavigate={closeMobile} />
 
-      <Navbar onMenuToggle={toggleSidebar} onBannerChange={setBannerVisible} />
-
-      {/*
-        On desktop (lg+): offset by sidebar width via inline style.
-        On mobile: CSS rule makes margin-left: 0 override the inline style.
-      */}
-      <div
-        className="main-content-area"
-        style={{ marginLeft: 'var(--sidebar-width, 220px)' }}
-      >
-        {/* pt-14 = navbar (40px). Extra space when banner is visible to avoid overlap. */}
-        <main className={`${bannerVisible ? 'pt-28' : 'pt-20'} max-w-7xl mx-auto px-4 bg-bg-secondary sm:px-5 pb-8 min-h-screen transition-[padding] duration-200`}>
-          <Outlet />
+      <div className={`sheet-wrap${isRail ? ' is-rail' : ''}`}>
+        <main className="sheet">
+          <div className="page" key={pathname}>
+            <NotifyPermissionBar />
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

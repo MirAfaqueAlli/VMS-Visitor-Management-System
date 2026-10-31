@@ -1,206 +1,137 @@
+// frontend/src/pages/dashboard/Dashboard.jsx
+// Role dashboards (DESIGN_RULES §13): title + scope, a lead row with one hero
+// number (54px, parts bar + legend) beside smaller metric tiles, then sections
+// with head-icon chips and plain tables. No greetings, no gradients.
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Clock,
-  UserCheck,
-  CheckCircle2,
-  AlertCircle,
-  Calendar,
-  Check,
-  X,
-  Plus,
-  ClipboardList,
-  Activity,
-  Users,
-  Building2,
-  TrendingUp,
-} from "lucide-react";
+  Clock, UserCheck, AlertCircle, Calendar, Check, X, Plus, ClipboardList, Building2, ChevronRight,
+} from "../../components/icons";
 import { toast } from "react-hot-toast";
 import apiClient from "../../api/axios";
 import useAuth from "../../hooks/useAuth";
-import StatusBadge from "../../components/shared/StatusBadge";
 import useSocketEvent from "../../hooks/useSocketEvent";
+import { PageHeader, SectionTitle, Status, Tag, State, Empty, Spinner, Modal, Field } from "../../components/ui";
+import { fmtDate, fmtTime, fmtClock, fmtNumber, orDash } from "../../lib/format";
+import { describe } from "../../lib/status";
 
-const CATEGORY_LABELS = {
-  EMPLOYEE_VISIT: 'Employee Visit',
-  VENDOR: 'Vendor',
-  SPOT: 'Walk-in',
-  PERSONAL_VISIT: 'Personal Visit',
-};
+/* ─── Shared pieces ──────────────────────────────────────────────────────── */
 
-/* ─── Shared Utilities ───────────────────────────────────────────────────── */
-function StatCard({ icon: Icon, label, value, gradient, iconColor, className = "", onClick }) {
-  const defaultGradient = 'linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)';
-  const bg = gradient ?? defaultGradient;
+/** The one number that matters, with its parts as a stacked 6px bar + legend. */
+function HeroTile({ label, value, tone, hint, parts = [] }) {
+  const total = parts.reduce((s, p) => s + (Number(p.value) || 0), 0);
   return (
-    <div
-      className={`relative overflow-hidden rounded-2xl p-5 flex flex-col gap-4 transition-all duration-300 ${onClick ? 'cursor-pointer hover:-translate-y-1 hover:shadow-2xl' : ''
-        } ${className}`}
-      onClick={onClick}
-      style={{ background: bg, boxShadow: '0 4px 24px rgba(0,0,0,0.13)' }}
-    >
-      {/* Decorative circle */}
-      <div
-        className="absolute -top-5 -right-5 w-24 h-24 rounded-full"
-        style={{ background: 'rgba(255,255,255,0.10)' }}
-      />
-      <div
-        className="absolute -bottom-6 -right-2 w-16 h-16 rounded-full"
-        style={{ background: 'rgba(255,255,255,0.07)' }}
-      />
-      {/* Icon badge */}
-      <div
-        className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-        style={{ background: 'rgba(255,255,255,0.20)' }}
-      >
-        <Icon strokeWidth={2} size={19} color={iconColor ?? '#ffffff'} />
+    <div className="tile flex flex-col justify-between min-h-[168px]">
+      <div>
+        <div className="stat-label">{label}</div>
+        <div className="mt-2 tabular" style={{
+          fontSize: 54, fontWeight: 650, letterSpacing: "-0.03em", lineHeight: 0.9,
+          color: tone === "warning" ? "var(--warning-text)" : "var(--ink)",
+        }}>
+          {fmtNumber(value ?? 0)}
+        </div>
+        {hint && <div className="stat-hint mt-2">{hint}</div>}
       </div>
-      {/* Text */}
-      <div className="relative z-10">
-        <p className="text-3xl font-extrabold leading-none" style={{ color: '#ffffff' }}>
-          {value ?? '—'}
-        </p>
-        <p className="text-[11px] font-semibold uppercase tracking-widest mt-1.5" style={{ color: 'rgba(255,255,255,0.75)' }}>
-          {label}
-        </p>
-      </div>
+      {parts.length > 0 && (
+        <div className="mt-4">
+          <div className="flex h-1.5 rounded-full overflow-hidden gap-[2px]" style={{ background: total ? undefined : "var(--line)" }}>
+            {total > 0 && parts.map((p) => (Number(p.value) > 0 ? (
+              <span key={p.label} style={{ flexGrow: Number(p.value), background: p.color }} title={`${p.label}: ${p.value}`} />
+            ) : null))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-ink-2">
+            {parts.map((p) => (
+              <span key={p.label} className="inline-flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ background: p.color }} />
+                {p.label} <b className="tabular font-semibold text-ink">{fmtNumber(p.value ?? 0)}</b>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function EmptyState({ message }) {
+function MetricTile({ label, value, unit, hint, tone, onClick }) {
+  const Comp = onClick ? "button" : "div";
   return (
-    <div className="py-14 flex flex-col items-center justify-center text-center">
-      <div className="w-10 h-10 rounded flex items-center justify-center mb-3 bg-lightColor"
-        style={{ borderRadius: 'var(--radius-sm)' }}>
-        <Calendar strokeWidth={1.75} size={18} className="text-faint" />
+    <Comp type={onClick ? "button" : undefined} onClick={onClick}
+      className={`stat text-left ${onClick ? "hover:bg-neutral-soft transition-colors" : ""}`}>
+      <div className="stat-label flex items-center gap-1">{label}{onClick && <ChevronRight size={12} className="text-muted" />}</div>
+      <div className={`stat-value${tone ? ` is-${tone}` : ""}`}>
+        {fmtNumber(value ?? 0)}{unit && <span className="stat-unit">{unit}</span>}
       </div>
-      <p className="text-muted text-sm">{message}</p>
-    </div>
+      {hint && <div className="stat-hint">{hint}</div>}
+    </Comp>
   );
 }
 
-function TableHead({ cols }) {
-  return (
-    <thead>
-      <tr style={{ borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-primary)' }}>
-        {cols.map((c) => (
-          <th
-            key={c}
-            className="px-5 py-3 text-left text-[11px] font-semibold tracking-wider uppercase text-faint whitespace-nowrap"
-          >
-            {c}
-          </th>
-        ))}
-      </tr>
-    </thead>
-  );
-}
-
-/* ─── Remarks Modal (replaces window.prompt) ────────────────────────────── */
+/** Remarks for approve (optional) / reject (required) — replaces window.prompt. */
 function RemarksModal({ mode, onConfirm, onCancel, loading }) {
   const [remarks, setRemarks] = useState("");
   const [error, setError] = useState("");
-  if (!mode) return null;
   const isReject = mode === "reject";
-  const handleConfirm = () => {
-    if (isReject && !remarks.trim()) { setError("A reason is required for rejection."); return; }
+  const confirm = () => {
+    if (isReject && !remarks.trim()) { setError("Enter the reason for rejecting — the visitor is told it."); return; }
     onConfirm(remarks.trim());
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)' }}
+    <Modal
+      open={!!mode}
+      onClose={onCancel}
+      busy={loading}
+      width={440}
+      title={isReject ? "Reject this visit request" : "Approve this visit request"}
+      footer={(
+        <>
+          <button type="button" className="btn-outline" onClick={onCancel} disabled={loading}>Cancel</button>
+          <button type="button" className={isReject ? "btn-danger" : "btn-primary"} onClick={confirm} disabled={loading}>
+            {isReject ? <X size={14} /> : <Check size={14} />}
+            {loading ? "Saving…" : isReject ? "Reject request" : "Approve request"}
+          </button>
+        </>
+      )}
     >
-      <div className="vms-card w-full max-w-md rounded-2xl p-6 shadow-2xl animate-fade-in">
-        <div className="flex items-center gap-3 mb-4">
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: isReject ? 'rgba(239,68,68,0.12)' : 'rgba(59,130,246,0.12)' }}
-          >
-            {isReject
-              ? <X size={18} style={{ color: '#ef4444' }} />
-              : <Check size={18} style={{ color: 'var(--color-accent)' }} />
-            }
-          </div>
-          <div>
-            <h3 className="font-semibold text-loud text-base">
-              {isReject ? "Reject Request" : "Approve Request"}
-            </h3>
-            <p className="text-xs text-faint mt-0.5">
-              {isReject ? "This action will reject the visit request." : "This action will approve the visit request."}
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-1.5 mb-5">
-          <label className="block text-xs font-semibold text-muted uppercase tracking-wider">
-            Remarks {isReject ? "(required)" : "(optional)"}
-          </label>
-          <textarea
-            autoFocus
-            rows={3}
-            value={remarks}
-            onChange={e => { setRemarks(e.target.value); setError(""); }}
-            placeholder={isReject ? "Reason for rejection…" : "Any remarks (optional)…"}
-            className="w-full rounded-lg border px-3 py-2.5 text-sm text-loud resize-none focus:outline-none focus:border-accent transition-colors"
-            style={{ background: 'var(--color-bg-primary)', borderColor: error ? '#ef4444' : 'var(--color-border)' }}
-          />
-          {error && <p className="text-xs" style={{ color: '#ef4444' }}>{error}</p>}
-        </div>
-
-        <div className="flex gap-3">
-          <button
-            onClick={handleConfirm}
-            disabled={loading}
-            className="flex-1 btn-primary py-2.5 text-sm font-semibold flex items-center justify-center gap-2"
-            style={isReject ? { background: '#ef4444' } : {}}
-          >
-            {loading
-              ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Processing…</>
-              : isReject ? <><X size={14} /> Reject</> : <><Check size={14} /> Approve</>
-            }
-          </button>
-          <button onClick={onCancel} disabled={loading} className="btn-secondary py-2.5 px-4 text-sm">
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
+      <Field label={isReject ? "Reason for rejecting" : "Remarks (optional)"} required={isReject} error={error}>
+        <textarea autoFocus rows={3} value={remarks} className={`control resize-none${error ? " is-invalid" : ""}`}
+          onChange={(e) => { setRemarks(e.target.value); setError(""); }}
+          placeholder={isReject ? "e.g. The host is on leave that day" : "e.g. Meeting room 2B is booked"} />
+      </Field>
+    </Modal>
   );
 }
 
-function fmtTime(d) {
-  if (!d) return "—";
-  return new Date(d).toLocaleTimeString("en-IN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-function fmtDate(d) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
+const timeOf = (v) => (v.visit_start_time ? fmtTime(v.visit_start_time) : "Any time");
 
-function Spinner() {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-      <div className="w-9 h-9 rounded-full border-2 border-border border-t-transparent animate-spin" />
-      <p className="text-faint text-xs tracking-widest uppercase">
-        Loading dashboard
-      </p>
-    </div>
+function useApprovalModal(onDone) {
+  const [modalState, setModalState] = useState(null); // null | { mode, id, loading }
+  const open = (mode, id) => setModalState({ mode, id, loading: false });
+  const confirm = async (remarks) => {
+    if (!modalState) return;
+    const { mode, id } = modalState;
+    setModalState((p) => ({ ...p, loading: true }));
+    try {
+      await apiClient.put(`/approvals/${id}/${mode}`, { remarks: remarks || undefined });
+      toast.success(mode === "approve" ? "Request approved — the gate pass has been sent to the visitor." : "Request rejected — the visitor has been told.");
+      setModalState(null);
+      onDone();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || `Failed to ${mode} the request.`);
+      setModalState((p) => ({ ...p, loading: false }));
+    }
+  };
+  const modal = (
+    <RemarksModal key={modalState ? `${modalState.mode}-${modalState.id}` : "none"} mode={modalState?.mode ?? null}
+      loading={modalState?.loading ?? false} onConfirm={confirm} onCancel={() => setModalState(null)} />
   );
+  return { open, modal };
 }
 
-/* ─── Sub-Component A: Security / Receptionist Dashboard ─────────────────── */
+/* ─── A: Security / Receptionist ─────────────────────────────────────────── */
 function SecurityDashboard() {
   const navigate = useNavigate();
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const [dashData, setDashData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -216,282 +147,151 @@ function SecurityDashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  // ── Socket: new approved visit for today → add to Expected Today list ──────
-  useSocketEvent('visit:approved:today', useCallback((data) => {
-    setDashData(prev => {
+  // Socket: a visit for today was approved → add it to Expected today
+  useSocketEvent("visit:approved:today", useCallback((data) => {
+    setDashData((prev) => {
       if (!prev) return prev;
-      const already = (prev.yet_to_come ?? []).some(v => v.id === data.id);
-      if (already) return prev;
-      const newEntry = {
-        id: data.id,
-        visitor_name: data.visitor_name,
-        visitor_phone: data.visitor_phone,
-        visit_date: data.visit_date,
-        visit_start_time: data.visit_start_time,
-        visit_category: data.visit_category,
-        status: 'APPROVED',
-        purpose: data.purpose,
-        pass_number: data.pass_number,
-        host_name: data.host_name ?? null,
-        department_name: data.department_name ?? null,
-      };
-      const updated = [newEntry, ...(prev.yet_to_come ?? [])];
-      return {
-        ...prev,
-        yet_to_come: updated,
-        summary: {
-          ...prev.summary,
-          yet_to_come_count: updated.length,
-        },
-      };
+      if ((prev.yet_to_come ?? []).some((v) => v.id === data.id)) return prev;
+      const updated = [{
+        id: data.id, visitor_name: data.visitor_name, visitor_phone: data.visitor_phone,
+        visit_date: data.visit_date, visit_start_time: data.visit_start_time, visit_category: data.visit_category,
+        status: "APPROVED", purpose: data.purpose, pass_number: data.pass_number,
+        host_name: data.host_name ?? null, department_name: data.department_name ?? null,
+      }, ...(prev.yet_to_come ?? [])];
+      return { ...prev, yet_to_come: updated, summary: { ...prev.summary, yet_to_come_count: updated.length } };
     });
-    toast('New visitor approved for today!', { icon: '📋', duration: 4000 });
+    toast(`${data.visitor_name || "A visitor"} is approved to visit today.`, { duration: 4000 });
   }, []), []);
 
-  // ── Socket: visitor checked in → move from Expected to Active ──────────────
-  useSocketEvent('visit:checkin', useCallback((data) => {
-    setDashData(prev => {
+  // Socket: checked in → move from Expected to On premises
+  useSocketEvent("visit:checkin", useCallback((data) => {
+    setDashData((prev) => {
       if (!prev) return prev;
       const newActive = {
-        visit_log_id: data.visit_log_id,
-        visit_request_id: data.visit_request_id,
-        visitor_name: data.visitor_name,
-        visitor_phone: data.visitor_phone,
-        pass_number: data.pass_number,
-        host_name: data.host_name,
-        department_name: data.department_name,
-        check_in_at: data.check_in_at,
+        visit_log_id: data.visit_log_id, visit_request_id: data.visit_request_id, visitor_name: data.visitor_name,
+        visitor_phone: data.visitor_phone, pass_number: data.pass_number, host_name: data.host_name,
+        department_name: data.department_name, check_in_at: data.check_in_at,
       };
-      const updatedYetToCome = (prev.yet_to_come ?? []).filter(
-        v => v.id !== data.visit_request_id
-      );
-      const alreadyActive = (prev.active ?? []).some(
-        v => v.visit_request_id === data.visit_request_id
-      );
-      const updatedActive = alreadyActive
-        ? (prev.active ?? [])
-        : [newActive, ...(prev.active ?? [])];
+      const updatedYetToCome = (prev.yet_to_come ?? []).filter((v) => v.id !== data.visit_request_id);
+      const alreadyActive = (prev.active ?? []).some((v) => v.visit_request_id === data.visit_request_id);
+      const updatedActive = alreadyActive ? (prev.active ?? []) : [newActive, ...(prev.active ?? [])];
       return {
-        ...prev,
-        yet_to_come: updatedYetToCome,
-        active: updatedActive,
-        summary: {
-          ...prev.summary,
-          yet_to_come_count: updatedYetToCome.length,
-          active_count: updatedActive.length,
-        },
+        ...prev, yet_to_come: updatedYetToCome, active: updatedActive,
+        summary: { ...prev.summary, yet_to_come_count: updatedYetToCome.length, active_count: updatedActive.length },
       };
     });
-    toast(`${data.visitor_name ?? 'A visitor'} checked in!`, { icon: '🏢', duration: 4000 });
+    toast(`${data.visitor_name ?? "A visitor"} checked in.`, { duration: 4000 });
   }, []), []);
 
-  // ── Socket: visitor checked out → remove from Active, bump completed ────────
-  useSocketEvent('visit:checkout', useCallback((data) => {
-    setDashData(prev => {
+  // Socket: checked out → off premises, one more completed
+  useSocketEvent("visit:checkout", useCallback((data) => {
+    setDashData((prev) => {
       if (!prev) return prev;
       const updatedActive = (prev.active ?? []).filter(
-        v => v.visit_log_id !== data.visit_log_id && v.visit_request_id !== data.visit_request_id
+        (v) => v.visit_log_id !== data.visit_log_id && v.visit_request_id !== data.visit_request_id,
       );
-      const completedCount = (prev.summary?.completed_today_count ?? 0) + 1;
       return {
-        ...prev,
-        active: updatedActive,
-        summary: {
-          ...prev.summary,
-          active_count: updatedActive.length,
-          completed_today_count: completedCount,
-        },
+        ...prev, active: updatedActive,
+        summary: { ...prev.summary, active_count: updatedActive.length, completed_today_count: (prev.summary?.completed_today_count ?? 0) + 1 },
       };
     });
-    toast(`${data.visitor_name ?? 'A visitor'} checked out.`, { icon: '👋', duration: 3000 });
+    toast(`${data.visitor_name ?? "A visitor"} checked out.`, { duration: 3000 });
   }, []), []);
 
-  if (loading) return <Spinner />;
+  if (loading) return <><PageHeader title="Dashboard" /><Spinner label="Loading today’s gate activity…" /></>;
 
   const summary = dashData?.summary ?? {};
   const yetToCome = dashData?.yet_to_come ?? [];
   const active = dashData?.active ?? [];
+  const expected = summary.yet_to_come_count ?? yetToCome.length;
+  const inside = summary.active_count ?? active.length;
+  const completed = summary.completed_today_count ?? 0;
+  const canCheckIn = hasRole("security", "receptionist");
 
   return (
-    <div>
-      <div className="mb-10">
-        <p className="text-[11px] tracking-widest uppercase text-accent mb-1 font-sans">
-          Security Overview
-        </p>
-        <h1 className="text-2xl font-bold text-loud">
-          Today&apos;s <em className="italic">Visitor</em> Activity
-        </h1>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="vms-card p-6 mb-8 flex flex-wrap gap-4 items-center justify-between">
-        <div>
-          <h2 className="text-[16px] font-semibold text-loud">
-            Gate <em className="italic">Actions</em>
-          </h2>
-          <p className="text-faint text-sm mt-1">
-            Log a walk-in visit instantly.
-          </p>
-        </div>
-        <div className="flex gap-3 flex-wrap">
-          <button
-            onClick={() => navigate("/requests/new?category=SPOT")}
-            className="btn-primary text-white text-sm uppercase tracking-widest hover:bg-accent transition-colors duration-300 flex items-center gap-2"
-          >
-            <Plus strokeWidth={1.5} size={15} />
-            Spot Walk-in
+    <div className="animate-fade-in">
+      <PageHeader title="Dashboard" meta={user?.unit_name ? `${user.unit_name} · gate today` : "Gate today"}
+        actions={(
+          <button type="button" onClick={() => navigate("/requests/new?category=SPOT")} className="btn-primary">
+            <Plus size={14} /> Register walk-in
           </button>
-        </div>
+        )} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_1fr] gap-3 mb-7">
+        <HeroTile label="On premises now" value={inside} hint="Visitors checked in and not yet out"
+          parts={[
+            { label: "Expected", value: expected, color: "var(--ramp-1)" },
+            { label: "Inside", value: inside, color: "var(--ramp-3)" },
+            { label: "Left", value: completed, color: "var(--ramp-4)" },
+          ]} />
+        <MetricTile label="Expected today" value={expected} hint="Approved, not yet arrived" />
+        <MetricTile label="Completed today" value={completed} hint="Checked in and out" />
       </div>
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-        <StatCard
-          icon={Clock}
-          label="Expected Today"
-          value={summary.yet_to_come_count ?? yetToCome.length}
-          gradient="linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)"
-        />
-        <StatCard
-          icon={UserCheck}
-          label="Inside Now"
-          value={summary.active_count ?? active.length}
-          gradient="linear-gradient(135deg, #10b981 0%, #059669 100%)"
-        />
-        <StatCard
-          icon={CheckCircle2}
-          label="Completed Today"
-          value={summary.completed_today_count ?? 0}
-          gradient="linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)"
-        />
-      </div>
-
-      {/* Expected Today */}
-      <div className="vms-card overflow-hidden mb-5">
-        <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-border)' }}>
-          <div className="flex items-center gap-3">
-            <Clock
-              strokeWidth={1.5}
-              size={17}
-              className="text-accent"
-            />
-            <h2 className="text-[14px] font-semibold text-loud">
-              Expected Today
-            </h2>
-          </div>
-          <span className="badge badge-scheduled">
-            {yetToCome.length} visitor{yetToCome.length !== 1 ? "s" : ""}
-          </span>
-        </div>
+      <section className="section !mt-0">
+        <SectionTitle icon={Clock} title="Expected today" meta={`${yetToCome.length} visitor${yetToCome.length !== 1 ? "s" : ""}`} />
         {yetToCome.length === 0 ? (
-          <EmptyState message="No visitors expected today" />
+          <Empty icon={Calendar} title="No visitors expected today" hint="Approved visits for today appear here as soon as they are approved." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm font-sans">
-              <TableHead
-                cols={[
-                  "Visitor",
-                  "Type",
-                  "Host",
-                  "Department",
-                  "Scheduled Time",
-                  "Actions",
-                ]}
-              />
-              <tbody className="divide-y divide-[var(--color-border)]">
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr><th>Visitor</th><th>Type</th><th>Host</th><th>Department</th><th>Time</th>{canCheckIn && <th className="num">Action</th>}</tr>
+              </thead>
+              <tbody>
                 {yetToCome.map((v, i) => (
-                  <tr
-                    key={v.id ?? i}
-                    className="hover:bg-surface-hover transition-colors"
-                  >
-                    <td className="px-5 py-3 font-medium text-loud whitespace-nowrap">
-                      {v.visitor_name ?? "—"}
-                    </td>
-                    <td className="px-5 py-3">
-                      <StatusBadge status={v.visit_category || v.visitor_type_code || v.visitor_type} />
-                    </td>
-                    <td className="px-5 py-3 text-muted whitespace-nowrap">
-                      {v.host_name ?? "—"}
-                    </td>
-                    <td className="px-5 py-3 text-muted whitespace-nowrap">
-                      {v.department_name ?? v.department ?? v.dept_name ?? "—"}
-                    </td>
-                    <td className="px-5 py-3 text-faint whitespace-nowrap">
-                      {v.visit_start_time
-                        ? v.visit_start_time
-                        : fmtTime(v.visit_date)}
-                    </td>
-                    <td className="px-5 py-3">
-                      {hasRole("security", "receptionist") && v.id && (
-                        <button
-                          onClick={() => navigate(`/gate/checkin/${v.id}`)}
-                          className="inline-flex items-center gap-1.5 text-xs px-4 py-1.5 rounded-full bg-accent text-white hover:bg-accent transition-colors duration-300 font-semibold tracking-wide uppercase"
-                        >
-                          <Check strokeWidth={1.5} size={12} /> Check In
-                        </button>
-                      )}
-                    </td>
+                  <tr key={v.id ?? i}>
+                    <td className="font-medium">{orDash(v.visitor_name)}<span className="cell-sub">{v.pass_number ? <span className="mono">{v.pass_number}</span> : v.visitor_phone}</span></td>
+                    <td><Status value={v.visit_category || v.visitor_type_code || v.visitor_type} /></td>
+                    <td>{orDash(v.host_name)}</td>
+                    <td>{orDash(v.department_name ?? v.department ?? v.dept_name)}</td>
+                    <td className="tabular">{timeOf(v)}</td>
+                    {canCheckIn && (
+                      <td className="num">
+                        {v.id && (
+                          <button type="button" onClick={() => navigate(`/gate/checkin/${v.id}`)} className="btn-primary btn-sm">
+                            <Check size={13} /> Check in
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Currently Inside */}
-      <div className="vms-card overflow-hidden mb-5">
-        <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-border)' }}>
-          <div className="flex items-center gap-3">
-            <UserCheck
-              strokeWidth={1.5}
-              size={17}
-              className="text-accent"
-            />
-            <h2 className="text-[14px] font-semibold text-loud">
-              Currently Inside
-            </h2>
-          </div>
-          <span className="badge badge-active">{active.length} active</span>
-        </div>
+      <section className="section">
+        <SectionTitle icon={UserCheck} tone="success" title="On premises" meta={`${active.length} inside`} />
         {active.length === 0 ? (
-          <EmptyState message="No visitors currently on the premises" />
+          <Empty icon={UserCheck} title="No visitors on the premises" hint="Visitors appear here when security checks them in at the gate." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm font-sans">
-              <TableHead cols={["Visitor", "Host", "Check-in Time"]} />
-              <tbody className="divide-y divide-[var(--color-border)]">
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>Visitor</th><th>Host</th><th>State</th><th>Checked in</th></tr></thead>
+              <tbody>
                 {active.map((v, i) => (
-                  <tr
-                    key={v.id ?? i}
-                    className="hover:bg-surface-hover transition-colors"
-                  >
-                    <td className="px-5 py-3 font-medium text-loud whitespace-nowrap">
-                      <span className="pulse-dot" />
-                      {v.visitor_name ?? "—"}
-                    </td>
-                    <td className="px-5 py-3 text-muted whitespace-nowrap">
-                      {v.host_name ?? "—"}
-                    </td>
-                    <td className="px-5 py-3 text-faint whitespace-nowrap">
-                      {fmtTime(v.check_in_time ?? v.checked_in_at)}
-                    </td>
+                  <tr key={v.visit_log_id ?? v.id ?? i}>
+                    <td className="font-medium">{orDash(v.visitor_name)}<span className="cell-sub mono">{v.pass_number}</span></td>
+                    <td>{orDash(v.host_name)}</td>
+                    <td><State tone="info">On premises</State></td>
+                    <td className="tabular">{fmtClock(v.check_in_at ?? v.check_in_time ?? v.checked_in_at)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
 
-/* ─── Sub-Component B: Employee Dashboard ────────────────────────────────── */
+/* ─── B: Employee ────────────────────────────────────────────────────────── */
 function EmployeeDashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -499,10 +299,6 @@ function EmployeeDashboard() {
   const [upcomingVisits, setUpcomingVisits] = useState([]);
   const [myTotal, setMyTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-
-  const hour = new Date().getHours();
-  const greeting =
-    hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -512,7 +308,6 @@ function EmployeeDashboard() {
         apiClient.get("/visit-requests/my?upcoming=true&limit=5"),
         apiClient.get("/visit-requests/my?limit=1"),
       ]);
-      // Inbox is paginated: response is { items: [], pagination: {} }
       setInbox(inboxRes.data?.data?.items ?? inboxRes.data?.data ?? []);
       setUpcomingVisits(upcomingRes.data?.data?.requests ?? []);
       setMyTotal(totalRes.data?.data?.pagination?.total ?? 0);
@@ -523,166 +318,61 @@ function EmployeeDashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-
-
-  /* ── Socket: new visit request assigned → auto-refresh inbox ── */
-  useSocketEvent('visit:request:new', (data) => {
-    // Add to inbox immediately without waiting for full refetch
-    setInbox(prev => {
-      if (prev.some(i => i.visit_request_id === data.visit_request_id)) return prev;
+  // Socket: a new request for me → add it at once
+  useSocketEvent("visit:request:new", (data) => {
+    setInbox((prev) => {
+      if (prev.some((i) => i.visit_request_id === data.visit_request_id)) return prev;
       return [{
-        visit_request_id: data.visit_request_id,
-        visitor_name: data.visitor_name,
-        visitor_phone: data.visitor_phone,
-        visit_date: data.visit_date,
-        visit_start_time: data.visit_start_time,
-        visit_category: data.visit_category,
-        purpose: data.purpose,
+        visit_request_id: data.visit_request_id, visitor_name: data.visitor_name, visitor_phone: data.visitor_phone,
+        visit_date: data.visit_date, visit_start_time: data.visit_start_time, visit_category: data.visit_category, purpose: data.purpose,
       }, ...prev];
     });
-    toast('New approval request received!', { icon: '📋', duration: 4000 });
+    toast(`New visit request from ${data.visitor_name || "a visitor"}.`, { duration: 4000 });
   }, []);
 
-  /* ── Socket: own approve/reject action from another view → remove from inbox ── */
-  useSocketEvent('visit:actioned', (data) => {
-    setInbox(prev => prev.filter(i => {
-      const id = i.visit_request_id ?? i.id;
-      return id !== data.visit_request_id;
-    }));
+  // Socket: I decided from another view → drop it
+  useSocketEvent("visit:actioned", (data) => {
+    setInbox((prev) => prev.filter((i) => (i.visit_request_id ?? i.id) !== data.visit_request_id));
   }, []);
 
+  const approvals = useApprovalModal(fetchData);
 
-  const [modalState, setModalState] = useState(null); // null | { mode: 'approve'|'reject', id, loading }
-
-  const openApprove = (id) => setModalState({ mode: 'approve', id, loading: false });
-  const openReject = (id) => setModalState({ mode: 'reject', id, loading: false });
-
-  const handleConfirmAction = async (remarks) => {
-    if (!modalState) return;
-    const { mode, id } = modalState;
-    setModalState(prev => ({ ...prev, loading: true }));
-    try {
-      await apiClient.put(`/approvals/${id}/${mode}`, { remarks: remarks || undefined });
-      toast.success(mode === 'approve' ? 'Request approved.' : 'Request rejected.');
-      setModalState(null);
-      fetchData();
-    } catch (err) {
-      toast.error(err?.response?.data?.message || `Failed to ${mode}.`);
-      setModalState(prev => ({ ...prev, loading: false }));
-    }
-  };
-
-  if (loading) return <Spinner />;
+  if (loading) return <><PageHeader title="Dashboard" /><Spinner label="Loading your dashboard…" /></>;
 
   return (
-    <div>
-      <RemarksModal
-        mode={modalState?.mode ?? null}
-        loading={modalState?.loading ?? false}
-        onConfirm={handleConfirmAction}
-        onCancel={() => setModalState(null)}
-      />
-      {/* Header */}
-      <div className="mb-10">
-        <p className="text-[11px] tracking-widest uppercase text-accent mb-1">
-          {greeting} — {user?.full_name?.split(" ")[0]}
-        </p>
-        <h1 className="text-2xl font-bold text-loud">
-          Your <em className="italic">Workspace</em>
-        </h1>
+    <div className="animate-fade-in">
+      {approvals.modal}
+      <PageHeader title="Dashboard" meta={user?.unit_name}
+        actions={<button type="button" className="btn-primary" onClick={() => navigate("/requests/new")}><Plus size={14} /> New request</button>} />
 
+      <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_1fr] gap-3 mb-7">
+        <HeroTile label="Waiting for your approval" value={inbox.length} tone={inbox.length > 0 ? "warning" : undefined}
+          hint={inbox.length ? "Visitors asking to meet you" : "Nothing is waiting for you"} />
+        <MetricTile label="Upcoming visits" value={upcomingVisits.length} hint="Approved visits ahead" onClick={() => navigate("/requests")} />
+        <MetricTile label="My requests" value={myTotal} hint="All time" onClick={() => navigate("/requests")} />
       </div>
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-10">
-        <StatCard
-          icon={AlertCircle}
-          label="Pending Approvals"
-          value={inbox.length}
-          gradient="linear-gradient(135deg, #f59e0b 0%, #d97706 100%)"
-          onClick={() => navigate("/approvals")}
-        />
-        <StatCard
-          icon={Calendar}
-          label="Upcoming Visits"
-          value={upcomingVisits.length}
-          gradient="linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)"
-        />
-        <StatCard
-          icon={ClipboardList}
-          label="My Total Requests"
-          value={myTotal}
-          gradient="linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)"
-          onClick={() => navigate("/requests")}
-        />
-      </div>
-
-      {/* Pending Approvals mini-section */}
-      <div className="vms-card overflow-hidden mb-5">
-        <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-border)' }}>
-          <div className="flex items-center gap-3">
-            <AlertCircle
-              strokeWidth={1.5}
-              size={17}
-              className="text-warning"
-            />
-            <h2 className="text-[14px] font-semibold text-loud">
-              Needs Your Approval
-            </h2>
-            {inbox.length > 0 && (
-              <span className="ml-1 inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent text-white text-xs font-bold">
-                {inbox.length}
-              </span>
-            )}
-          </div>
-          <button
-            onClick={() => navigate("/approvals")}
-            className="text-xs text-accent hover:underline"
-          >
-            View All Approvals →
-          </button>
-        </div>
+      <section className="section !mt-0">
+        <SectionTitle icon={AlertCircle}  title="Needs your approval" meta={inbox.length ? `${inbox.length} open` : undefined}
+          actions={inbox.length > 5 && <button type="button" className="btn-link text-[12px]" onClick={() => navigate("/approvals")}>View all {inbox.length}</button>} />
         {inbox.length === 0 ? (
-          <div className="px-6 py-8 flex items-center gap-2 text-accent">
-            <CheckCircle2 strokeWidth={1.5} size={16} />
-            <span className="text-sm font-medium">
-              You&apos;re all caught up!
-            </span>
-          </div>
+          <Empty icon={Check} title="You’re all caught up" hint="Requests from visitors who want to meet you appear here." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm font-sans">
-              <TableHead cols={["Visitor", "Visit Date", "Actions"]} />
-              <tbody className="divide-y divide-[var(--color-border)]">
-                {inbox.slice(0, 3).map((row, i) => (
-                  <tr
-                    key={row.id ?? i}
-                    className="hover:bg-surface-hover transition-colors"
-                  >
-                    <td className="px-5 py-3 font-medium text-loud">
-                      {row.visitor_name ?? "—"}
-                    </td>
-                    <td className="px-5 py-3 text-muted">
-                      {fmtDate(row.visit_date)}
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => openApprove(row.visit_request_id ?? row.id)}
-                          className="btn-dark text-xs py-1.5 px-3 font-semibold tracking-wide uppercase"
-                        >
-                          <Check strokeWidth={1.5} size={12} /> Approve
-                        </button>
-                        <button
-                          onClick={() => openReject(row.visit_request_id ?? row.id)}
-                          className="btn-secondary text-xs py-1.5 px-3 font-semibold tracking-wide uppercase"
-                        >
-                          <X strokeWidth={1.5} size={12} /> Reject
-                        </button>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>Visitor</th><th>Visit</th><th>Purpose</th><th className="num">Decision</th></tr></thead>
+              <tbody>
+                {inbox.slice(0, 5).map((row, i) => (
+                  <tr key={row.visit_request_id ?? row.id ?? i} className="is-clickable" onClick={() => navigate(`/requests/${row.visit_request_id ?? row.id}`)}>
+                    <td className="font-medium">{orDash(row.visitor_name)}<span className="cell-sub">{describe(row.visit_category).label}</span></td>
+                    <td className="tabular whitespace-nowrap">{fmtDate(row.visit_date)}<span className="cell-sub">{timeOf(row)}</span></td>
+                    <td className="max-w-[260px] truncate">{orDash(row.purpose)}</td>
+                    <td className="num" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-end gap-1.5">
+                        <button type="button" onClick={() => approvals.open("reject", row.visit_request_id ?? row.id)} className="btn-danger btn-sm"><X size={13} /> Reject</button>
+                        <button type="button" onClick={() => approvals.open("approve", row.visit_request_id ?? row.id)} className="btn-primary btn-sm"><Check size={13} /> Approve</button>
                       </div>
                     </td>
                   </tr>
@@ -691,73 +381,42 @@ function EmployeeDashboard() {
             </table>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Upcoming Visits */}
-      <div className="vms-card overflow-hidden mb-5">
-        <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-border)' }}>
-          <div className="flex items-center gap-3">
-            <Calendar
-              strokeWidth={1.5}
-              size={17}
-              className="text-accent"
-            />
-            <h2 className="text-[14px] font-semibold text-loud">
-              Upcoming Visits
-            </h2>
-          </div>
-          <button
-            onClick={() => navigate("/requests")}
-            className="text-xs text-accent hover:underline"
-          >
-            View All Requests →
-          </button>
-        </div>
+      <section className="section">
+        <SectionTitle icon={Calendar} title="Upcoming visits"
+          actions={<button type="button" className="btn-link text-[12px]" onClick={() => navigate("/requests")}>All requests</button>} />
         {upcomingVisits.length === 0 ? (
-          <EmptyState message="No upcoming approved visits scheduled." />
+          <Empty icon={Calendar} title="No upcoming visits" hint="Approved visits you host or make appear here." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm font-sans">
-              <TableHead
-                cols={["Visitor", "Category", "Visit Date", "Purpose"]}
-              />
-              <tbody className="divide-y divide-[var(--color-border)]">
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>Visitor</th><th>Type</th><th>Visit</th><th>Purpose</th></tr></thead>
+              <tbody>
                 {upcomingVisits.map((v, i) => (
-                  <tr
-                    key={v.id ?? i}
-                    className="hover:bg-surface-hover transition-colors"
-                  >
-                    <td className="px-5 py-3 font-medium text-loud">
-                      {v.visitor_name ?? "—"}
-                    </td>
-                    <td className="px-5 py-3">
-                      <StatusBadge status={v.visit_category || v.visitor_type_code || v.visitor_type} />
-                    </td>
-                    <td className="px-5 py-3 text-muted whitespace-nowrap">
-                      {fmtDate(v.visit_date)}
-                    </td>
-                    <td className="px-5 py-3 text-muted max-w-xs truncate">
-                      {v.purpose ?? "—"}
-                    </td>
+                  <tr key={v.id ?? i} className="is-clickable" onClick={() => v.id && navigate(`/requests/${v.id}`)}>
+                    <td className="font-medium">{orDash(v.visitor_name)}</td>
+                    <td><Status value={v.visit_category || v.visitor_type_code || v.visitor_type} /></td>
+                    <td className="tabular whitespace-nowrap">{fmtDate(v.visit_date)}<span className="cell-sub">{timeOf(v)}</span></td>
+                    <td className="max-w-[280px] truncate">{orDash(v.purpose)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
 
-/* ─── Sub-Component C: Admin Dashboard ─────────────────────────────────── */
+/* ─── C: Unit admin (also /unit-dashboard for a super admin managing a unit) ── */
 function AdminDashboard({ unitName: unitNameProp } = {}) {
   const navigate = useNavigate();
-  const { activeUnit, isSuperAdmin } = useAuth();
+  const { activeUnit, isSuperAdmin, user } = useAuth();
   // Super admins oversee a unit here but approvals are for unit staff (API enforces this too)
   const canApprove = !isSuperAdmin;
-  // Auto-detect unit context: explicit prop OR super admin's active managed unit
-  const unitName = unitNameProp ?? activeUnit?.name ?? null;
+  const unitName = unitNameProp ?? activeUnit?.name ?? user?.unit_name ?? null;
   const [dashData, setDashData] = useState(null);
   const [inbox, setInbox] = useState([]);
   const [pendingCount, setPendingCount] = useState(0);
@@ -772,10 +431,8 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
         apiClient.get("/visit-requests?status=PENDING&limit=1"),
       ]);
       setDashData(dashRes.data?.data ?? dashRes.data);
-      // Inbox is paginated: response is { items: [], pagination: {} }
       const ibRaw = inboxRes.data?.data;
-      const ib = ibRaw?.items ?? (Array.isArray(ibRaw) ? ibRaw : []);
-      setInbox(ib);
+      setInbox(ibRaw?.items ?? (Array.isArray(ibRaw) ? ibRaw : []));
       setPendingCount(pendingRes.data?.data?.pagination?.total ?? 0);
     } catch (err) {
       toast.error(err?.response?.data?.message || "Failed to load dashboard.");
@@ -784,217 +441,99 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  /* ── Socket: new request → update inbox + pending count live ── */
-  useSocketEvent('visit:request:new', (data) => {
-    setInbox(prev => {
-      if (prev.some(i => i.visit_request_id === data.visit_request_id)) return prev;
+  useSocketEvent("visit:request:new", (data) => {
+    setInbox((prev) => {
+      if (prev.some((i) => i.visit_request_id === data.visit_request_id)) return prev;
       return [{
-        visit_request_id: data.visit_request_id,
-        visitor_name: data.visitor_name,
-        visitor_phone: data.visitor_phone,
-        visit_date: data.visit_date,
-        visit_start_time: data.visit_start_time,
-        visit_category: data.visit_category,
-        purpose: data.purpose,
+        visit_request_id: data.visit_request_id, visitor_name: data.visitor_name, visitor_phone: data.visitor_phone,
+        visit_date: data.visit_date, visit_start_time: data.visit_start_time, visit_category: data.visit_category, purpose: data.purpose,
       }, ...prev];
     });
-    setPendingCount(prev => prev + 1);
-    toast('New visit request pending approval', { icon: '📋', duration: 4000 });
+    setPendingCount((prev) => prev + 1);
+    toast(`New visit request from ${data.visitor_name || "a visitor"}.`, { duration: 4000 });
+  }, []);
+  useSocketEvent("visit:approved", () => { setPendingCount((prev) => Math.max(0, prev - 1)); }, []);
+  useSocketEvent("visit:rejected", () => { setPendingCount((prev) => Math.max(0, prev - 1)); }, []);
+  useSocketEvent("visit:actioned", (data) => {
+    setInbox((prev) => prev.filter((i) => (i.visit_request_id ?? i.id) !== data.visit_request_id));
+    setPendingCount((prev) => Math.max(0, prev - 1));
   }, []);
 
-  /* ── Socket: approved/rejected → decrement pending count ── */
-  useSocketEvent('visit:approved', () => {
-    setPendingCount(prev => Math.max(0, prev - 1));
-  }, []);
-  useSocketEvent('visit:rejected', () => {
-    setPendingCount(prev => Math.max(0, prev - 1));
-  }, []);
+  const approvals = useApprovalModal(fetchData);
 
-  /* ── Socket: own approve/reject action from another view → remove from inbox ── */
-  useSocketEvent('visit:actioned', (data) => {
-    setInbox(prev => prev.filter(i => {
-      const id = i.visit_request_id ?? i.id;
-      return id !== data.visit_request_id;
-    }));
-    setPendingCount(prev => Math.max(0, prev - 1));
-  }, []);
-
-  const [modalState, setModalState] = useState(null); // null | { mode: 'approve'|'reject', id, loading }
-
-  const openApprove = (id) => setModalState({ mode: 'approve', id, loading: false });
-  const openReject = (id) => setModalState({ mode: 'reject', id, loading: false });
-
-  const handleConfirmAction = async (remarks) => {
-    if (!modalState) return;
-    const { mode, id } = modalState;
-    setModalState(prev => ({ ...prev, loading: true }));
-    try {
-      await apiClient.put(`/approvals/${id}/${mode}`, { remarks: remarks || undefined });
-      toast.success(mode === 'approve' ? 'Approved.' : 'Rejected.');
-      setModalState(null);
-      fetchData();
-    } catch (err) {
-      toast.error(err?.response?.data?.message || `Failed to ${mode}.`);
-      setModalState(prev => ({ ...prev, loading: false }));
-    }
-  };
-
-  if (loading) return <Spinner />;
+  if (loading) return <><PageHeader title="Dashboard" /><Spinner label="Loading the unit dashboard…" /></>;
 
   const summary = dashData?.summary ?? {};
   const yetToCome = dashData?.yet_to_come ?? [];
+  const expected = summary.yet_to_come_count ?? yetToCome.length;
+  const inside = summary.active_count ?? 0;
+  const completed = summary.completed_today_count ?? 0;
 
   return (
-    <div>
-      <RemarksModal
-        mode={modalState?.mode ?? null}
-        loading={modalState?.loading ?? false}
-        onConfirm={handleConfirmAction}
-        onCancel={() => setModalState(null)}
-      />
-      <div className="mb-10">
-        
-        <h1 className="text-xl font-bold text-loud">
-          Operations Command
-        </h1>
+    <div className="animate-fade-in">
+      {approvals.modal}
+      <PageHeader title="Dashboard" meta={unitName}
+        actions={<button type="button" className="btn-outline" onClick={() => navigate("/reports")}>Open reports</button>} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_1fr] gap-3 mb-7">
+        <HeroTile label="Visitors today" value={expected + inside + completed} hint={fmtDate(new Date())}
+          parts={[
+            { label: "Expected", value: expected, color: "var(--ramp-1)" },
+            { label: "On premises", value: inside, color: "var(--ramp-3)" },
+            { label: "Left", value: completed, color: "var(--ramp-4)" },
+          ]} />
+        <MetricTile label="Waiting for approval" value={pendingCount} tone={pendingCount > 0 ? "warning" : undefined}
+          hint="Across the unit" onClick={() => navigate("/requests")} />
+        <MetricTile label="On premises now" value={inside} hint="Checked in, not yet out" />
       </div>
 
-      {/* Gate Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-        <StatCard
-          icon={Clock}
-          label="Expected Today"
-          value={summary.yet_to_come_count ?? yetToCome.length}
-          gradient="linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)"
-        />
-        <StatCard
-          icon={UserCheck}
-          label="Currently Inside"
-          value={summary.active_count ?? 0}
-          gradient="linear-gradient(135deg, #10b981 0%, #059669 100%)"
-        />
-        <StatCard
-          icon={CheckCircle2}
-          label="Completed Today"
-          value={summary.completed_today_count ?? 0}
-          gradient="linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)"
-        />
-        <StatCard
-          icon={AlertCircle}
-          label="System Pending"
-          value={pendingCount}
-          gradient="linear-gradient(135deg, #f59e0b 0%, #ef4444 100%)"
-          onClick={() => navigate("/requests?status=PENDING")}
-        />
-      </div>
-
-      {/* Two-column tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Expected Today (compact) */}
-        <div className="vms-card overflow-hidden">
-          <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-border)' }}>
-            <div className="flex items-center gap-3">
-              <Clock
-                strokeWidth={1.5}
-                size={17}
-                className="text-accent"
-              />
-              <h2 className="text-[14px] font-semibold text-loud">
-                Expected Today
-              </h2>
-            </div>
-            <span className="badge badge-scheduled">{yetToCome.length}</span>
-          </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-8">
+        <section className="section !mt-0">
+          <SectionTitle icon={Clock} title="Expected today" meta={`${yetToCome.length}`} />
           {yetToCome.length === 0 ? (
-            <EmptyState message="No visitors expected today" />
+            <Empty icon={Calendar} title="No visitors expected today" hint="Approved visits for today appear here." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm font-sans">
-                <TableHead cols={["Visitor", "Host", "Time"]} />
-                <tbody className="divide-y divide-[var(--color-border)]">
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead><tr><th>Visitor</th><th>Host</th><th>Time</th></tr></thead>
+                <tbody>
                   {yetToCome.slice(0, 8).map((v, i) => (
-                    <tr
-                      key={v.id ?? i}
-                      className="hover:bg-surface-hover transition-colors"
-                    >
-                      <td className="px-6 py-3 font-medium text-loud whitespace-nowrap">
-                        {v.visitor_name ?? "—"}
-                      </td>
-                      <td className="px-6 py-3 text-muted whitespace-nowrap">
-                        {v.host_name ?? "—"}
-                      </td>
-                      <td className="px-6 py-3 text-faint whitespace-nowrap">
-                        {v.visit_start_time
-                          ? v.visit_start_time
-                          : fmtTime(v.visit_date)}
-                      </td>
+                    <tr key={v.id ?? i} className="is-clickable" onClick={() => v.id && navigate(`/requests/${v.id}`)}>
+                      <td className="font-medium">{orDash(v.visitor_name)}<span className="cell-sub">{describe(v.visit_category).label}</span></td>
+                      <td>{orDash(v.host_name)}<span className="cell-sub">{orDash(v.department_name)}</span></td>
+                      <td className="tabular">{timeOf(v)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-        </div>
+        </section>
 
-        {/* Pending Approvals */}
-        <div className="vms-card overflow-hidden">
-          <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-border)' }}>
-            <div className="flex items-center gap-3">
-              <AlertCircle
-                strokeWidth={1.5}
-                size={17}
-                className="text-warning"
-              />
-              <h2 className="text-[14px] font-semibold text-loud">
-                Pending Approvals
-              </h2>
-            </div>
-            {inbox.length > 0 && (
-              <span className="badge badge-pending">
-                {inbox.length} pending
-              </span>
-            )}
-          </div>
+        <section className="section xl:!mt-0">
+          <SectionTitle icon={AlertCircle} tone="warning" title="Needs your attention" meta={inbox.length ? `${inbox.length} open` : undefined}
+            actions={canApprove && inbox.length > 5 && <button type="button" className="btn-link text-[12px]" onClick={() => navigate("/approvals")}>View all {inbox.length}</button>} />
           {inbox.length === 0 ? (
-            <EmptyState message="No pending approvals — all caught up" />
+            <Empty icon={Check} title="Nothing is waiting" hint="Requests that need a decision appear here." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm font-sans">
-                <TableHead cols={["Visitor", "Date", "Actions"]} />
-                <tbody className="divide-y divide-[var(--color-border)]">
-                  {inbox.map((row, i) => (
-                    <tr
-                      key={row.id ?? i}
-                      className="hover:bg-surface-hover transition-colors"
-                    >
-                      <td className="px-6 py-3 font-medium text-loud whitespace-nowrap">
-                        {row.visitor_name ?? "—"}
-                      </td>
-                      <td className="px-6 py-3 text-muted whitespace-nowrap">
-                        {fmtDate(row.visit_date)}
-                      </td>
-                      <td className="px-6 py-3">
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead><tr><th>Visitor</th><th>Date</th><th className="num">{canApprove ? "Decision" : ""}</th></tr></thead>
+                <tbody>
+                  {inbox.slice(0, 5).map((row, i) => (
+                    <tr key={row.visit_request_id ?? row.id ?? i} className="is-clickable" onClick={() => navigate(`/requests/${row.visit_request_id ?? row.id}`)}>
+                      <td className="font-medium">{orDash(row.visitor_name)}<span className="cell-sub">{describe(row.visit_category).label}</span></td>
+                      <td className="tabular whitespace-nowrap">{fmtDate(row.visit_date)}</td>
+                      <td className="num" onClick={(e) => e.stopPropagation()}>
                         {canApprove ? (
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => openApprove(row.visit_request_id ?? row.id)}
-                              className="inline-flex items-center gap-1 text-xs btn-primary text-white hover:bg-accent transition-colors font-semibold uppercase"
-                            >
-                              <Check strokeWidth={1.5} size={11} /> OK
-                            </button>
-                            <button
-                              onClick={() => openReject(row.visit_request_id ?? row.id)}
-                              className="inline-flex items-center gap-1 text-xs btn-secondary text-warning hover:bg-accent hover:text-white transition-colors font-semibold uppercase"
-                            >
-                              <X strokeWidth={1.5} size={11} /> No
-                            </button>
+                          <div className="flex justify-end gap-1.5">
+                            <button type="button" onClick={() => approvals.open("reject", row.visit_request_id ?? row.id)} className="btn-danger btn-sm"><X size={13} /> Reject</button>
+                            <button type="button" onClick={() => approvals.open("approve", row.visit_request_id ?? row.id)} className="btn-primary btn-sm"><Check size={13} /> Approve</button>
                           </div>
                         ) : (
-                          <span className="text-xs text-faint">Unit staff</span>
+                          <Tag tone="neutral">Unit staff decide</Tag>
                         )}
                       </td>
                     </tr>
@@ -1003,31 +542,16 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
               </table>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Quick links */}
-      <div className="mt-8 flex flex-wrap gap-3">
-        <button
-          onClick={() => navigate("/reports")}
-          className="btn-primary text-white text-sm uppercase tracking-widest hover:bg-accent transition-colors flex items-center gap-2"
-        >
-          <Activity strokeWidth={1.5} size={14} /> View Reports
-        </button>
-        <button
-          onClick={() => navigate("/admin")}
-          className="btn-secondary text-accent text-sm uppercase tracking-widest hover:bg-mixed-bg transition-colors"
-        >
-          Manage Users
-        </button>
+        </section>
       </div>
     </div>
   );
 }
 
+/* ─── D: Super admin / global auditor ───────────────────────────────────── */
 function SuperAdminDashboard() {
   const navigate = useNavigate();
-  const { user, isGlobalAuditor, setActiveUnit } = useAuth();
+  const { isGlobalAuditor, setActiveUnit } = useAuth();
   const [units, setUnits] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1036,10 +560,9 @@ function SuperAdminDashboard() {
     setLoading(true);
     try {
       const [unitsRes, summaryRes] = await Promise.all([
-        apiClient.get('/units'),
-        apiClient.get('/reports/global-summary'),
+        apiClient.get("/units"),
+        apiClient.get("/reports/global-summary"),
       ]);
-      // Units API is paginated: response is { units: [], pagination: {} }
       const unitsRaw = unitsRes.data?.data;
       setUnits(unitsRaw?.units ?? (Array.isArray(unitsRaw) ? unitsRaw : []));
       setSummary(summaryRes.data?.data ?? {});
@@ -1049,136 +572,83 @@ function SuperAdminDashboard() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  if (loading) return <Spinner />;
-
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  if (loading) return <><PageHeader title="Dashboard" /><Spinner label="Loading the system overview…" /></>;
 
   const s = summary ?? {};
+  const inside = s.currently_inside ?? 0;
+  const today = s.today_visits ?? 0;
+
+  const openUnit = (u) => {
+    if (isGlobalAuditor) {
+      setActiveUnit({ id: u.id, name: u.name, db_name: u.db_name });
+      toast.success(`Auditing ${u.name}.`);
+    } else {
+      navigate("/super/units");
+    }
+  };
 
   return (
-    <div className="pt-4">
-      {/* Header */}
-      {/* <div className="mb-8">
-        <p className="text-[11px] tracking-widest uppercase text-accent mb-1">
-          {greeting} — {user?.full_name?.split(' ')[0] ?? 'Admin'}
-        </p>
-        <h1 className="text-2xl font-bold text-loud">System <em className="italic">Overview</em></h1>
-      </div> */}
+    <div className="animate-fade-in">
+      <PageHeader title="Dashboard" meta="All units"
+        actions={!isGlobalAuditor && (
+          <button type="button" onClick={() => navigate("/super/units")} className="btn-primary"><Plus size={14} /> Add unit</button>
+        )} />
 
-      {/* ── Stat Cards ── */}
-      {/* Row 1: Units */}
-      <p className="text-[10px] uppercase tracking-widest text-faint mb-3 font-semibold">Units</p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-5 mb-8">
-        <StatCard icon={Building2} label="Total Units" value={s.total_units ?? units.length}
-          gradient="linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)"
-          onClick={isGlobalAuditor ? null : () => navigate('/super/units')} />
-        <StatCard icon={CheckCircle2} label="Active Units" value={s.active_units ?? 0}
-          gradient="linear-gradient(135deg, #10b981 0%, #059669 100%)"
-          onClick={isGlobalAuditor ? null : () => navigate('/super/units')} />
-        <StatCard icon={AlertCircle} label="Provisioning" value={s.provisioning_units ?? 0}
-          gradient="linear-gradient(135deg, #f59e0b 0%, #d97706 100%)" />
+      <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_1fr] gap-3 mb-3">
+        <HeroTile label="Visits today" value={today} hint="Across every unit"
+          parts={[
+            { label: "On premises", value: inside, color: "var(--ramp-3)" },
+            { label: "Other visits today", value: Math.max(0, today - inside), color: "var(--ramp-1)" },
+          ]} />
+        <MetricTile label="This month" value={s.this_month_visits ?? 0} unit="visits" hint={`${fmtNumber(s.total_visits ?? 0)} visits in all`} />
+        <MetricTile label="Units" value={s.total_units ?? units.length}
+          hint={`${s.active_units ?? 0} active${s.provisioning_units ? ` · ${s.provisioning_units} provisioning` : ""}`}
+          onClick={isGlobalAuditor ? undefined : () => navigate("/super/units")} />
       </div>
 
-      {/* Row 2: Visits */}
-      <p className="text-[10px] uppercase tracking-widest text-faint mb-3 font-semibold">Visits</p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 mb-10">
-        <StatCard icon={TrendingUp} label="Total Visits" value={s.total_visits?.toLocaleString() ?? 0}
-          gradient="linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)" />
-        <StatCard icon={Calendar} label="This Month" value={s.this_month_visits?.toLocaleString() ?? 0}
-          gradient="linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)" />
-        <StatCard icon={Clock} label="Today&apos;s Visits" value={s.today_visits ?? 0}
-          gradient="linear-gradient(135deg, #06b6d4 0%, #0284c7 100%)" />
-        <StatCard icon={UserCheck} label="Currently Inside" value={s.currently_inside ?? 0}
-          gradient="linear-gradient(135deg, #10b981 0%, #059669 100%)" />
-      </div>
-
-      {/* ── Units table (compact) ── */}
-      <div className="vms-card overflow-hidden mb-6">
-        <div className="px-5 py-4 flex items-center justify-between"
-          style={{ borderBottom: '1px solid var(--color-border)' }}>
-          <h2 className="text-[14px] font-semibold text-loud flex items-center gap-2">
-            <Building2 strokeWidth={1.5} size={16} className="text-accent" />
-            Units / Branches
-          </h2>
-          {!isGlobalAuditor && (
-            <button onClick={() => navigate('/super/units')}
-              className="text-xs text-accent hover:underline">
-              Manage All →
-            </button>
-          )}
-        </div>
+      <section className="section">
+        <SectionTitle icon={Building2} title="Units" meta={`${units.length}`}
+          actions={!isGlobalAuditor && <button type="button" className="btn-link text-[12px]" onClick={() => navigate("/super/units")}>Manage units</button>} />
         {units.length === 0 ? (
-          <EmptyState message="No units created yet." />
+          <Empty icon={Building2} title="No units yet" hint="Units appear here once they are created in Unit management." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm font-sans">
-              <TableHead cols={['Unit', 'Code', 'Type', 'DB Status', 'Actions']} />
-              <tbody className="divide-y divide-[var(--color-border)]">
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>Unit</th><th>Code</th><th>Office type</th><th>Status</th></tr></thead>
+              <tbody>
                 {units.slice(0, 8).map((u, i) => (
-                  <tr key={u.id ?? i} className="hover:bg-surface-hover transition-colors">
-                    <td className="px-5 py-3 font-medium text-loud whitespace-nowrap">{u.name}</td>
-                    <td className="px-5 py-3 text-faint font-mono">{u.code}</td>
-                    <td className="px-5 py-3 text-muted">{u.type}</td>
-                    <td className="px-5 py-3">
-                      <span className={`text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider ${u.db_status === 'ACTIVE' ? 'text-green-700 bg-green-100' :
-                          u.db_status === 'PROVISIONING' ? 'text-amber-700 bg-amber-100' :
-                            'text-red-700 bg-red-100'
-                        }`}>
-                        {u.db_status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3">
-                      <button onClick={() => {
-                        if (isGlobalAuditor) {
-                          setActiveUnit({ id: u.id, name: u.name, db_name: u.db_name });
-                          toast.success(`Entering audit context for: ${u.name}`);
-                        } else {
-                          navigate('/super/units');
-                        }
-                      }}
-                        className="text-xs text-accent hover:underline">
-                        {isGlobalAuditor ? 'Audit Unit' : 'Manage'}
-                      </button>
-                    </td>
+                  <tr key={u.id ?? i} className="is-clickable" onClick={() => openUnit(u)} title={isGlobalAuditor ? "Audit this unit" : "Manage units"}>
+                    <td className="font-medium">{u.name}</td>
+                    <td className="mono">{u.code}</td>
+                    <td>{orDash(u.type)}</td>
+                    <td><State tone={describe(u.db_status).tone}>{describe(u.db_status).label}</State></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Quick actions */}
-      <div className="flex flex-wrap gap-3">
-        {!isGlobalAuditor && (
-          <button onClick={() => navigate('/super/units')}
-            className="btn-primary text-white text-sm uppercase tracking-widest flex items-center gap-2">
-            <Plus strokeWidth={1.5} size={14} /> Add New Unit
-          </button>
-        )}
-        <button onClick={() => navigate('/reports')}
-          className="btn-secondary text-accent text-sm uppercase tracking-widest flex items-center gap-2">
-          <Activity strokeWidth={1.5} size={14} /> View Reports
-        </button>
-        <button onClick={() => navigate('/audit-logs')}
-          className="btn-secondary text-accent text-sm uppercase tracking-widest flex items-center gap-2">
-          <ClipboardList strokeWidth={1.5} size={14} /> Audit Logs
-        </button>
-      </div>
+      <section className="section">
+        <SectionTitle icon={ClipboardList} title="Records" />
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => navigate("/reports")} className="btn-outline">Open reports</button>
+          <button type="button" onClick={() => navigate("/audit-logs")} className="btn-outline">Open audit logs</button>
+        </div>
+      </section>
     </div>
   );
 }
 
-
-/* --- Root Dashboard Router ------------------------------------------------- */
+/* ─── Root ───────────────────────────────────────────────────────────────── */
 export default function Dashboard() {
   const { hasRole, isSuperAdmin, isGlobalAuditor } = useAuth();
-  // Super admins ALWAYS see their own system overview at /dashboard.
-  // The managed unit's dashboard is at /unit-dashboard in the sidebar.
+  // Super admins always see their own system overview at /dashboard;
+  // the managed unit's dashboard is /unit-dashboard.
   if (isSuperAdmin || isGlobalAuditor) return <SuperAdminDashboard />;
-  if (hasRole('security', 'receptionist')) return <SecurityDashboard />;
-  if (hasRole('employee')) return <EmployeeDashboard />;
+  if (hasRole("security", "receptionist")) return <SecurityDashboard />;
+  if (hasRole("employee")) return <EmployeeDashboard />;
   return <AdminDashboard />;
 }
 

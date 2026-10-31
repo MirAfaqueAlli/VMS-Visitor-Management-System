@@ -2,13 +2,13 @@
 // Landing page for the emailed "reset your password" link (/reset-password?token=...)
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Lock, Eye, EyeOff, AlertCircle, CheckCircle2, KeyRound } from 'lucide-react';
+import { Lock, Eye, EyeOff, AlertCircle, CheckCircle2, KeyRound, Loader2 } from '../../components/icons';
 import apiClient from '../../api/axios';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { validatePassword } from '../../utils/passwordValidator';
 import PasswordStrength from '../../components/PasswordStrength';
 import AuthLayout from '../../components/AuthLayout';
-import { authStyles } from '../../utils/authTheme';
+import { Field, Note } from '../../components/ui';
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -38,99 +38,70 @@ export default function ResetPassword() {
     }
   };
 
-  /* -- Styles (shared with the sign-in and setup pages) -- */
-  const fieldWrap = { position: 'relative', marginBottom: '16px' };
-  const linkStyle = { color: '#3b82f6', fontWeight: 600, fontSize: '13px' };
-
-  const passwordInput = (value, onChange, autoComplete, placeholder) => (
-    <div style={{ position: 'relative' }}>
-      <Lock size={14} strokeWidth={1.8} style={authStyles.icon} />
+  const passwordInput = (id, value, onChange, autoComplete, placeholder) => (
+    <div className="control-wrap">
+      <Lock size={14} className="control-icon" />
       <input
+        id={id}
         type={showPw ? 'text' : 'password'}
         required
         autoComplete={autoComplete}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        style={{ ...authStyles.input, paddingRight: '38px' }}
+        className="control pr-10"
       />
       <button
         type="button"
         tabIndex={-1}
         onClick={() => setShowPw(p => !p)}
-        style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+        className="absolute right-1 top-1/2 -translate-y-1/2 btn-icon !w-8 !min-h-0 h-8"
+        aria-label={showPw ? 'Hide password' : 'Show password'}
       >
-        {showPw ? <EyeOff size={14} strokeWidth={1.8} /> : <Eye size={14} strokeWidth={1.8} />}
+        {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
       </button>
     </div>
   );
 
   return (
     <AuthLayout eyebrow="Account recovery">
-        <div style={{ marginBottom: '24px' }}>
-          <div style={{
-            width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(59,130,246,0.10)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '14px',
-          }}>
-            <KeyRound size={22} style={{ color: '#3b82f6' }} strokeWidth={1.8} />
-          </div>
-          <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#0f172a', margin: 0 }}>Set a new password</h2>
+      <div className="mb-6">
+        <span className="head-chip tone-brand !w-10 !h-10 mb-3"><KeyRound size={20} duo /></span>
+        <h2 className="text-[22px] font-semibold text-ink">Set a new password</h2>
+      </div>
+
+      {!validLink ? (
+        <div className="space-y-3">
+          <Note tone="danger" icon={AlertCircle}>This reset link is incomplete or invalid.</Note>
+          <p className="text-[12.5px] text-muted">
+            Ask for a new one from the <Link to="/login" className="text-link font-medium">sign-in page</Link> (Forgot password?).
+          </p>
         </div>
-
-        {!validLink ? (
-          <div style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.6 }}>
-            <p style={{ color: '#dc2626', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-              <AlertCircle size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
-              This reset link is incomplete or invalid.
-            </p>
-            <p style={{ marginTop: '12px' }}>
-              Request a new one from the <Link to="/login" style={linkStyle}>sign-in page</Link> (Forgot password?).
-            </p>
-          </div>
-        ) : done ? (
+      ) : done ? (
+        <div className="space-y-4">
+          <Note tone="success" icon={CheckCircle2}>Your password has been reset. All other sessions have been signed out.</Note>
+          <Link to="/login" className="btn-primary">Go to sign in</Link>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-3.5">
           <div>
-            <div style={{
-              display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '12px 14px', borderRadius: '8px',
-              background: '#f0fdf4', border: '1.5px solid #86efac', color: '#16a34a', fontSize: '13px', lineHeight: 1.5,
-            }}>
-              <CheckCircle2 size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
-              <span>Your password has been reset. All other sessions have been signed out.</span>
-            </div>
-            <p style={{ marginTop: '16px', textAlign: 'center' }}>
-              <Link to="/login" style={linkStyle}>Go to sign in</Link>
-            </p>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit}>
-            <div style={fieldWrap}>
-              <label style={authStyles.label}>New password</label>
-              {passwordInput(password, setPassword, 'new-password', 'New password')}
-            </div>
+            <Field label="New password" htmlFor="reset-pw">
+              {passwordInput('reset-pw', password, setPassword, 'new-password', 'New password')}
+            </Field>
             <PasswordStrength password={password} show={password.length > 0} hideWhenValid />
-            <div style={{ ...fieldWrap, marginTop: '12px' }}>
-              <label style={authStyles.label}>Confirm new password</label>
-              {passwordInput(confirm, setConfirm, 'new-password', 'Repeat new password')}
-            </div>
+          </div>
+          <Field label="Confirm new password" htmlFor="reset-confirm">
+            {passwordInput('reset-confirm', confirm, setConfirm, 'new-password', 'Repeat the new password')}
+          </Field>
 
-            {error && (
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '8px', marginBottom: '16px',
-                background: '#fef2f2', border: '1.5px solid #fca5a5', color: '#dc2626', fontSize: '12px',
-              }}>
-                <AlertCircle size={13} style={{ flexShrink: 0 }} />
-                {error}
-              </div>
-            )}
+          {error && <Note tone="danger" icon={AlertCircle}>{error}</Note>}
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              style={{ ...authStyles.primaryButton, cursor: isLoading ? 'not-allowed' : 'pointer', opacity: isLoading ? 0.7 : 1 }}
-            >
-              {isLoading ? 'Saving...' : 'Reset password'}
-            </button>
-          </form>
-        )}
+          <button type="submit" disabled={isLoading} className="btn-primary w-full !mt-5">
+            {isLoading && <Loader2 size={14} className="animate-spin" />}
+            {isLoading ? 'Saving…' : 'Reset password'}
+          </button>
+        </form>
+      )}
     </AuthLayout>
   );
 }

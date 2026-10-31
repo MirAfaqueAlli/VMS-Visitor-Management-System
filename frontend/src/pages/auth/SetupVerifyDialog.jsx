@@ -4,9 +4,9 @@
 // The codes are sent (and checked) by hooks/useSetupVerification.js.
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Mail, Smartphone, X, CheckCircle2, AlertCircle, Loader2, Lock } from "lucide-react";
-import { TricolourStrip } from "../../components/AuthLayout";
-import { authStyles, NAVY, NAVY_GRADIENT } from "../../utils/authTheme";
+import { Mail, Smartphone, X, CheckCircle2, AlertCircle, Loader2, Lock } from "../../components/icons";
+import { NAVY } from "../../utils/authTheme";
+import { State, Note } from "../../components/ui";
 
 const CODE_LENGTH  = 6;
 const formatMobile = (n) => `+91 ${n.slice(0, 5)} ${n.slice(5)}`;
@@ -16,16 +16,16 @@ const formatWait   = (s) => `0:${String(s).padStart(2, "0")}`;
 function VerifyIllustration() {
   return (
     <svg viewBox="0 0 260 120" width="230" height="106" aria-hidden="true" style={{ display: "block", margin: "0 auto" }}>
-      <circle cx="130" cy="62" r="58" fill="#ffffff" opacity="0.05" />
-      <circle cx="130" cy="62" r="40" fill="#ffffff" opacity="0.06" />
+      <circle cx="130" cy="62" r="58" fill="#ffffff" opacity="0.55" />
+      <circle cx="130" cy="62" r="40" fill="#ffffff" opacity="0.7" />
       <circle cx="58"  cy="84" r="3"   fill="#f4b860" opacity="0.85" />
-      <circle cx="52"  cy="26" r="2"   fill="#ffffff" opacity="0.45" />
-      <circle cx="226" cy="94" r="2.5" fill="#ffffff" opacity="0.45" />
+      <circle cx="52"  cy="26" r="2"   fill="#9fb3d1" opacity="0.7" />
+      <circle cx="226" cy="94" r="2.5" fill="#9fb3d1" opacity="0.7" />
       <circle cx="214" cy="18" r="2"   fill="#f4b860" opacity="0.7" />
 
       {/* Floating code bubble */}
-      <rect x="34" y="40" width="50" height="20" rx="10" fill="#ffffff" opacity="0.14" />
-      {[0, 1, 2, 3].map((i) => <circle key={i} cx={47 + i * 8} cy="50" r="2" fill="#ffffff" opacity="0.8" />)}
+      <rect x="34" y="40" width="50" height="20" rx="10" fill="#13315c" opacity="0.12" />
+      {[0, 1, 2, 3].map((i) => <circle key={i} cx={47 + i * 8} cy="50" r="2" fill="#13315c" opacity="0.55" />)}
 
       {/* Phone */}
       <rect x="92" y="10" width="56" height="100" rx="10" fill="#dbe5f3" />
@@ -38,8 +38,7 @@ function VerifyIllustration() {
       <rect x="102" y="83" width="36" height="9" rx="4.5" fill="#f4b860" />
 
       {/* Envelope */}
-      <rect x="141" y="54" width="64" height="42" rx="6" fill="#0b2545" opacity="0.25" />
-      <rect x="138" y="50" width="64" height="42" rx="6" fill="#ffffff" />
+      <rect x="138" y="50" width="64" height="42" rx="6" fill="#ffffff" stroke="#c7d4e8" />
       <path d="M140 54 L170 75 L200 54" fill="none" stroke="#c7d4e8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
 
       {/* Verified shield */}
@@ -61,20 +60,20 @@ function OtpBoxes({ value, onChange, disabled, invalid, autoFocus, label }) {
   const caretToEnd = (e) => { const n = e.target.value.length; e.target.setSelectionRange(n, n); };
 
   return (
-    <div style={{ position: "relative", display: "grid", gridTemplateColumns: `repeat(${CODE_LENGTH}, 1fr)`, gap: "8px" }}>
+    <div className="relative grid gap-2" style={{ gridTemplateColumns: `repeat(${CODE_LENGTH}, 1fr)` }}>
       {Array.from({ length: CODE_LENGTH }, (_, i) => {
         const isActive = focused && !disabled && i === active;
         const filled   = !!value[i];
+        const border = invalid ? "var(--danger)" : isActive ? "var(--primary)" : filled ? "var(--ink-2)" : "var(--line-strong)";
         return (
-          <div key={i} aria-hidden="true" style={{
-            height: "48px", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: "20px", fontWeight: 700, color: "#0f172a", fontVariantNumeric: "tabular-nums",
-            background: disabled ? "#f1f5f9" : filled || isActive ? "#ffffff" : "#f8fafc",
-            border: `1.5px solid ${invalid ? "#f87171" : isActive ? "#3b82f6" : filled ? "#94a3b8" : "#e2e8f0"}`,
-            boxShadow: isActive ? "0 0 0 3px rgba(59,130,246,0.15)" : "none",
-            transition: "border-color 120ms, box-shadow 120ms, background 120ms",
-          }}>
-            {value[i] || (isActive && <span className="animate-pulse" style={{ width: "2px", height: "20px", borderRadius: "1px", background: "#3b82f6" }} />)}
+          <div key={i} aria-hidden="true"
+            className="h-11 rounded flex items-center justify-center text-[19px] font-semibold tabular text-ink transition-colors"
+            style={{
+              background: disabled ? "var(--surface-alt)" : "var(--surface)",
+              border: `1px solid ${border}`,
+              outline: isActive ? "2px solid color-mix(in srgb, var(--primary) 25%, transparent)" : "none",
+            }}>
+            {value[i] || (isActive && <span className="animate-pulse w-[2px] h-5 rounded-sm bg-primary" />)}
           </div>
         );
       })}
@@ -84,21 +83,19 @@ function OtpBoxes({ value, onChange, disabled, invalid, autoFocus, label }) {
         onFocus={(e) => { setFocused(true); caretToEnd(e); }} onBlur={() => setFocused(false)}
         onClick={caretToEnd} onKeyUp={caretToEnd}
         disabled={disabled} autoFocus={autoFocus} aria-label={label} aria-invalid={invalid}
-        style={{
-          position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0,
-          fontSize: "16px", cursor: disabled ? "not-allowed" : "text",   // 16px stops iOS zooming in
-        }}
+        className="absolute inset-0 w-full h-full opacity-0"
+        style={{ fontSize: "16px", cursor: disabled ? "not-allowed" : "text" }}   // 16px stops iOS zooming in
       />
     </div>
   );
 }
 
 const STATUS_CHIP = {
-  sending:   { text: "Sending…",  color: "#475569", bg: "#f1f5f9" },
-  sent:      { text: "Code sent", color: "#1d4ed8", bg: "#eff6ff" },
-  verifying: { text: "Checking…", color: "#475569", bg: "#f1f5f9" },
-  verified:  { text: "Verified",  color: "#15803d", bg: "#dcfce7" },
-  idle:      { text: "Not sent",  color: "#b91c1c", bg: "#fef2f2" },
+  sending:   { text: "Sending…",  tone: "neutral" },
+  sent:      { text: "Code sent", tone: "brand" },
+  verifying: { text: "Checking…", tone: "neutral" },
+  verified:  { text: "Verified",  tone: "success" },
+  idle:      { text: "Not sent",  tone: "danger" },
 };
 
 /* -- One detail to verify (email or mobile) ---------------------------------- */
@@ -110,24 +107,15 @@ function ContactSection({ icon: Icon, title, target, state, code, onCode, onRese
 
   return (
     <section>
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: verified ? 0 : "12px" }}>
-      
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#64748b", margin: 0 }}>
-            {title}
-          </p>
-          <p style={{ fontSize: "13.5px", fontWeight: 600, color: "#0f172a", margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {target}
-          </p>
+      <div className={`flex items-center gap-3 ${verified ? "" : "mb-2.5"}`}>
+        <Icon size={18} className="text-muted shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="group-heading">{title}</p>
+          <p className="text-[13px] font-medium text-ink truncate">{target}</p>
         </div>
-        <span style={{
-          display: "inline-flex", alignItems: "center", gap: "4px", flexShrink: 0,
-          padding: "3px 9px", borderRadius: "999px", fontSize: "11px", fontWeight: 700,
-          color: chip.color,
-        }}>
-          {working  && <Loader2 size={11} className="animate-spin" />}
-          {verified && <CheckCircle2 size={12} />}
-          {chip.text}
+        <span className="shrink-0 inline-flex items-center gap-1.5">
+          {working && <Loader2 size={12} className="animate-spin text-muted" />}
+          <State tone={chip.tone}>{chip.text}</State>
         </span>
       </div>
 
@@ -138,29 +126,24 @@ function ContactSection({ icon: Icon, title, target, state, code, onCode, onRese
             autoFocus={autoFocus} label={`${title} verification code`}
           />
           {error && (
-            <p role="alert" style={{ display: "flex", alignItems: "flex-start", gap: "5px", margin: "8px 0 0", fontSize: "12px", color: "#dc2626", lineHeight: 1.45 }}>
-              <AlertCircle size={13} style={{ flexShrink: 0, marginTop: "1px" }} /> {error}
+            <p role="alert" className="field-error flex items-start gap-1.5 !text-[12px]">
+              <AlertCircle size={13} className="shrink-0 mt-px" /> {error}
             </p>
           )}
           {state.devCode && (
-            <p style={{ margin: "8px 0 0", fontSize: "11.5px", color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "6px", padding: "6px 8px" }}>
-              Development only — the email could not be sent. Code: <strong style={{ letterSpacing: "0.15em" }}>{state.devCode}</strong>
-            </p>
+            <Note tone="warning" className="mt-2">
+              Development only: the email could not be sent. Code <span className="mono font-semibold">{state.devCode}</span>
+            </Note>
           )}
           {state.devNote && (
-            <p style={{ margin: "8px 0 0", fontSize: "11.5px", color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "6px", padding: "6px 8px" }}>
-              Development mode — no SMS is sent. The code is printed in the backend console.
-            </p>
+            <Note tone="warning" className="mt-2">Development mode: no SMS is sent. The code is in the backend console.</Note>
           )}
-          <p style={{ margin: "8px 0 0", fontSize: "12px", color: "#64748b" }}>
-            Didn&apos;t get the code?{" "}
+          <p className="mt-2 text-[12px] text-muted">
+            No code?{" "}
             {waiting ? (
-              <span style={{ color: "#94a3b8" }}>Resend in {formatWait(state.wait)}</span>
+              <span className="tabular">Resend in {formatWait(state.wait)}</span>
             ) : (
-              <button
-                type="button" onClick={onResend} disabled={working}
-                style={{ background: "none", border: "none", padding: 0, fontSize: "12px", fontWeight: 700, color: working ? "#94a3b8" : "#2563eb", cursor: working ? "not-allowed" : "pointer" }}
-              >
+              <button type="button" onClick={onResend} disabled={working} className="text-link font-medium disabled:text-muted">
                 Resend code
               </button>
             )}
@@ -220,58 +203,36 @@ export default function SetupVerifyDialog({ email, mobile, verification, submitt
   };
 
   return createPortal(
-    <div
-      role="presentation"
-      style={{
-        position: "fixed", inset: 0, zIndex: 1000, padding: "16px",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        background: "rgba(8,24,46,0.62)", backdropFilter: "blur(3px)",
-      }}
-    >
+    <div data-theme="light" style={{ '--control-h': '36px' }}>
+      <div className="overlay" aria-hidden="true" />
       <form
-        role="dialog" aria-modal="true" aria-labelledby="setup-verify-title" aria-describedby="setup-verify-desc"
-        onSubmit={handleSubmit} noValidate className="animate-fade-in"
-        style={{
-          width: "100%", maxWidth: "500px", maxHeight: "100%", overflowY: "auto",
-          background: "#ffffff", borderRadius: "2px", overflowX: "hidden",
-          boxShadow: "0 30px 80px rgba(8,24,46,0.45)", fontFamily: "Inter, system-ui, sans-serif",
-        }}
+        role="dialog" aria-modal="true" aria-labelledby="setup-verify-title"
+        onSubmit={handleSubmit} noValidate
+        className="modal text-ink !p-0" style={{ "--modal-w": "480px" }}
       >
-        {/* ── Upper part: artwork and title on the navy brand band ── */}
-        <div style={{ position: "relative",  color: "#000000" }}>
-          <div aria-hidden="true" style={{
-            position: "absolute", inset: 0, pointerEvents: "none",
-            backgroundImage: "radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1px)", backgroundSize: "18px 18px",
-          }} />
+        {/* ── Upper part: artwork and title ── */}
+        <div className="relative bg-tile px-6 pt-6 pb-5 text-center">
           <button
-            type="button" onClick={onClose} disabled={busy} aria-label="Close"
-            style={{
-              position: "absolute", top: "14px", right: "14px", width: "30px", height: "30px", borderRadius: "2px",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: "rgba(255,255,255,0.10)", border: "1px solid rgba(255,255,255,0.15)",
-              color:  busy ? "gray" :"black", cursor: busy ? "not-allowed" : "pointer",
-            }}
+            type="button" onClick={onClose} disabled={busy} aria-label="Close" title="Close"
+            className="btn-icon absolute top-3 right-3"
           >
             <X size={16} />
           </button>
-
-          <div style={{ position: "relative", padding: "26px 28px 22px", textAlign: "center" }}>
-            <VerifyIllustration />
-            <p style={{ fontSize: "10.5px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: "gray", margin: "14px 0 0" }}>
-              Final step · Verification
-            </p>
-          </div>
+          <VerifyIllustration />
+          <p className="group-heading mt-3">Final step</p>
+          <h2 id="setup-verify-title" className="text-[16px] font-semibold text-ink mt-0.5">Confirm your email and mobile</h2>
+          <p className="text-[12.5px] text-muted mt-0.5">Enter the 6-digit codes we sent to each.</p>
         </div>
 
         {/* ── Lower part: the codes ── */}
-        <div style={{ padding: "22px 28px 4px" }}>
+        <div className="px-6 pt-5">
           <ContactSection
             icon={Mail} title="Email address" target={email} state={emailState}
             code={codes.email} onCode={setCode("email")} onResend={resend("email")}
             error={codeErrors.email || emailState.error}
             autoFocus={emailState.status !== "verified"}
           />
-          <div aria-hidden="true" style={{ height: "1px", background: "#eef2f7", margin: "20px 0" }} />
+          <hr className="divider my-5" />
           <ContactSection
             icon={Smartphone} title="Mobile number" target={formatMobile(mobile)} state={phoneState}
             code={codes.phone} onCode={setCode("phone")} onResend={resend("phone")}
@@ -280,23 +241,17 @@ export default function SetupVerifyDialog({ email, mobile, verification, submitt
           />
         </div>
 
-        <div style={{ padding: "20px 28px 24px" }}>
-          <button
-            type="submit" disabled={busy}
-            style={{ ...authStyles.primaryButton, cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.75 : 1 }}
-          >
-            {submitting ? <><Loader2 size={16} className="animate-spin" /> Setting up…</>
-              : verifying ? <><Loader2 size={16} className="animate-spin" /> Verifying…</>
-              : <><CheckCircle2 size={16} /> {bothDone ? "Complete setup" : "Verify & complete setup"}</>}
+        <div className="px-6 pt-5 pb-6">
+          <button type="submit" disabled={busy} className="btn-primary w-full">
+            {submitting ? <><Loader2 size={14} className="animate-spin" /> Setting up…</>
+              : verifying ? <><Loader2 size={14} className="animate-spin" /> Verifying…</>
+              : <><CheckCircle2 size={14} /> {bothDone ? "Complete setup" : "Verify and complete setup"}</>}
           </button>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "8px", marginTop: "14px", fontSize: "11.5px", color: "#94a3b8" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+          <div className="flex flex-wrap items-center justify-between gap-2 mt-3 text-[11.5px] text-muted">
+            <span className="inline-flex items-center gap-1.5">
               <Lock size={11} /> Codes expire in 10 minutes. Never share them.
             </span>
-            <button
-              type="button" onClick={onClose} disabled={busy}
-              style={{ background: "none", border: "none", padding: 0, color: "#2563eb", fontWeight: 600, fontSize: "12px", cursor: busy ? "not-allowed" : "pointer" }}
-            >
+            <button type="button" onClick={onClose} disabled={busy} className="text-link font-medium text-[12px]">
               Edit details
             </button>
           </div>

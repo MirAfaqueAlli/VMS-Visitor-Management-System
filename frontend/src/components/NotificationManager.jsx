@@ -43,10 +43,10 @@ export default function NotificationManager() {
     const isSpot   = data.visit_category === 'SPOT';
     const isPublic = ['PERSONAL_VISIT', 'VENDOR'].includes(data.visit_category);
     const title = isSpot
-      ? '🔔 Walk-in Visitor Waiting'
+      ? 'Walk-in visitor waiting'
       : isPublic
-        ? '🔔 New Public Visit Request'
-        : '🔔 New Approval Request';
+        ? 'New public visit request'
+        : 'New request to approve';
     const body = isSpot
       ? `${data.visitor_name ?? 'A visitor'} is at the gate/reception waiting for your approval.`
       : `${data.visitor_name ?? 'A visitor'} has requested a visit${data.visit_date ? ` on ${data.visit_date}` : ''}.`;
@@ -58,7 +58,7 @@ export default function NotificationManager() {
   useSocketEvent('visit:approved', useCallback((data) => {
     const isSpot   = data.visit_category === 'SPOT';
     const isHosted = data.is_hosted;
-    const title  = isHosted ? '🎫 You Were Hosted for a Visit' : isSpot ? '✅ Spot Visit Approved' : '✅ Visit Approved';
+    const title  = isHosted ? 'You were hosted for a visit' : isSpot ? 'Spot visit approved' : 'Visit approved';
     const body   = isHosted
       ? `${data.approved_by || data.host_name || 'A colleague'} has hosted you as a visitor for a visit on ${data.visit_date ?? ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`
       : isSpot
@@ -72,7 +72,7 @@ export default function NotificationManager() {
   // Received by: employee who initiated the visit (or security for SPOT)
   useSocketEvent('visit:rejected', useCallback((data) => {
     const isSpot = data.visit_category === 'SPOT';
-    const title  = isSpot ? '❌ Spot Visit Rejected' : '❌ Visit Request Rejected';
+    const title  = isSpot ? 'Spot visit rejected' : 'Visit request rejected';
     const body   = isSpot
       ? `The spot visit you initiated was rejected${data.remarks ? `: "${data.remarks}"` : '.'}`
       : `Your visit request was rejected${data.remarks ? `: "${data.remarks}"` : '.'}`;
@@ -87,7 +87,7 @@ export default function NotificationManager() {
   useSocketEvent('visit:checkin', useCallback((data) => {
     const isGateStaff = isSecurity || isReceptionist;
     notify(
-      '🏢 Visitor Arrived',
+      'Visitor arrived',
       `${data.visitor_name ?? 'A visitor'} has checked in${data.host_name ? ` to meet ${data.host_name}` : ''}.`,
       makeOpts('visit-checkin', isGateStaff ? '/gate' : '/dashboard')
     );
@@ -97,7 +97,7 @@ export default function NotificationManager() {
   // Received by: gate/security staff
   useSocketEvent('visit:checkout', useCallback((data) => {
     notify(
-      '👋 Visitor Checked Out',
+      'Visitor checked out',
       `${data.visitor_name ?? 'A visitor'} has checked out.`,
       makeOpts('visit-checkout', '/gate')
     );

@@ -1,6 +1,8 @@
 // frontend/src/pages/super/UnitManagement.jsx
+// Units (DESIGN_RULES §6/§8/§12): title + Create unit, stat strip, toolbar, a
+// sortable table; create in a drawer, deactivate / reactivate in a modal.
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X, Building2, Users, Layers, CheckCircle, AlertCircle, Globe, Search, Power, RotateCcw, Ban } from 'lucide-react';
+import { Plus, Building2, Power, RotateCcw, Loader2, Info } from '../../components/icons';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
@@ -9,6 +11,11 @@ import { validatePassword } from '../../utils/passwordValidator';
 import Pagination from '../../components/shared/Pagination';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { OFFICE_TYPES, officeTypeLabel } from '../../utils/officeTypes';
+import Select from '../../components/Select';
+import {
+  PageHeader, StatStrip, Stat, Toolbar, SearchInput, Th, SkeletonRows, Status, Tag, Empty, Field, Drawer, Modal, Note,
+} from '../../components/ui';
+import useSort from '../../lib/useSort';
 
 const EMPTY_UNIT = {
   name: '', code: '', type: 'UNIT', city: '', state: '', phone: '', email: '',
@@ -19,12 +26,6 @@ const EMPTY_ADMIN = {
 
 /** Suggested employee code for a unit's first admin, e.g. unit H1 → H1-ADM-001. */
 const defaultAdminCode = (unitCode) => (unitCode ? `${unitCode}-ADM-001` : '');
-
-const STATUS_COLORS = {
-  ACTIVE:       { bg: '#f0fdf4', text: '#15803d', dot: '#22c55e' },
-  PROVISIONING: { bg: '#fefce8', text: '#a16207', dot: '#eab308' },
-  SUSPENDED:    { bg: '#fef2f2', text: '#b91c1c', dot: '#ef4444' },
-};
 
 export default function UnitManagement() {
   const { setActiveUnit, activeUnit } = useAuth();
@@ -149,182 +150,106 @@ export default function UnitManagement() {
   const setUnit  = (k) => (e) => setUnitForm(f  => ({ ...f, [k]: e.target.value }));
   const setAdmin = (k) => (e) => setAdminForm(f => ({ ...f, [k]: e.target.value }));
 
-  const inputCls = 'vms-input w-full';
-  const labelCls = 'block text-[11px] font-medium uppercase tracking-wider mb-1.5';
+  const { rows, sort, onSort } = useSort(units, {
+    name: (u) => u.name,
+    type: (u) => officeTypeLabel(u.type),
+    city: (u) => u.city,
+    users: (u) => Number(u.user_count ?? 0),
+    depts: (u) => Number(u.department_count ?? 0),
+    status: (u) => u.db_status,
+  });
+
+  const activeCount = units.filter(u => u.db_status === 'ACTIVE').length;
+  const suspendedCount = units.filter(u => u.db_status === 'SUSPENDED').length;
+  const provisioningCount = units.filter(u => !['ACTIVE', 'SUSPENDED'].includes(u.db_status)).length;
 
   return (
-    <>
-      <div className="space-y-6 animate-fade-in pt-4">
+    <div className="animate-fade-in">
+      <PageHeader
+        title="Units"
+        actions={<button type="button" className="btn-primary" onClick={openCreate}><Plus size={14} /> Create unit</button>}
+      />
 
-        {/* Page header */}
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-[18px] font-bold" style={{ color: 'var(--color-text)' }}>
-              Unit Management
-            </h1>
-          </div>
-          <button className="btn-primary" onClick={openCreate}>
-            <Plus size={14} /> Create Unit
-          </button>
-        </div>
+      <StatStrip cols={4}>
+        <Stat label="Units" value={totalCount} loading={loading} />
+        <Stat label="Active" value={activeCount} loading={loading} hint="On this page" />
+        <Stat label="Deactivated" value={suspendedCount} tone={suspendedCount ? 'danger' : undefined} loading={loading} hint="On this page" />
+        <Stat label="Provisioning" value={provisioningCount} tone={provisioningCount ? 'warning' : undefined} loading={loading} hint="On this page" />
+      </StatStrip>
 
-        {/* Stats row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { label: 'Total Units',  value: totalCount,                                          icon: Building2,    color: 'var(--color-text-loud)' },
-            { label: 'Active',       value: units.filter(u => u.db_status === 'ACTIVE').length,  icon: CheckCircle,  color: '#22c55e' },
-            { label: 'Deactivated',  value: units.filter(u => u.db_status === 'SUSPENDED').length, icon: Ban,        color: '#ef4444' },
-            { label: 'Provisioning', value: units.filter(u => !['ACTIVE', 'SUSPENDED'].includes(u.db_status)).length, icon: AlertCircle, color: '#eab308' },
-          ].map(({ label, value, icon: Icon, color }) => (
-            <div key={label} className="vms-card p-4 flex items-center gap-3">
-              <div className="w-9 h-9 rounded flex items-start justify-center" >
-                <Icon size={26} style={{ color : "var(--color-text-loud)" }} />
-              </div>
-              <div>
-                <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-text-faint)' }}>{label}</p>
-                <p className="text-[22px] font-bold leading-none" style={{ color: 'var(--color-text)' }}>{value}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+      <Toolbar count={loading ? null : totalCount} noun={totalCount === 1 ? 'unit' : 'units'}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Search name, code or city" width={260} />
+        {search && <button type="button" className="btn-ghost" onClick={() => setSearch('')}>Clear</button>}
+      </Toolbar>
 
-        {/* Search */}
-        <div className="relative flex items-center">
-          <div className="absolute left-3.5 flex items-center pointer-events-none z-10">
-            <Search size={18} style={{ color: 'var(--color-accent)' }} />
-          </div>
-          <input
-            type="text"
-            className="w-full h-12 pl-10 pr-28 bg-bg-secondary border border-subtle rounded-md text-[14px] text-loud placeholder-faint  focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-            placeholder="Search by name, code or city…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-          <div className="absolute right-1.5 flex items-center gap-2 z-10">
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch('')}
-                className="text-[12px] font-medium px-2 py-1 text-faint hover:text-loud transition-colors"
-              >
-                Clear
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn-primary h-9 px-4 text-[13px] font-medium flex items-center gap-1.5 rounded-lg shadow-sm"
-            >
-              <Search size={14} />
-              <span>Search</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Units grid */}
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div
-              className="w-6 h-6 rounded-full border-2 animate-spin"
-              style={{ borderColor: 'var(--color-border)', borderTopColor: 'var(--color-accent)' }}
-            />
-          </div>
-        ) : units.length === 0 ? (
-          <div className="vms-card flex flex-col items-center justify-center py-16 gap-3">
-            <Globe size={32} style={{ color: 'var(--color-text-faint)' }} />
-            <p className="text-[13px]" style={{ color: 'var(--color-text-faint)' }}>
-              No units yet. Use the <strong>Create Unit</strong> button above to get started.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {units.map(unit => {
-              const sc = STATUS_COLORS[unit.db_status] ?? STATUS_COLORS.SUSPENDED;
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <Th sortKey="name" sort={sort} onSort={onSort}>Unit</Th>
+              <Th sortKey="type" sort={sort} onSort={onSort}>Type</Th>
+              <Th sortKey="city" sort={sort} onSort={onSort}>Location</Th>
+              <Th sortKey="users" sort={sort} onSort={onSort} align="right">Users</Th>
+              <Th sortKey="depts" sort={sort} onSort={onSort} align="right">Departments</Th>
+              <Th sortKey="status" sort={sort} onSort={onSort}>Status</Th>
+              <th className="text-right"><span className="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <SkeletonRows rows={5} cols={7} />
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="!p-0">
+                  <Empty
+                    icon={Building2}
+                    title={search ? 'No units match this search' : 'No units yet'}
+                    hint={search ? 'Try another name, code or city.' : 'Create a unit to give it its own database, users and visitors.'}
+                    action={!search && <button type="button" className="btn-outline" onClick={openCreate}><Plus size={14} /> Create unit</button>}
+                  />
+                </td>
+              </tr>
+            ) : rows.map(unit => {
+              const managing = activeUnit?.id === unit.id;
               return (
-                <div key={unit.id} className="vms-card p-5 flex flex-col gap-3 hover:shadow-md transition-shadow">
-                  {/* Card header */}
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded flex items-center justify-center" style={{ background: 'var(--color-info-bg)' }}>
-                        <Building2 size={16} style={{ color: 'var(--color-info)' }} />
-                      </div>
-                      <div>
-                        <p className="font-semibold text-[13px]" style={{ color: 'var(--color-text)' }}>{unit.name}</p>
-                        <p className="font-mono text-[10px]" style={{ color: 'var(--color-text-faint)' }}>{unit.code}</p>
-                      </div>
-                    </div>
-                    <span
-                      className="text-[10px] font-medium px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0"
-                      style={{ background: sc.bg, color: sc.text }}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: sc.dot }} />
-                      {unit.db_status === 'SUSPENDED' ? 'DEACTIVATED' : unit.db_status}
-                    </span>
-                  </div>
-
-                  {/* Meta */}
-                  <div className="flex flex-wrap gap-3 text-[11px]" style={{ color: 'var(--color-text-faint)' }}>
-                    <span>{officeTypeLabel(unit.type)}</span>
-                    <span className="flex items-center gap-1"><Users size={11} /> {unit.user_count ?? 0} users</span>
-                    <span className="flex items-center gap-1"><Layers size={11} /> {unit.department_count ?? 0} depts</span>
-                    {unit.city && <span>{unit.city}{unit.state ? `, ${unit.state}` : ''}</span>}
-                  </div>
-
-                  {/* DB name footer */}
-                  <div
-                    className="pt-2 flex items-center justify-between gap-1.5"
-                    style={{ borderTop: '1px solid var(--color-border)' }}
-                  >
-                    <span className="font-mono text-[10px] truncate" style={{ color: 'var(--color-text-faint)' }}>
-                      DB: {unit.db_name}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {unit.db_status === 'ACTIVE' && (
-                        <button
-                          onClick={() => handleManageUnit(unit)}
-                          className={`px-2 py-0.5 text-[10px] font-semibold rounded transition-all ${
-                            activeUnit?.id === unit.id
-                              ? 'bg-green-500/10 text-green-600 border border-green-500/20'
-                              : 'bg-blue-500/10 text-blue-600 border border-blue-500/20 hover:bg-blue-500 hover:text-white'
-                          }`}
-                        >
-                          {activeUnit?.id === unit.id ? 'Managing' : 'Manage'}
-                        </button>
-                      )}
+                <tr key={unit.id}>
+                  <td>
+                    <span className="font-medium">{unit.name}</span>
+                    <span className="cell-sub mono" title={`Database ${unit.db_name}`}>{unit.code}</span>
+                  </td>
+                  <td className="text-ink-2">{officeTypeLabel(unit.type)}</td>
+                  <td className="text-ink-2">{unit.city ? `${unit.city}${unit.state ? `, ${unit.state}` : ''}` : '—'}</td>
+                  <td className="num">{unit.user_count ?? 0}</td>
+                  <td className="num">{unit.department_count ?? 0}</td>
+                  <td><Status value={unit.db_status} /></td>
+                  <td>
+                    <div className="flex items-center justify-end gap-1">
+                      {unit.db_status === 'ACTIVE' && (managing ? (
+                        <Tag tone="success">Managing</Tag>
+                      ) : (
+                        <button type="button" onClick={() => handleManageUnit(unit)} className="btn-outline btn-sm">Manage</button>
+                      ))}
                       {unit.db_status === 'ACTIVE' ? (
-                        <button
-                          onClick={() => openStatusChange(unit, 'deactivate')}
-                          title="Deactivate unit"
-                          className="px-2 py-0.5 text-[10px] font-semibold rounded transition-all flex items-center gap-1 bg-red-500/10 text-red-600 border border-red-500/20 hover:bg-red-500 hover:text-white"
-                        >
-                          <Power size={10} /> Deactivate
+                        <button type="button" onClick={() => openStatusChange(unit, 'deactivate')} className="btn-icon"
+                          aria-label={`Deactivate ${unit.name}`} title="Deactivate unit">
+                          <Power size={14} />
                         </button>
                       ) : unit.db_status === 'SUSPENDED' ? (
-                        <button
-                          onClick={() => openStatusChange(unit, 'reactivate')}
-                          title="Reactivate unit"
-                          className="px-2 py-0.5 text-[10px] font-semibold rounded transition-all flex items-center gap-1 bg-green-500/10 text-green-600 border border-green-500/20 hover:bg-green-500 hover:text-white"
-                        >
-                          <RotateCcw size={10} /> Reactivate
+                        <button type="button" onClick={() => openStatusChange(unit, 'reactivate')} className="btn-icon"
+                          aria-label={`Reactivate ${unit.name}`} title="Reactivate unit">
+                          <RotateCcw size={14} />
                         </button>
-                      ) : (
-                        <AlertCircle size={12} style={{ color: '#eab308' }} />
-                      )}
+                      ) : null}
                     </div>
-                  </div>
-                </div>
+                  </td>
+                </tr>
               );
             })}
-          </div>
-        )}
-        {!loading && (
-          <Pagination
-            page={page}
-            totalPages={totalPages}
-            totalCount={totalCount}
-            onPageChange={(p) => setPage(p)}
-          />
-        )}
+          </tbody>
+        </table>
       </div>
+
+      {!loading && <Pagination page={page} totalPages={totalPages} totalCount={totalCount} onPageChange={(p) => setPage(p)} />}
 
       {/* Deactivate / reactivate confirmation */}
       {statusChange && (() => {
@@ -332,247 +257,160 @@ export default function UnitManagement() {
         const deactivating = action === 'deactivate';
         const codeOk = !deactivating || confirmCode.trim().toUpperCase() === String(unit.code).toUpperCase();
         return (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }}
-            onClick={() => !changing && setStatusChange(null)}>
-            <div role="dialog" aria-modal="true" aria-labelledby="unit-status-title"
-              className="vms-card w-full max-w-md p-6 animate-fade-in" onClick={e => e.stopPropagation()}>
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                  style={{ background: deactivating ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)' }}>
-                  {deactivating ? <Power size={18} style={{ color: '#ef4444' }} /> : <RotateCcw size={18} style={{ color: '#22c55e' }} />}
-                </div>
-                <div className="min-w-0">
-                  <h2 id="unit-status-title" className="text-[15px] font-bold" style={{ color: 'var(--color-text)' }}>
-                    {deactivating ? 'Deactivate' : 'Reactivate'} {unit.name}?
-                  </h2>
-                  <p className="font-mono text-[11px]" style={{ color: 'var(--color-text-faint)' }}>{unit.code}</p>
-                </div>
-              </div>
-
-              {deactivating ? (
-                <ul className="mt-4 space-y-1.5 text-[12.5px] list-disc pl-5" style={{ color: 'var(--color-text-muted)' }}>
-                  <li>All {unit.user_count ?? 0} user(s) of this unit are signed out and can no longer sign in.</li>
-                  <li>The unit disappears from the sign-in page and the public visitor form.</li>
-                  <li><strong>Nothing is deleted.</strong> Visit records, gate passes and audit logs are kept for reports and archiving, and you can reactivate the unit at any time.</li>
-                </ul>
-              ) : (
-                <p className="mt-4 text-[12.5px]" style={{ color: 'var(--color-text-muted)' }}>
-                  The unit&apos;s users can sign in again, and it reappears on the sign-in page and the public visitor form. All its existing data is still there.
-                </p>
-              )}
-
-              {deactivating && (
-                <div className="mt-4">
-                  <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>
-                    Type the unit code <span className="font-mono" style={{ color: 'var(--color-text)' }}>{unit.code}</span> to confirm
-                  </label>
-                  <input className={`${inputCls} font-mono uppercase`} value={confirmCode} autoFocus
-                    onChange={e => setConfirmCode(e.target.value)} placeholder={unit.code} />
-                </div>
-              )}
-
-              <div className="flex gap-3 mt-6">
-                <button className="btn-secondary flex-1" onClick={() => setStatusChange(null)} disabled={changing}>Cancel</button>
+          <Modal
+            open
+            onClose={() => setStatusChange(null)}
+            busy={changing}
+            width={460}
+            title={`${deactivating ? 'Deactivate' : 'Reactivate'} ${unit.name}?`}
+            footer={(
+              <>
+                <button type="button" className="btn-outline" onClick={() => setStatusChange(null)} disabled={changing}>Cancel</button>
                 <button
-                  className="btn-primary flex-1"
+                  type="button"
+                  className={deactivating ? 'btn-danger' : 'btn-primary'}
                   onClick={handleStatusChange}
                   disabled={changing || !codeOk}
-                  style={deactivating ? { background: '#dc2626', borderColor: '#dc2626' } : undefined}
                 >
+                  {changing && <Loader2 size={14} className="animate-spin" />}
                   {changing ? 'Please wait…' : deactivating ? 'Deactivate unit' : 'Reactivate unit'}
                 </button>
-              </div>
-            </div>
-          </div>
+              </>
+            )}
+          >
+            {deactivating ? (
+              <ul className="space-y-1.5 text-[12.5px] text-ink-2 list-disc pl-5">
+                <li>All {unit.user_count ?? 0} user(s) of this unit are signed out and can no longer sign in.</li>
+                <li>The unit disappears from the sign-in page and the public visitor form.</li>
+                <li><b>Nothing is deleted.</b> Visit records, gate passes and audit logs are kept, and you can reactivate the unit at any time.</li>
+              </ul>
+            ) : (
+              <p className="text-[12.5px] text-ink-2">
+                The unit&apos;s users can sign in again, and it reappears on the sign-in page and the public visitor form. All its existing data is still there.
+              </p>
+            )}
+
+            {deactivating && (
+              <Field label={<>Type the unit code <span className="mono text-ink">{unit.code}</span> to confirm</>} htmlFor="confirm-code" className="mt-4">
+                <input id="confirm-code" className="control mono uppercase" value={confirmCode} autoFocus
+                  onChange={e => setConfirmCode(e.target.value)} placeholder={unit.code} />
+              </Field>
+            )}
+          </Modal>
         );
       })()}
 
-      {/* Backdrop — outside page div so it covers the full viewport */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 z-40 transition-opacity duration-300 opacity-100"
-          style={{ background: 'rgba(0,0,0,0.5)' }}
-          onClick={close}
-        />
-      )}
-
-      {/* Create Unit slide-over — fixed full-height panel */}
-      <aside
-        className="fixed right-0 top-0 h-full z-50 flex flex-col"
-        style={{
-          width: 'min(600px, 100vw)',
-          background: 'var(--color-bg-primary)',   // fields are bg-secondary, so they stand out
-          borderLeft: '1px solid var(--color-border)',
-          boxShadow: isOpen ? '-8px 0 32px rgba(0,0,0,0.15)' : 'none',
-          transform: isOpen ? 'translateX(0)' : 'translateX(100%)',
-          transition: 'transform 300ms ease-in-out',
-          pointerEvents: isOpen ? 'auto' : 'none',
-        }}
+      {/* Create unit */}
+      <Drawer
+        open={isOpen}
+        onClose={close}
+        busy={saving}
+        width={600}
+        icon={Building2}
+        title="New unit"
+        subtitle="A separate database is provisioned for it automatically."
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={close} disabled={saving}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={handleSubmit}
+              disabled={saving || (includeAdmin && adminForm.password.length > 0 && !validatePassword(adminForm.password).valid)}>
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+              {saving ? 'Provisioning…' : 'Create unit'}
+            </button>
+          </>
+        )}
       >
-        {/* Header */}
-        <div
-          className="px-6 py-4 flex items-start justify-between shrink-0"
-          style={{ borderBottom: '1px solid var(--color-border)' }}
-        >
-          <div>
-            <h3 className="font-semibold text-[13px]" style={{ color: 'var(--color-text)' }}>
-              Create New Unit
-            </h3>
-            <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-text-faint)' }}>
-              A new isolated database will be provisioned automatically.
-            </p>
+        <div className="tile space-y-3">
+          <p className="group-heading">Unit</p>
+          <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_160px] gap-3">
+            <Field label="Unit name" htmlFor="unit-name" required>
+              <input id="unit-name" className="control" value={unitForm.name} onChange={setUnit('name')} placeholder="e.g. Head Office" />
+            </Field>
+            <Field label="Code" htmlFor="unit-code" required hint="Letters, digits, _">
+              <input
+                id="unit-code"
+                className="control mono"
+                value={unitForm.code}
+                onChange={e => {
+                  const code = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+                  setUnitForm(f => ({ ...f, code }));
+                  if (!empCodeEdited) setAdminForm(f => ({ ...f, employee_code: defaultAdminCode(code) }));
+                }}
+                placeholder="HQ"
+              />
+            </Field>
           </div>
-          <button onClick={close} style={{ color: 'var(--color-text-faint)' }}><X size={16} /></button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Office type" required>
+              <Select value={unitForm.type} onChange={setUnit('type')} aria-label="Office type">
+                {OFFICE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </Select>
+            </Field>
+            <Field label="City" htmlFor="unit-city">
+              <input id="unit-city" className="control" value={unitForm.city} onChange={setUnit('city')} placeholder="e.g. Bhubaneswar" />
+            </Field>
+            <Field label="State" htmlFor="unit-state">
+              <input id="unit-state" className="control" value={unitForm.state} onChange={setUnit('state')} placeholder="Odisha" />
+            </Field>
+            <Field label="Phone" htmlFor="unit-phone" hint="WhatsApp number preferred">
+              <input id="unit-phone" className="control tabular" value={unitForm.phone} onChange={setUnit('phone')} placeholder="+91 674 123 4567" />
+            </Field>
+          </div>
+          <Field label="Email" htmlFor="unit-email">
+            <input id="unit-email" className="control" type="email" value={unitForm.email} onChange={setUnit('email')} placeholder="office@ohpc.co.in" />
+          </Field>
         </div>
 
-        {/* Form body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="tile mt-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="group-heading">Unit admin account</p>
+            <label className="flex items-center gap-2 cursor-pointer select-none text-[12px] text-ink-2">
+              <input
+                type="checkbox"
+                checked={includeAdmin}
+                onChange={e => setIncludeAdmin(e.target.checked)}
+                className="w-3.5 h-3.5 accent-[var(--primary)]"
+              />
+              Create an admin
+            </label>
+          </div>
 
-          {/* ── Unit Details ─────────────────────────────────────────────────── */}
-          <div>
-            <p
-              className="text-[11px] font-semibold uppercase tracking-wider mb-4 pb-2"
-              style={{ color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)' }}
-            >
-              Unit Details
-            </p>
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Unit Name *</label>
-                  <input className={inputCls} value={unitForm.name} onChange={setUnit('name')} placeholder="e.g. Head Office" />
-                </div>
-                <div>
-                  <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>
-                    Code * <span className="normal-case font-normal">(no spaces)</span>
-                  </label>
-                  <input
-                    className={`${inputCls} font-mono`}
-                    value={unitForm.code}
+          {includeAdmin && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Full name" htmlFor="adm-name" required>
+                  <input id="adm-name" className="control" value={adminForm.full_name} onChange={setAdmin('full_name')} placeholder="Admin's name" />
+                </Field>
+                <Field label="Email" htmlFor="adm-email" required>
+                  <input id="adm-email" className="control" type="email" value={adminForm.email} onChange={setAdmin('email')} placeholder="admin@ohpc.co.in" />
+                </Field>
+                <Field label="Phone" htmlFor="adm-phone">
+                  <input id="adm-phone" className="control tabular" value={adminForm.phone} onChange={setAdmin('phone')} placeholder="+91 90000 00001" />
+                </Field>
+                <Field label="Employee code" htmlFor="adm-code" required>
+                  <input id="adm-code" className="control mono" value={adminForm.employee_code}
                     onChange={e => {
-                      const code = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
-                      setUnitForm(f => ({ ...f, code }));
-                      if (!empCodeEdited) setAdminForm(f => ({ ...f, employee_code: defaultAdminCode(code) }));
+                      const value = e.target.value;
+                      setAdminForm(f => ({ ...f, employee_code: value }));
+                      setEmpCodeEdited(value.trim() !== '');   // cleared → follow the unit code again
                     }}
-                    placeholder="e.g. HQ"
-                  />
-                </div>
+                    placeholder={defaultAdminCode(unitForm.code) || 'HQ-ADM-001'} required={includeAdmin} />
+                </Field>
               </div>
               <div>
-                <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Office Type *</label>
-                <select className={inputCls} value={unitForm.type} onChange={setUnit('type')}>
-                  {OFFICE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
+                <Field label="Password" htmlFor="adm-pw" required>
+                  <input id="adm-pw" className="control" type="password" value={adminForm.password} onChange={setAdmin('password')}
+                    placeholder="At least 8 characters" autoComplete="new-password" />
+                </Field>
+                <PasswordStrength password={adminForm.password} />
               </div>
-              <div>
-                <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>City</label>
-                <input className={inputCls} value={unitForm.city} onChange={setUnit('city')} placeholder="e.g. Mumbai" />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>State</label>
-                  <input className={inputCls} value={unitForm.state} onChange={setUnit('state')} placeholder="Maharashtra" />
-                </div>
-                <div>
-                  <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Phone <span style={{ fontSize: '10px', fontWeight: 400, letterSpacing: 0, textTransform: 'none', opacity: 0.6, marginLeft: '4px' }}>(WhatsApp preferred)</span></label>
-                  <input className={inputCls} value={unitForm.phone} onChange={setUnit('phone')} placeholder="+91 22 1234 5678" />
-                </div>
-              </div>
-              <div>
-                <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Email</label>
-                <input className={inputCls} type="email" value={unitForm.email} onChange={setUnit('email')} placeholder="hq@company.com" />
-              </div>
-            </div>
-          </div>
-
-          {/* ── Unit Admin ───────────────────────────────────────────────────── */}
-          <div>
-            <div className="flex items-center justify-between mb-4 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
-              <p className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
-                Unit Admin Account
-              </p>
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={includeAdmin}
-                  onChange={e => setIncludeAdmin(e.target.checked)}
-                  className="w-3.5 h-3.5"
-                />
-                <span className="text-[11px]" style={{ color: 'var(--color-text-faint)' }}>Create admin</span>
-              </label>
-            </div>
-
-            {includeAdmin && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Full Name *</label>
-                    <input className={inputCls} value={adminForm.full_name} onChange={setAdmin('full_name')} placeholder="Admin Name" />
-                  </div>
-                  <div>
-                    <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Email *</label>
-                    <input className={inputCls} type="email" value={adminForm.email} onChange={setAdmin('email')} placeholder="admin@unit.com" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Phone</label>
-                    <input className={inputCls} value={adminForm.phone} onChange={setAdmin('phone')} placeholder="+91 9000000001" />
-                  </div>
-                  <div>
-                    <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Employee Code *</label>
-                    <input className={`${inputCls} font-mono`} value={adminForm.employee_code}
-                      onChange={e => {
-                        const value = e.target.value;
-                        setAdminForm(f => ({ ...f, employee_code: value }));
-                        setEmpCodeEdited(value.trim() !== '');   // cleared → follow the unit code again
-                      }}
-                      placeholder={defaultAdminCode(unitForm.code) || 'HQ-ADM-001'} required={includeAdmin} />
-                  </div>
-                </div>
-                <div>
-                  <label className={labelCls} style={{ color: 'var(--color-text-faint)' }}>Password *</label>
-                  <input className={inputCls} type="password" value={adminForm.password} onChange={setAdmin('password')} placeholder="Min 8 chars, uppercase, number, symbol" autoComplete="new-password" />
-                  <PasswordStrength password={adminForm.password} />
-                </div>
-
-                {/* Info box */}
-                <div
-                  className="text-[11px] px-3 py-2.5 rounded"
-                  style={{
-                    background:  'var(--color-info-bg)',
-                    color:       'var(--color-info)',
-                    border:      '1px solid var(--color-info)',
-                    borderRadius:'var(--radius-sm)',
-                  }}
-                >
-                  This account will be created as <strong>unit_admin</strong> in the new unit's database and can manage all users and departments for that unit.
-                </div>
-              </div>
-            )}
-          </div>
+              <Note tone="info" icon={Info}>
+                Created as the unit admin in the new unit. They can manage its users and departments.
+              </Note>
+            </>
+          )}
         </div>
-
-        {/* Footer */}
-        <div
-          className="px-6 py-4 flex gap-3 shrink-0"
-          style={{ borderTop: '1px solid var(--color-border)' }}
-        >
-          <button className="btn-secondary flex-1" onClick={close} disabled={saving}>Cancel</button>
-          <button className="btn-primary flex-1" onClick={handleSubmit} disabled={saving || (includeAdmin && adminForm.password.length > 0 && !validatePassword(adminForm.password).valid)}>
-            {saving ? (
-              <span className="flex items-center gap-1.5 justify-center">
-                <span className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} />
-                Provisioning DB…
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 justify-center">
-                <Plus size={13} /> Create Unit
-              </span>
-            )}
-          </button>
-        </div>
-      </aside>
-    </>
+      </Drawer>
+    </div>
   );
 }

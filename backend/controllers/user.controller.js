@@ -7,6 +7,7 @@ const { centralPool, getPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit, auditActor } = require('../utils/auditLogger.util');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
+const { rejectIfContactTaken, phoneKey } = require('../services/contactUniqueness.service');
 
 // ── Role sets ─────────────────────────────────────────────────────────────────
 const UNIT_MANAGEABLE_ROLES = ['unit_admin', 'employee', 'security', 'receptionist', 'unit_auditor'];
@@ -261,7 +262,10 @@ const createUser = async (req, res) => {
       return sendError(res, 'department_id is required for this role.', 400);
     }
 
-    // Check for duplicates within this unit DB
+    // Email and mobile are unique across the whole system (central + every unit)
+    if (await rejectIfContactTaken(res, sendError, { email, phone })) return;
+
+    // Check for duplicates within this unit DB (also covers the employee code)
     const [existing] = await req.db.query(
       `SELECT id FROM users WHERE (email = ? OR phone = ? OR employee_code = ?) AND deleted_at IS NULL LIMIT 1`,
       [email, phone || '', employee_code]
@@ -353,6 +357,17 @@ const updateUser = async (req, res) => {
 
     if (role_type && !UNIT_MANAGEABLE_ROLES.includes(role_type)) {
       return sendError(res, `role_type must be one of: ${UNIT_MANAGEABLE_ROLES.join(', ')}.`, 400);
+    }
+
+    // A changed email / mobile must not belong to any other account in the system.
+    // Only changed values are checked, so older duplicates don't block unrelated edits.
+    const newEmail = email && email.trim() && email.trim().toLowerCase() !== String(targetUser.email || '').toLowerCase() ? email : null;
+    const newPhone = phone && phone.trim() && phoneKey(phone) !== phoneKey(targetUser.phone) ? phone : null;
+    if (newEmail || newPhone) {
+      const taken = await rejectIfContactTaken(res, sendError, {
+        email: newEmail, phone: newPhone, exclude: { pool: req.db, id: targetUser.id },
+      });
+      if (taken) return;
     }
 
     const effectiveDeptId = department_id !== undefined ? department_id : targetUser.department_id;

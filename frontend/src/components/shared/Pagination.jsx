@@ -1,40 +1,43 @@
 // frontend/src/components/shared/Pagination.jsx
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+// Server-side pagination under a table: "Page 2 of 7 · 134 total" + prev / next.
+import { ChevronLeft, ChevronRight } from '../icons';
 
 /**
- * Reusable server-side pagination control.
- *
  * Props:
  *   page        — current page (1-indexed)
  *   totalPages  — total number of pages
- *   totalCount  — total record count (optional, for "X of Y" label)
+ *   totalCount  — total record count (optional, for the label)
  *   onPageChange — (newPage: number) => void
  */
 export default function Pagination({ page, totalPages, totalCount, onPageChange }) {
   if (!totalPages || totalPages <= 1) return null;
 
   return (
-    <div className="flex items-center justify-between mt-8 pt-6 border-t border-subtle">
-      <span className="text-sm text-muted">
-        Page {page} of {totalPages}
-        {totalCount != null && ` · ${totalCount.toLocaleString()} total`}
+    <div className="flex items-center justify-between gap-3 pt-3 mt-1 border-t border-line text-[12px] text-muted">
+      <span className="tabular">
+        Page <b className="text-ink font-semibold">{page}</b> of {totalPages}
+        {totalCount != null && ` · ${Number(totalCount).toLocaleString('en-IN')} total`}
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
         <button
+          type="button"
           onClick={() => onPageChange(Math.max(1, page - 1))}
           disabled={page === 1}
-          className="p-2 rounded-full border border-subtle text-loud disabled:opacity-40 disabled:cursor-not-allowed hover:bg-bg-primary transition-colors duration-300"
+          className="btn-outline btn-sm"
           aria-label="Previous page"
+          title="Previous page"
         >
-          <ChevronLeft className="w-5 h-5" strokeWidth={1.5} />
+          <ChevronLeft size={13} /> Previous
         </button>
         <button
+          type="button"
           onClick={() => onPageChange(Math.min(totalPages, page + 1))}
           disabled={page === totalPages}
-          className="p-2 rounded-full border border-subtle text-loud disabled:opacity-40 disabled:cursor-not-allowed hover:bg-bg-primary transition-colors duration-300"
+          className="btn-outline btn-sm"
           aria-label="Next page"
+          title="Next page"
         >
-          <ChevronRight className="w-5 h-5" strokeWidth={1.5} />
+          Next <ChevronRight size={13} />
         </button>
       </div>
     </div>

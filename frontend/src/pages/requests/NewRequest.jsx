@@ -1,29 +1,27 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Check,
   Plus,
   Trash2,
   Calendar,
-  Clock,
   Building,
   User,
   Users,
-  Phone,
   Search,
   CheckCircle2,
   AlertCircle,
   Loader2,
   AlertTriangle,
-  X,
-} from "lucide-react";
+} from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 import { getApiErrorMessage } from "../../utils/apiError";
+import Select from "../../components/Select";
+import { PageHeader, SectionTitle, Field, Modal, Note } from "../../components/ui";
 
-// â”€â”€ Category definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Category definitions ───────────────────────────────────────────────────────
 const ALL_CATEGORIES = [
   { id: "EMPLOYEE_VISIT", label: "Employee Visit", desc: "Visit or invite a fellow employee" },
   { id: "PERSONAL_VISIT", label: "Personal Visit", desc: "Family / friend visiting you" },
@@ -49,10 +47,10 @@ export default function NewRequest() {
   const [departments, setDepartments] = useState([]);
   const [selectedDeptId, setSelectedDeptId] = useState("");
 
-  // â”€â”€ Conflict confirmation modal state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Conflict confirmation modal state ─────────────────────────────────────────
   const [conflictModal, setConflictModal] = useState(null); // null | { types, host_conflict, visitor_conflict, pendingPayload }
 
-  // â”€â”€ Visitor phone lookup state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Visitor phone lookup state ────────────────────────────────────────────────
   const [visitorLookupState, setVisitorLookupState] = useState("idle"); // idle | loading | found | not_found
   const [foundVisitorData, setFoundVisitorData] = useState(null);
 
@@ -61,14 +59,14 @@ export default function NewRequest() {
     setFoundVisitorData(null);
   }, []);
 
-  // â”€â”€ Vendor phone lookup state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Vendor phone lookup state ────────────────────────────────────────────────
   const [vendorLookupState, setVendorLookupState] = useState("idle"); // idle | loading | found | not_found
 
   const resetVendorLookup = useCallback(() => {
     setVendorLookupState("idle");
   }, []);
 
-  // â”€â”€ EMPLOYEE_VISIT state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── EMPLOYEE_VISIT state ─────────────────────────────────────────────────────
   const [visitMode, setVisitMode] = useState("visiting"); // 'visiting' | 'hosting'
   const [units, setUnits] = useState([]);
   const [selectedUnitId, setSelectedUnitId] = useState("");
@@ -92,7 +90,7 @@ export default function NewRequest() {
     });
   }, [units, currentUnitId, user?.unit_id, user?.unit_code, activeUnit?.id, activeUnit?.code]);
 
-  // â”€â”€ Unit Admin EMPLOYEE_VISIT state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Unit Admin EMPLOYEE_VISIT state ──────────────────────────────────────────
   const [adminVisitorDeptId, setAdminVisitorDeptId] = useState("");
   const [adminVisitorEmpId, setAdminVisitorEmpId] = useState("");
   const [adminVisitorAllEmployees, setAdminVisitorAllEmployees] = useState([]);
@@ -142,7 +140,7 @@ export default function NewRequest() {
     companions: [],
   });
 
-  // â”€â”€ Data fetching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Data fetching ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const fetchDropdownData = async () => {
       try {
@@ -190,7 +188,7 @@ export default function NewRequest() {
     }
   }, [user?.role_type, activeUnit?.id, formData.visit_category]);
 
-  // â”€â”€ Visitor phone lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Visitor phone lookup ───────────────────────────────────────────────────────
   const handleVisitorLookup = async () => {
     const phone = formData.visitor_phone.trim().replace(/\D/g, "");
     if (phone.length !== 10) {
@@ -228,7 +226,7 @@ export default function NewRequest() {
     }
   };
 
-  // â”€â”€ Vendor phone lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Vendor phone lookup ───────────────────────────────────────────────────────
   const handleVendorLookup = async () => {
     const phone = formData.visitor_phone.trim().replace(/\D/g, "");
     if (phone.length !== 10) {
@@ -269,7 +267,7 @@ export default function NewRequest() {
       .catch(() => { });
   }, []);
 
-  // â”€â”€ Time helper: add minutes to "HH:MM" string â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Time helper: add minutes to "HH:MM" string ────────────────────────────────
   const addMinutesToTime = (timeStr, minutes) => {
     const [h, m] = timeStr.split(':').map(Number);
     const total = h * 60 + m + minutes;
@@ -283,7 +281,7 @@ export default function NewRequest() {
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   };
 
-  // â”€â”€ Standard handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Standard handlers ─────────────────────────────────────────────────────────
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => {
@@ -334,7 +332,7 @@ export default function NewRequest() {
     }));
   };
 
-  // â”€â”€ EMPLOYEE_VISIT handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── EMPLOYEE_VISIT handlers ───────────────────────────────────────────────────
   const resetEmpVisitState = () => {
     setSelectedUnitId("");
     setEmpDeptId("");
@@ -494,7 +492,7 @@ export default function NewRequest() {
     }
   };
 
-  // â”€â”€ Category change â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Category change ────────────────────────────────────────────────────────────
   const handleCategoryChange = (category) => {
     const isSpot = category === 'SPOT';
     const isSecurity = ['security', 'receptionist', 'unit_admin'].includes(role);
@@ -522,7 +520,7 @@ export default function NewRequest() {
     resetAdminEmpVisitState();
   };
 
-  // â”€â”€ Companions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Companions ─────────────────────────────────────────────────────────────────
   const addCompanion = () => {
     setFormData((prev) => ({
       ...prev,
@@ -557,7 +555,7 @@ export default function NewRequest() {
     setFormData((prev) => ({ ...prev, companions: updated, accompanying_count: updated.length }));
   };
 
-  // â”€â”€ Submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Submit ─────────────────────────────────────────────────────────────────────
   const buildPayload = () => {
     const payload = { ...formData };
     const cat = payload.visit_category;
@@ -639,7 +637,7 @@ export default function NewRequest() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // â”€â”€ Time order validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Time order validation ──────────────────────────────────────────────────
     const { visit_start_time, visit_end_time } = formData;
     if (visit_start_time && visit_end_time && visit_end_time <= visit_start_time) {
       toast.error('End time must be after start time.');
@@ -695,7 +693,7 @@ export default function NewRequest() {
     }
   };
 
-  // â”€â”€ Force submit (override conflict) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Force submit (override conflict) ──────────────────────────────────────────
   const handleForceSubmit = async () => {
     if (!conflictModal) return;
     setLoading(true);
@@ -712,7 +710,7 @@ export default function NewRequest() {
     }
   };
 
-  // â”€â”€ Derived booleans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Derived booleans ──────────────────────────────────────────────────────────
   const isUnitAdmin = user?.role_type === "unit_admin";
   const isSuperAdminUser = user?.role_type === "super_admin";
   // Super Admin can create emp-visit only when managing a unit
@@ -726,907 +724,503 @@ export default function NewRequest() {
   const showVisitorFields = !isVendor && !isEmpVisit;
   const showHostPicker = (!isSelfHosting || isUnitAdmin) && !isEmpVisit;
 
-  // Shared input style
-  const inputCls = "w-full bg-bg-primary border-0 border-b border-subtle px-3 py-2.5 text-loud focus:ring-0 focus:border-border transition-colors duration-300";
+  // Read-only look for fields filled from a lookup
+  const lockedCls = (state) => (state === "found" ? " bg-surface-alt text-ink-2 cursor-default" : "");
+  const personLabel = (emp) =>
+    `${emp.full_name} (${emp.department_name ? `${emp.department_name} · ` : ""}${emp.designation_name || emp.role_type})`;
+  const unitLabel = (u) => `${u.name}${u.city ? ` · ${u.city}` : ""}`;
+  const endBeforeStart = !!(formData.visit_start_time && formData.visit_end_time && formData.visit_end_time <= formData.visit_start_time);
+
+  // Selectable card (visit type, visit mode)
+  const choiceCls = (on) =>
+    `text-left rounded-lg border px-3 py-2.5 transition-colors ${on ? "border-primary bg-primary-soft" : "border-line hover:border-line-strong bg-surface"}`;
+
+  // Phone + Lookup row shared by the visitor and the vendor sections
+  const lookupRow = ({ state, onLookup, onChange, placeholder, name }) => (
+    <div className="flex gap-2">
+      <input
+        type="tel"
+        name={name}
+        placeholder={placeholder}
+        maxLength={10}
+        inputMode="numeric"
+        value={formData.visitor_phone}
+        onChange={onChange}
+        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); onLookup(); } }}
+        required
+        className="control tabular flex-1"
+      />
+      <button
+        type="button"
+        onClick={onLookup}
+        disabled={state === "loading" || formData.visitor_phone?.length !== 10}
+        className="btn-outline shrink-0"
+      >
+        {state === "loading" ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+        {state === "loading" ? "Looking up…" : "Look up"}
+      </button>
+    </div>
+  );
+
+  const lookupStatus = (state, kind) => (
+    <>
+      {state === "idle" && formData.visitor_phone?.length > 0 && formData.visitor_phone?.length < 10 && (
+        <p className="field-error">Enter a valid 10-digit mobile number.</p>
+      )}
+      {state === "idle" && !formData.visitor_phone && (
+        <p className="field-hint">
+          Enter the 10-digit mobile number and choose Look up. Details fill in for returning {kind === "vendor" ? "contacts" : "visitors"}.
+        </p>
+      )}
+      {state === "found" && (
+        <Note tone="success" icon={CheckCircle2} className="mt-2">
+          <b>Returning {kind === "vendor" ? "contact" : "visitor"}.</b>{" "}
+          {kind === "vendor" ? "Name and email filled in from the last visit." : "Details filled in from our records."}
+        </Note>
+      )}
+      {state === "not_found" && (
+        <Note tone="warning" icon={AlertCircle} className="mt-2">
+          <b>New {kind === "vendor" ? "contact" : "visitor"}.</b>{" "}
+          {kind === "vendor" ? "Enter the name below." : "Fill in the details below; they are saved for next time."}
+        </Note>
+      )}
+    </>
+  );
 
   return (
-    <div className=" mx-auto py-5 px-4 sm:px-6 lg:px-8 animate-fade-in">
-      <div className="mb-4">
-        <h1 className="text-xl font-bold text-loud">
-          New Request
-        </h1>
+    <div className="animate-fade-in">
+      <PageHeader title="New visit request" />
 
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-8">
-        {/* â”€â”€ Step 1: Category Selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        <div className=" rounded-md  ">
-          <h2 className="text-sm text-loud mb-6 flex items-center gap-2">
-            <span className="w-6 h-6 rounded-sm bg-mixed-bg text-loud flex items-center justify-center text-sm font-bold">
-              1
-            </span>
-            Visit Category
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {availableCategories.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => handleCategoryChange(c.id)}
-                className={`p-3 text-sm rounded-md border text-left transition-all duration-300 ${formData.visit_category === c.id
-                    ? "border-border bg-mixed-bg shadow-soft-sm"
-                    : "border-subtle hover:border-border hover:bg-bg-primary"
-                  }`}
-              >
-                <div className={`font-medium ${formData.visit_category === c.id ? "text-accent" : "text-loud"}`}>
-                  {c.label}
-                </div>
-              </button>
-            ))}
+      <form onSubmit={handleSubmit} className="max-w-[960px]">
+        {/* ── Visit type ── */}
+        <section>
+          <SectionTitle icon={Users} title="Visit type" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label="Visit type">
+            {availableCategories.map((c) => {
+              const on = formData.visit_category === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => handleCategoryChange(c.id)}
+                  className={choiceCls(on)}
+                >
+                  <span className={`block text-[13px] font-medium ${on ? "text-primary-strong" : "text-ink"}`}>{c.label}</span>
+                  {c.desc && <span className="block text-[12px] text-muted mt-0.5">{c.desc}</span>}
+                </button>
+              );
+            })}
           </div>
-        </div>
+        </section>
 
-        {/* â”€â”€ Step 2: Visit Details â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        <div className=" rounded-md ">
-          <h2 className="text-sm text-loud mb-6 flex items-center gap-2">
-            <span className="w-6 h-6 rounded-sm bg-mixed-bg text-loud flex items-center justify-center text-sm font-bold">
-              2
-            </span>
-            Visit Details
-          </h2>
+        {/* ── Visit details ── */}
+        <section className="section">
+          <SectionTitle icon={Calendar} title="Visit details" />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* Date */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-loud flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-accent" />
-                Visit Date *
-              </label>
-              <input
-                type="date"
-                name="visit_date"
-                required
-                value={formData.visit_date}
-                onChange={handleInputChange}
-                className={inputCls}
-              />
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-3">
+            <Field label="Visit date" htmlFor="visit_date" required>
+              <input id="visit_date" type="date" name="visit_date" required value={formData.visit_date}
+                onChange={handleInputChange} className="control tabular" />
+            </Field>
+            <Field label="Start time" htmlFor="visit_start_time">
+              <input id="visit_start_time" type="time" name="visit_start_time" value={formData.visit_start_time}
+                onChange={handleInputChange} className="control tabular" />
+            </Field>
+            <Field label="End time" htmlFor="visit_end_time"
+              error={endBeforeStart ? `End time must be after ${formData.visit_start_time}.` : ""}>
+              <input id="visit_end_time" type="time" name="visit_end_time" min={formData.visit_start_time || undefined}
+                value={formData.visit_end_time} onChange={handleInputChange}
+                className={`control tabular${endBeforeStart ? " is-invalid" : ""}`} />
+            </Field>
+          </div>
 
-            {/* Time */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-loud flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-accent" />
-                  Start Time
-                </label>
-                <input
-                  type="time"
-                  name="visit_start_time"
-                  value={formData.visit_start_time}
-                  onChange={handleInputChange}
-                  className={inputCls}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-loud">End Time</label>
-                <input
-                  type="time"
-                  name="visit_end_time"
-                  min={formData.visit_start_time || undefined}
-                  value={formData.visit_end_time}
-                  onChange={handleInputChange}
-                  className={inputCls}
-                />
-                {formData.visit_start_time && formData.visit_end_time && formData.visit_end_time <= formData.visit_start_time && (
-                  <p className="text-xs font-medium" style={{ color: '#ef4444' }}>
-                    &#9888; End time must be after {formData.visit_start_time}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Employee Visit - mode selector + cascading employee picker */}
-            {isEmpVisit && !isAdminEmpVisit && (
-              <div className="md:col-span-2 space-y-5">
-
-                {/* Mode toggle */}
-                <div>
-                  <label className="block text-sm font-medium text-loud mb-2">
-                    What are you doing?
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {[
-                      { mode: "visiting", label: "I'm visiting someone", desc: "You are the visitor  -  they must approve" },
-                      { mode: "hosting", label: "I'm hosting someone", desc: "You are the host  -  auto-approved" },
-                    ].map(({ mode, label, desc }) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => { setVisitMode(mode); resetEmpVisitState(); }}
-                        className={`p-3 rounded-md border text-left transition-all duration-200 ${visitMode === mode
-                            ? "border-border bg-mixed-bg"
-                            : "border-subtle hover:border-border"
-                          }`}
-                      >
-                        <div className={`font-medium text-sm ${visitMode === mode ? "text-accent" : "text-loud"}`}>
-                          {label}
-                        </div>
-                        <div className="text-xs text-muted mt-0.5">{desc}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* My role display */}
-                <div className="p-3 rounded-md border border-subtle bg-bg-primary text-sm">
-                  <p className="text-loud">
-                    <span className="text-faint text-xs uppercase tracking-wider block mb-0.5">
-                      {visitMode === "visiting" ? "Visitor (You)" : "Host (You)"}
-                    </span>
-                    {user?.full_name}  -  {user?.designation || user?.role_type}
-                  </p>
-                </div>
-
-                {/* Unit picker */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-loud flex items-center gap-1.5">
-                    <Building className="w-4 h-4 text-accent" />
-                    {visitMode === "visiting" ? "Select Unit to Visit *" : "Select Visitor's Unit *"}
-                  </label>
-                  <select
-                    value={selectedUnitId}
-                    onChange={handleEmpUnitChange}
-                    required
-                    className={inputCls}
-                  >
-                    <option value="">
-                      {units.length > 0 && otherUnits.length === 0
-                        ? " -  No other units available  - "
-                        : " -  Select Unit  - "}
-                    </option>
-                    {otherUnits.map(u => (
-                      <option key={u.id} value={u.id}>
-                        {u.name}{u.city ? `  -  ${u.city}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Department picker  -  mandatory */}
-                {selectedUnitId && empDepartments.length > 0 && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-loud flex items-center gap-1.5">
-                      <Building className="w-4 h-4 text-accent" />
-                      Select Department *
-                    </label>
-                    <select
-                      value={empDeptId}
-                      onChange={handleEmpDeptChange}
-                      required
-                      className={inputCls}
+          {/* Employee visit — mode + cascading employee picker */}
+          {isEmpVisit && !isAdminEmpVisit && (
+            <div className="mt-5 space-y-4">
+              <div>
+                <p className="field-label">What are you doing?</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Visit mode">
+                  {[
+                    { mode: "visiting", label: "I'm visiting someone", desc: "You are the visitor; they must approve." },
+                    { mode: "hosting", label: "I'm hosting someone", desc: "You are the host; it is approved automatically." },
+                  ].map(({ mode, label, desc }) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="radio"
+                      aria-checked={visitMode === mode}
+                      onClick={() => { setVisitMode(mode); resetEmpVisitState(); }}
+                      className={choiceCls(visitMode === mode)}
                     >
-                      <option value=""> -  Select Department  - </option>
-                      {empDepartments.map(d => (
-                        <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
-                      ))}
-                    </select>
-                  </div>
+                      <span className={`block text-[13px] font-medium ${visitMode === mode ? "text-primary-strong" : "text-ink"}`}>{label}</span>
+                      <span className="block text-[12px] text-muted mt-0.5">{desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="inset-cell">
+                <p className="group-heading mb-1">{visitMode === "visiting" ? "Visitor (you)" : "Host (you)"}</p>
+                <p className="text-ink">{user?.full_name} <span className="text-muted">· {user?.designation || user?.role_type}</span></p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+                <Field label={visitMode === "visiting" ? "Unit to visit" : "Visitor's unit"} required>
+                  <Select value={selectedUnitId} onChange={handleEmpUnitChange} required aria-label="Unit">
+                    <option value="">
+                      {units.length > 0 && otherUnits.length === 0 ? "No other units available" : "Select unit"}
+                    </option>
+                    {otherUnits.map(u => <option key={u.id} value={u.id}>{unitLabel(u)}</option>)}
+                  </Select>
+                </Field>
+
+                {selectedUnitId && empDepartments.length > 0 && (
+                  <Field label="Department" required>
+                    <Select value={empDeptId} onChange={handleEmpDeptChange} required aria-label="Department">
+                      <option value="">Select department</option>
+                      {empDepartments.map(d => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
+                    </Select>
+                  </Field>
                 )}
 
-                {/* Employee picker  -  disabled until department is selected if departments exist */}
                 {selectedUnitId && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-loud flex items-center gap-1.5">
-                      <User className="w-4 h-4 text-accent" />
-                      {visitMode === "visiting" ? "Select Host Employee *" : "Select Visitor (Employee) *"}
-                      {employees.length > 0 && (
-                        <span className="text-xs text-faint font-normal ml-1">({employees.length} found)</span>
-                      )}
-                    </label>
-                    <select
+                  <Field
+                    label={
+                      <>
+                        {visitMode === "visiting" ? "Host employee" : "Visitor (employee)"}
+                        {employees.length > 0 && <span className="ml-1 font-normal text-muted">· {employees.length} found</span>}
+                      </>
+                    }
+                    required
+                    hint={visitMode === "hosting"
+                      ? "Approved automatically because you are the host."
+                      : "The selected person must approve your visit."}
+                    className="sm:col-span-2"
+                  >
+                    <Select
                       value={selectedEmpId}
                       onChange={e => setSelectedEmpId(e.target.value)}
                       required
                       disabled={empDepartments.length > 0 ? !empDeptId || employees.length === 0 : employees.length === 0}
-                      className={`${inputCls} disabled:opacity-50`}
+                      aria-label="Employee"
                     >
                       <option value="">
                         {empDepartments.length > 0 && !empDeptId
-                          ? " -  Select Department First  - "
+                          ? "Select a department first"
                           : employees.length === 0
-                            ? (empDepartments.length > 0 ? " -  No users found in this department  - " : " -  No users found in this unit  - ")
-                            : " -  Select Person  - "
-                        }
+                            ? (empDepartments.length > 0 ? "No users in this department" : "No users in this unit")
+                            : "Select person"}
                       </option>
-                      {employees.map(emp => (
-                        <option key={emp.id} value={emp.id}>
-                          {emp.full_name} ({emp.department_name ? `${emp.department_name}  ·  ` : ''}{emp.designation_name || emp.role_type})
-                        </option>
-                      ))}
-                    </select>
-                    {visitMode === "hosting" && (
-                      <p className="text-xs text-faint mt-1">
-                        &#10003; This request will be auto-approved since you are the host.
-                      </p>
-                    )}
-                    {visitMode === "visiting" && (
-                      <p className="text-xs text-faint mt-1">
-                        &#9203; The selected person will need to approve your visit.
-                      </p>
-                    )}
-                  </div>
+                      {employees.map(emp => <option key={emp.id} value={emp.id}>{personLabel(emp)}</option>)}
+                    </Select>
+                  </Field>
                 )}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* â”€â”€ EMPLOYEE VISIT for Unit Admin & Super Admin (while managing a unit) â”€â”€ */}
-            {isEmpVisit && isAdminEmpVisit && (
-              <div className="md:col-span-2 space-y-6">
+          {/* Employee visit arranged by a unit admin (or a super admin managing a unit) */}
+          {isEmpVisit && isAdminEmpVisit && (
+            <div className="mt-5 space-y-4">
+              <Note tone="info" icon={AlertCircle}>
+                <b>Arrange an employee visit.</b>{" "}
+                {isSuperAdminUser
+                  ? `Choose a visitor from the managed unit (${activeUnit?.name}) and a host from any unit.`
+                  : "Choose a visitor from your unit and a host from any unit."}
+              </Note>
 
-                {/* Section header or info */}
-                <div className="p-4 rounded-md border border-subtle bg-mixed-bg text-sm">
-                  <p className="text-loud font-medium">
-                    Arrange Employee Visit
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="tile">
+                  <p className="group-heading mb-3">
+                    Visitor · {isSuperAdminUser ? (activeUnit?.name || "Managed unit") : (user?.unit_name || "My unit")}
                   </p>
-                  <p className="text-xs text-muted mt-1">
-                    {isSuperAdminUser
-                      ? `Select a visitor from the managed unit (${activeUnit?.name}) and a host from any unit.`
-                      : "Select a visitor from your unit and a host from any unit."
-                    }
-                  </p>
-                </div>
-
-                {/* VISITOR SIDE: Fixed to admin's own unit */}
-                <div className="space-y-4 p-5 rounded-md border border-subtle bg-bg-primary/30">
-                  <h3 className="text-sm font-semibold text-accent uppercase tracking-wider flex items-center gap-2">
-                    <User className="w-4 h-4" />
-                    Visitor (From: {isSuperAdminUser ? (activeUnit?.name || 'Managed Unit') : (user?.unit_name || 'My Unit')})
-                  </h3>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {/* Visitor Department */}
-                    <div className="space-y-2">
-                      <label className="block text-xs font-medium text-muted">Select Department</label>
-                      <select
-                        value={adminVisitorDeptId}
-                        onChange={handleAdminVisitorDeptChange}
-                        className={inputCls}
-                      >
-                        <option value=""> -  All Departments  - </option>
-                        {departments.map(d => (
-                          <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Visitor Employee */}
-                    <div className="space-y-2">
-                      <label className="block text-xs font-medium text-muted">Select Employee *</label>
-                      <select
+                  <div className="space-y-3">
+                    <Field label="Department">
+                      <Select value={adminVisitorDeptId} onChange={handleAdminVisitorDeptChange} aria-label="Visitor department">
+                        <option value="">All departments</option>
+                        {departments.map(d => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
+                      </Select>
+                    </Field>
+                    <Field label="Employee" required>
+                      <Select
                         value={adminVisitorEmpId}
                         onChange={e => setAdminVisitorEmpId(e.target.value)}
                         required
                         disabled={adminVisitorEmployees.length === 0}
-                        className={`${inputCls} disabled:opacity-50`}
+                        aria-label="Visitor employee"
                       >
-                        <option value="">
-                          {adminVisitorEmployees.length === 0 ? " -  No users found  - " : " -  Select Person  - "}
-                        </option>
-                        {adminVisitorEmployees.map(emp => (
-                          <option key={emp.id} value={emp.id}>
-                            {emp.full_name} ({emp.department_name ? `${emp.department_name}  ·  ` : ''}{emp.designation_name || emp.role_type})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                        <option value="">{adminVisitorEmployees.length === 0 ? "No users found" : "Select person"}</option>
+                        {adminVisitorEmployees.map(emp => <option key={emp.id} value={emp.id}>{personLabel(emp)}</option>)}
+                      </Select>
+                    </Field>
                   </div>
                 </div>
 
-                {/* HOST SIDE: Pick any unit */}
-                <div className="space-y-4 p-5 rounded-md border border-subtle bg-bg-primary/30">
-                  <h3 className="text-sm font-semibold text-accent uppercase tracking-wider flex items-center gap-2">
-                    <Building className="w-4 h-4" />
-                    Host (Any Unit)
-                  </h3>
-
-                  <div className="space-y-4">
-                    {/* Host Unit */}
-                    <div className="space-y-2">
-                      <label className="block text-xs font-medium text-muted">Select Host's Unit *</label>
-                      <select
-                        value={adminHostUnitId}
-                        onChange={handleAdminHostUnitChange}
-                        required
-                        className={inputCls}
-                      >
+                <div className="tile">
+                  <p className="group-heading mb-3">Host · any unit</p>
+                  <div className="space-y-3">
+                    <Field label="Host's unit" required>
+                      <Select value={adminHostUnitId} onChange={handleAdminHostUnitChange} required aria-label="Host unit">
                         <option value="">
-                          {units.length > 0 && otherUnits.length === 0
-                            ? " -  No other units available  - "
-                            : " -  Select Unit  - "}
+                          {units.length > 0 && otherUnits.length === 0 ? "No other units available" : "Select unit"}
                         </option>
-                        {otherUnits.map(u => (
-                          <option key={u.id} value={u.id}>
-                            {u.name}{u.city ? `  -  ${u.city}` : ""}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
+                        {otherUnits.map(u => <option key={u.id} value={u.id}>{unitLabel(u)}</option>)}
+                      </Select>
+                    </Field>
+                    {adminHostUnitId && adminHostDepts.length > 0 && (
+                      <Field label="Department">
+                        <Select value={adminHostDeptId} onChange={handleAdminHostDeptChange} aria-label="Host department">
+                          <option value="">All departments</option>
+                          {adminHostDepts.map(d => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
+                        </Select>
+                      </Field>
+                    )}
                     {adminHostUnitId && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {/* Host Department */}
-                        {adminHostDepts.length > 0 && (
-                          <div className="space-y-2">
-                            <label className="block text-xs font-medium text-muted">Filter by Department</label>
-                            <select
-                              value={adminHostDeptId}
-                              onChange={handleAdminHostDeptChange}
-                              className={inputCls}
-                            >
-                              <option value=""> -  All Departments  - </option>
-                              {adminHostDepts.map(d => (
-                                <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
-
-                        {/* Host Employee */}
-                        <div className="space-y-2">
-                          <label className="block text-xs font-medium text-muted">Select Host *</label>
-                          <select
-                            value={adminHostEmpId}
-                            onChange={e => setAdminHostEmpId(e.target.value)}
-                            required
-                            disabled={adminHostEmployees.length === 0}
-                            className={`${inputCls} disabled:opacity-50`}
-                          >
-                            <option value="">
-                              {adminHostEmployees.length === 0 ? " -  No users found  - " : " -  Select Person  - "}
-                            </option>
-                            {adminHostEmployees.map(emp => (
-                              <option key={emp.id} value={emp.id}>
-                                {emp.full_name} ({emp.department_name ? `${emp.department_name}  ·  ` : ''}{emp.designation_name || emp.role_type})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-              </div>
-            )}
-
-            {/* â”€â”€ Standard Visitor / Host section (non-EMPLOYEE_VISIT) â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            {(() => {
-              return (
-                <>
-                  {/* Visitor Section */}
-                  {showVisitorFields ? (
-                    <div className="space-y-4 md:col-span-2">
-                      <label className="text-sm font-medium text-loud flex items-center gap-2">
-                        <Phone className="w-4 h-4 text-accent" />
-                        Visitor *
-                      </label>
-
-                      {/* Phone + Lookup button */}
-                      <div className="flex gap-2">
-                        <input
-                          type="tel"
-                          placeholder="10-digit mobile number"
-                          maxLength={10}
-                          value={formData.visitor_phone}
-                          onChange={e => {
-                            const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                            setFormData(p => ({ ...p, visitor_phone: val, visitor_name: '', visitor_email: '', visitor_id: '' }));
-                            resetVisitorLookup();
-                          }}
-                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleVisitorLookup(); } }}
+                      <Field label="Host" required>
+                        <Select
+                          value={adminHostEmpId}
+                          onChange={e => setAdminHostEmpId(e.target.value)}
                           required
-                          className={`${inputCls} flex-1`}
-                        />
-                        <button
-                          type="button"
-                          onClick={handleVisitorLookup}
-                          disabled={visitorLookupState === 'loading' || formData.visitor_phone?.length !== 10}
-                          className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 disabled:opacity-50 shrink-0"
-                          style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
+                          disabled={adminHostEmployees.length === 0}
+                          aria-label="Host employee"
                         >
-                          {visitorLookupState === 'loading'
-                            ? <Loader2 className="w-4 h-4 animate-spin" />
-                            : <Search className="w-4 h-4" />}
-                          {visitorLookupState === 'loading' ? 'Looking up...' : 'Lookup'}
-                        </button>
-                      </div>
-                      {visitorLookupState === 'idle' && formData.visitor_phone?.length > 0 && formData.visitor_phone?.length < 10 && (
-                        <p className="text-xs text-amber-500">
-                          Please enter a valid 10-digit mobile number
-                        </p>
-                      )}
-
-                      {/* Status banners */}
-                      {visitorLookupState === 'found' && (
-                        <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
-                          style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
-                          <CheckCircle2 className="w-4 h-4 shrink-0" />
-                          <span><strong>Returning visitor</strong>  -  details auto-filled from our records.</span>
-                        </div>
-                      )}
-                      {visitorLookupState === 'not_found' && (
-                        <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
-                          style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
-                          <AlertCircle className="w-4 h-4 shrink-0" />
-                          <span><strong>New visitor</strong>  -  fill in the details below. They will be saved automatically.</span>
-                        </div>
-                      )}
-                      {visitorLookupState === 'idle' && (!formData.visitor_phone || formData.visitor_phone.length === 0) && (
-                        <p className="text-xs text-faint">
-                          Enter a valid 10-digit mobile number and click <strong>Lookup</strong>.
-                          Details auto-fill for returning visitors.
-                        </p>
-                      )}
-
-                      {/* Name + Email shown after lookup */}
-                      {(visitorLookupState === 'found' || visitorLookupState === 'not_found') && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-1">
-                            <label className="block text-xs font-medium text-faint uppercase tracking-wider">Full Name *</label>
-                            <input
-                              type="text"
-                              required
-                              readOnly={visitorLookupState === 'found'}
-                              value={formData.visitor_name}
-                              onChange={e => setFormData(p => ({ ...p, visitor_name: e.target.value }))}
-                              placeholder="Visitor full name"
-                              className={`${inputCls}${visitorLookupState === 'found' ? ' opacity-60 cursor-default' : ''}`}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="block text-xs font-medium text-faint uppercase tracking-wider">Email (optional)</label>
-                            <input
-                              type="email"
-                              readOnly={visitorLookupState === 'found'}
-                              value={formData.visitor_email}
-                              onChange={e => setFormData(p => ({ ...p, visitor_email: e.target.value }))}
-                              placeholder="visitor@email.com"
-                              className={`${inputCls}${visitorLookupState === 'found' ? ' opacity-60 cursor-default' : ''}`}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-
-                  {/* Department Section */}
-                  {showHostPicker && (
-                    <div className="space-y-2 md:col-span-2">
-                      <label className="text-sm font-medium text-loud flex items-center gap-2">
-                        <Building className="w-4 h-4 text-accent" />
-                        Select Department *
-                      </label>
-                      <select
-                        name="selected_department_id"
-                        required
-                        value={selectedDeptId}
-                        onChange={handleDeptChange}
-                        className={inputCls}
-                      >
-                        <option value="">-- Select Department --</option>
-                        {departments.map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name} ({d.code})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {/* Host Section */}
-                  {showHostPicker ? (
-                    <div className="space-y-2 md:col-span-2">
-                      <label className="text-sm font-medium text-loud flex items-center gap-2">
-                        <Building className="w-4 h-4 text-accent" />
-                        Select Host (Employee) *
-                      </label>
-                      <select
-                        name="host_user_id"
-                        required
-                        value={formData.host_user_id}
-                        onChange={handleHostChange}
-                        disabled={!selectedDeptId}
-                        className={`${inputCls} disabled:opacity-50`}
-                      >
-                        <option value="">
-                          {!selectedDeptId ? "-- Select Department First --" : "-- Select Host Employee --"}
-                        </option>
-                        {hosts.map((h) => (
-                          <option key={h.id} value={h.id}>
-                            {h.full_name} ({h.department_name || h.designation || h.role_type})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : !isEmpVisit ? (
-                    <div className="space-y-2 md:col-span-2">
-                      <label className="text-sm font-medium text-loud flex items-center gap-2">
-                        <Building className="w-4 h-4 text-accent" />
-                        Host (You)
-                      </label>
-                      <div className="py-2 text-loud font-medium border-b border-subtle">
-                        {user?.full_name}  -  {user?.designation || user?.role}
-                      </div>
-                      <input type="hidden" name="host_user_id" value={user?.id || ""} />
-                    </div>
-                  ) : null}
-                </>
-              );
-            })()}
-
-            {/* Purpose */}
-            <div className="space-y-2 md:col-span-2">
-              <label className="block text-sm font-medium text-loud">
-                Purpose of Visit *
-              </label>
-              <textarea
-                name="purpose"
-                required
-                minLength={10}
-                rows="2"
-                value={formData.purpose}
-                onChange={handleInputChange}
-                className={`${inputCls} resize-none`}
-                placeholder="Brief description of the visit purpose (min 10 chars)..."
-              />
-            </div>
-          </div>
-        </div>
-
-
-        {/* â”€â”€ Step 3: Vendor Details (conditional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        {isVendor && (
-          <div className="vms-card rounded-md p-8 shadow-card animate-fade-in">
-            <h2 className="text-xl text-loud mb-6 flex items-center gap-2">
-              <span className="w-8 h-8 rounded-full bg-mixed-bg text-accent flex items-center justify-center text-sm font-bold">
-                3
-              </span>
-              <Building className="w-5 h-5 text-accent" />
-              Vendor Details
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* Company Name */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-loud">Company Name *</label>
-                <input type="text" name="company_name" required value={formData.company_name} onChange={handleInputChange} className={inputCls} />
-              </div>
-
-              {/* Email Address */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-loud">Email Address</label>
-                <input
-                  type="email" name="vendor_email"
-                  value={formData.vendor_email}
-                  onChange={handleInputChange}
-                  readOnly={vendorLookupState === 'found'}
-                  className={`${inputCls}${vendorLookupState === 'found' ? ' opacity-60 cursor-default' : ''}`}
-                  placeholder="For gate pass delivery"
-                />
-              </div>
-
-              {/* Contact Phone with Lookup  -  full width */}
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-medium text-loud flex items-center gap-2">
-                  <Phone className="w-4 h-4 text-accent" />
-                  Contact Phone *
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="tel" name="visitor_phone" required
-                    placeholder="10-digit contact / mobile number"
-                    maxLength={10}
-                    value={formData.visitor_phone}
-                    onChange={e => {
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                      setFormData(p => ({ ...p, visitor_phone: val, contact_person: '' }));
-                      resetVendorLookup();
-                    }}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleVendorLookup(); } }}
-                    className={`${inputCls} flex-1`}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleVendorLookup}
-                    disabled={vendorLookupState === 'loading' || formData.visitor_phone?.length !== 10}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 disabled:opacity-50 shrink-0"
-                    style={{ background: 'var(--color-info-bg)', color: 'var(--color-info)' }}
-                  >
-                    {vendorLookupState === 'loading'
-                      ? <Loader2 className="w-4 h-4 animate-spin" />
-                      : <Search className="w-4 h-4" />}
-                    {vendorLookupState === 'loading' ? 'Looking up...' : 'Lookup'}
-                  </button>
-                </div>
-                {vendorLookupState === 'idle' && formData.visitor_phone?.length > 0 && formData.visitor_phone?.length < 10 && (
-                  <p className="text-xs text-amber-500">
-                    Please enter a valid 10-digit mobile number
-                  </p>
-                )}
-                {vendorLookupState === 'found' && (
-                  <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
-                    style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
-                    <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span><strong>Returning contact</strong>  -  name and email auto-filled from previous visit.</span>
-                  </div>
-                )}
-                {vendorLookupState === 'not_found' && (
-                  <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
-                    style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span><strong>New contact</strong>  -  fill in the name below.</span>
-                  </div>
-                )}
-                {vendorLookupState === 'idle' && (!formData.visitor_phone || formData.visitor_phone.length === 0) && (
-                  <p className="text-xs text-faint">
-                    Enter a valid 10-digit mobile number and click <strong>Lookup</strong> to auto-fill details.
-                  </p>
-                )}
-              </div>
-
-              {/* Contact Person  -  auto-filled or manual */}
-              <div className="space-y-2 md:col-span-2">
-                <label className="block text-sm font-medium text-loud">Contact Person *</label>
-                <input
-                  type="text" name="contact_person" required
-                  value={formData.contact_person}
-                  onChange={e => setFormData(p => ({ ...p, contact_person: e.target.value }))}
-                  readOnly={vendorLookupState === 'found'}
-                  placeholder="Representative's full name"
-                  className={`${inputCls}${vendorLookupState === 'found' ? ' opacity-60 cursor-default' : ''}`}
-                />
-              </div>
-
-              {/* Service Type */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-loud">Service Type</label>
-                <input type="text" name="service_type" value={formData.service_type} onChange={handleInputChange} className={inputCls} placeholder="e.g. AC Maintenance, Delivery" />
-              </div>
-
-              {/* Work Order Ref */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-loud">Work Order Ref</label>
-                <input type="text" name="work_order_ref" value={formData.work_order_ref} onChange={handleInputChange} className={inputCls} />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* â”€â”€ Companions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        <div className=" rounded-md ">
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
-            <h2 className="text-sm text-loud flex items-center gap-2">
-              <span className="w-6 h-6 rounded-sm bg-mixed-bg text-loud flex items-center justify-center text-sm font-bold shrink-0">
-                {isVendor ? "4" : "3"}
-              </span>
-              <Users className="w-5 h-5 text-accent shrink-0" />
-              <span>Companions <span className="text-base font-normal text-muted">({formData.accompanying_count})</span></span>
-            </h2>
-            <button
-              type="button"
-              onClick={addCompanion}
-              className="btn-secondary text-accent text-xs font-medium uppercase tracking-wider hover:bg-mixed-bg transition-colors flex items-center gap-1 self-start sm:self-auto"
-            >
-              <Plus className="w-3 h-3" /> Add Companion
-            </button>
-          </div>
-
-
-          {formData.companions.length === 0 ? (
-            <div className="text-center py-6 text-faint italic border border-dashed border-subtle rounded-md">
-              No companions added.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {formData.companions.map((comp, idx) => (
-                <div
-                  key={idx}
-                  className="flex flex-col sm:flex-row gap-4 items-start sm:items-center bg-bg-secondary p-4 rounded-md border border-subtle"
-                >
-                  <div className="flex-1 space-y-1 w-full">
-                    <input
-                      type="text"
-                      placeholder="Full Name"
-                      required
-                      value={comp.full_name}
-                      onChange={(e) => updateCompanion(idx, "full_name", e.target.value)}
-                      className="w-full outline-none bg-bg-primary px-2 border-0 border-b border-subtle  py-2 text-sm text-loud focus:ring-0 focus:border-border"
-                    />
-                  </div>
-                  <div className="flex-1 space-y-1 w-full">
-                    <select
-                      value={comp.id_type}
-                      onChange={(e) => updateCompanion(idx, "id_type", e.target.value)}
-                      className="w-full bg-bg-primary outline-none  border-0 border-b border-subtle px-2 py-2 text-sm text-loud focus:ring-0 focus:border-border"
-                    >
-                      <option value="AADHAAR">Aadhaar</option>
-                      <option value="PAN">PAN</option>
-                      <option value="DRIVING_LICENSE">Driving License</option>
-                      <option value="PASSPORT">Passport</option>
-                    </select>
-                  </div>
-                  <div className="flex-1 space-y-1 w-full">
-                    <input
-                      type="text"
-                      placeholder={comp.id_type === "AADHAAR" ? "12-digit Aadhaar Number" : "ID Number"}
-                      required
-                      value={comp.id_number}
-                      maxLength={comp.id_type === "AADHAAR" ? 12 : 50}
-                      onChange={(e) => updateCompanion(idx, "id_number", e.target.value)}
-                      className={`w-full bg-bg-primary px-2 border-0 border-b py-2 text-sm text-loud focus:ring-0 focus:border-border transition-colors ${comp.id_type === "AADHAAR" && comp.id_number && comp.id_number.length !== 12
-                          ? "border-red-500 focus:border-red-500"
-                          : "border-subtle"
-                        }`}
-                    />
-                    {comp.id_type === "AADHAAR" && comp.id_number && comp.id_number.length !== 12 && (
-                      <p className="text-xs text-red-500 pt-0.5">
-                        Aadhaar must be exactly 12 digits
-                      </p>
+                          <option value="">{adminHostEmployees.length === 0 ? "No users found" : "Select person"}</option>
+                          {adminHostEmployees.map(emp => <option key={emp.id} value={emp.id}>{personLabel(emp)}</option>)}
+                        </Select>
+                      </Field>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => removeCompanion(idx)}
-                    className="p-2 text-color  rounded-sm transition-colors self-end sm:self-auto"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
                 </div>
-              ))}
+              </div>
             </div>
           )}
-        </div>
 
-        {/* â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        <div className="flex justify-end gap-4 pt-4">
-          <button
-            type="button"
-            onClick={() => navigate("/requests")}
-            className="btn-secondary text-accent uppercase tracking-widest text-sm font-medium hover:bg-mixed-bg transition-colors duration-300"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary text-white uppercase tracking-widest text-sm font-medium hover:bg-accent transition-colors duration-300 shadow-card hover:shadow-hover disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {loading ? (
-              "Submitting..."
-            ) : (
-              <>
-                <Check className="w-4 h-4" />
-                Submit Request
-              </>
+          {/* Visitor (non employee-visit, non vendor) */}
+          {showVisitorFields && (
+            <div className="mt-5">
+              <Field label="Visitor mobile number" required>
+                {lookupRow({
+                  state: visitorLookupState,
+                  onLookup: handleVisitorLookup,
+                  placeholder: "10-digit mobile number",
+                  onChange: e => {
+                    const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                    setFormData(p => ({ ...p, visitor_phone: val, visitor_name: "", visitor_email: "", visitor_id: "" }));
+                    resetVisitorLookup();
+                  },
+                })}
+                {lookupStatus(visitorLookupState, "visitor")}
+              </Field>
+
+              {(visitorLookupState === "found" || visitorLookupState === "not_found") && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 mt-3">
+                  <Field label="Full name" htmlFor="visitor_name" required>
+                    <input id="visitor_name" type="text" required readOnly={visitorLookupState === "found"}
+                      value={formData.visitor_name}
+                      onChange={e => setFormData(p => ({ ...p, visitor_name: e.target.value }))}
+                      placeholder="Visitor's full name"
+                      className={`control${lockedCls(visitorLookupState)}`} />
+                  </Field>
+                  <Field label="Email" htmlFor="visitor_email">
+                    <input id="visitor_email" type="email" readOnly={visitorLookupState === "found"}
+                      value={formData.visitor_email}
+                      onChange={e => setFormData(p => ({ ...p, visitor_email: e.target.value }))}
+                      placeholder="name@example.com"
+                      className={`control${lockedCls(visitorLookupState)}`} />
+                  </Field>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Host */}
+          {showHostPicker ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 mt-5">
+              <Field label="Department" required>
+                <Select name="selected_department_id" required value={selectedDeptId} onChange={handleDeptChange} aria-label="Department">
+                  <option value="">Select department</option>
+                  {departments.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
+                </Select>
+              </Field>
+              <Field label="Host employee" required>
+                <Select name="host_user_id" required value={formData.host_user_id} onChange={handleHostChange}
+                  disabled={!selectedDeptId} aria-label="Host employee">
+                  <option value="">{!selectedDeptId ? "Select a department first" : "Select host"}</option>
+                  {hosts.map((h) => (
+                    <option key={h.id} value={h.id}>{h.full_name} ({h.department_name || h.designation || h.role_type})</option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          ) : !isEmpVisit ? (
+            <div className="inset-cell mt-5">
+              <p className="group-heading mb-1">Host (you)</p>
+              <p className="text-ink">{user?.full_name} <span className="text-muted">· {user?.designation || user?.role}</span></p>
+              <input type="hidden" name="host_user_id" value={user?.id || ""} />
+            </div>
+          ) : null}
+
+          <Field label="Purpose of visit" htmlFor="purpose" required hint="At least 10 characters." className="mt-5">
+            <textarea id="purpose" name="purpose" required minLength={10} rows={2} value={formData.purpose}
+              onChange={handleInputChange} className="control resize-none"
+              placeholder="e.g. Quarterly maintenance review of the turbine hall" />
+          </Field>
+        </section>
+
+        {/* ── Vendor details ── */}
+        {isVendor && (
+          <section className="section animate-fade-in">
+            <SectionTitle icon={Building} title="Vendor details" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+              <Field label="Company name" htmlFor="company_name" required>
+                <input id="company_name" type="text" name="company_name" required value={formData.company_name}
+                  onChange={handleInputChange} className="control" />
+              </Field>
+              <Field label="Email" htmlFor="vendor_email" hint="Used to send the gate pass.">
+                <input id="vendor_email" type="email" name="vendor_email" value={formData.vendor_email}
+                  onChange={handleInputChange} readOnly={vendorLookupState === "found"}
+                  className={`control${lockedCls(vendorLookupState)}`} placeholder="name@company.com" />
+              </Field>
+
+              <Field label="Contact mobile number" required className="sm:col-span-2">
+                {lookupRow({
+                  state: vendorLookupState,
+                  onLookup: handleVendorLookup,
+                  name: "visitor_phone",
+                  placeholder: "10-digit contact number",
+                  onChange: e => {
+                    const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                    setFormData(p => ({ ...p, visitor_phone: val, contact_person: "" }));
+                    resetVendorLookup();
+                  },
+                })}
+                {lookupStatus(vendorLookupState, "vendor")}
+              </Field>
+
+              <Field label="Contact person" htmlFor="contact_person" required className="sm:col-span-2">
+                <input id="contact_person" type="text" name="contact_person" required value={formData.contact_person}
+                  onChange={e => setFormData(p => ({ ...p, contact_person: e.target.value }))}
+                  readOnly={vendorLookupState === "found"} placeholder="Representative's full name"
+                  className={`control${lockedCls(vendorLookupState)}`} />
+              </Field>
+
+              <Field label="Service type" htmlFor="service_type">
+                <input id="service_type" type="text" name="service_type" value={formData.service_type}
+                  onChange={handleInputChange} className="control" placeholder="e.g. AC maintenance, delivery" />
+              </Field>
+              <Field label="Work order ref." htmlFor="work_order_ref">
+                <input id="work_order_ref" type="text" name="work_order_ref" value={formData.work_order_ref}
+                  onChange={handleInputChange} className="control mono" />
+              </Field>
+            </div>
+          </section>
+        )}
+
+        {/* ── Companions ── */}
+        <section className="section">
+          <SectionTitle
+            icon={User}
+            title="Companions"
+            meta={`${formData.accompanying_count}`}
+            actions={(
+              <button type="button" onClick={addCompanion} className="btn-outline btn-sm">
+                <Plus size={13} /> Add companion
+              </button>
             )}
+          />
+
+          {formData.companions.length === 0 ? (
+            <p className="text-[12.5px] text-muted">No companions. Add anyone coming with the visitor.</p>
+          ) : (
+            <div className="space-y-2">
+              <div className="hidden sm:grid grid-cols-[minmax(0,1fr)_170px_minmax(0,1fr)_30px] gap-2 group-heading">
+                <span>Full name</span><span>ID type</span><span>ID number</span><span />
+              </div>
+              {formData.companions.map((comp, idx) => {
+                const badAadhaar = comp.id_type === "AADHAAR" && comp.id_number && comp.id_number.length !== 12;
+                return (
+                  <div key={idx} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_170px_minmax(0,1fr)_30px] gap-2 items-start">
+                    <input type="text" placeholder="Full name" required value={comp.full_name}
+                      aria-label={`Companion ${idx + 1} name`}
+                      onChange={(e) => updateCompanion(idx, "full_name", e.target.value)} className="control" />
+                    <Select value={comp.id_type} onChange={(e) => updateCompanion(idx, "id_type", e.target.value)}
+                      aria-label={`Companion ${idx + 1} ID type`}>
+                      <option value="AADHAAR">Aadhaar</option>
+                      <option value="PAN">PAN</option>
+                      <option value="DRIVING_LICENSE">Driving licence</option>
+                      <option value="PASSPORT">Passport</option>
+                    </Select>
+                    <div>
+                      <input type="text" required value={comp.id_number}
+                        placeholder={comp.id_type === "AADHAAR" ? "12-digit Aadhaar number" : "ID number"}
+                        aria-label={`Companion ${idx + 1} ID number`}
+                        maxLength={comp.id_type === "AADHAAR" ? 12 : 50}
+                        onChange={(e) => updateCompanion(idx, "id_number", e.target.value)}
+                        className={`control mono${badAadhaar ? " is-invalid" : ""}`} />
+                      {badAadhaar && <p className="field-error">Aadhaar must be exactly 12 digits.</p>}
+                    </div>
+                    <button type="button" onClick={() => removeCompanion(idx)} className="btn-icon"
+                      aria-label={`Remove companion ${idx + 1}`} title="Remove companion">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* ── Actions ── */}
+        <div className="mt-6 pt-4 border-t border-line flex flex-wrap gap-2">
+          <button type="submit" disabled={loading} className="btn-primary">
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            {loading ? "Submitting…" : "Submit request"}
           </button>
+          <button type="button" onClick={() => navigate("/requests")} className="btn-outline">Cancel</button>
         </div>
       </form>
 
-      {/* â”€â”€ Schedule Conflict Modal  -  portalled to document.body to escape transform containing block â”€â”€ */}
-      {conflictModal && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={() => setConflictModal(null)}
-          />
-          {/* Dialog */}
-          <div
-            className="relative w-full max-w-md rounded-xl shadow-2xl overflow-hidden"
-            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-          >
-            {/* Header */}
-            <div
-              className="flex items-start justify-between px-6 pt-5 pb-4"
-              style={{ borderBottom: '1px solid var(--color-border)' }}
-            >
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-                  style={{ background: '#fef3c7' }}
-                >
-                  <AlertTriangle className="w-5 h-5" style={{ color: 'var(--color-warning)' }} strokeWidth={2} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-base" style={{ color: 'var(--color-text)' }}>
-                    Schedule Conflict Detected
-                  </h3>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-faint)' }}>
-                    Review the conflicts below before proceeding
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setConflictModal(null)}
-                className="p-1 rounded-full hover:bg-bg-primary transition-colors"
-                style={{ color: 'var(--color-text-faint)' }}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Conflict details */}
-            <div className="px-6 py-4 space-y-3">
-              {/* HOST_BUSY */}
-              {conflictModal.types.includes('HOST_BUSY') && conflictModal.host_conflict && (
-                <div
-                  className="rounded-lg px-4 py-3 space-y-1"
-                  style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}
-                >
-                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#c2410c' }}>
-                    &#128308; Host is already busy
-                  </p>
-                  <p className="text-sm" style={{ color: '#9a3412' }}>
-                    <strong>{conflictModal.host_conflict.visitor_name}</strong> is already visiting the host during{' '}
-                    <strong>{conflictModal.host_conflict.time_window}</strong>.
-                  </p>
-                </div>
-              )}
-
-              {/* VISITOR_BUSY */}
-              {conflictModal.types.includes('VISITOR_BUSY') && conflictModal.visitor_conflict && (
-                <div
-                  className="rounded-lg px-4 py-3 space-y-1"
-                  style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}
-                >
-                  <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#c2410c' }}>
-                    &#128308; Visitor already has another visit
-                  </p>
-                  <p className="text-sm" style={{ color: '#9a3412' }}>
-                    This visitor already has a request at{' '}
-                    <strong>{conflictModal.visitor_conflict.dept_name}</strong> during{' '}
-                    <strong>{conflictModal.visitor_conflict.time_window}</strong>.
-                  </p>
-                </div>
-              )}
-
-              <p className="text-xs pt-1" style={{ color: 'var(--color-text-faint)' }}>
-                You can go back and adjust the time, or continue anyway to override the conflict.
-                Overridden requests are flagged with a &#9888; badge for admin review.
-              </p>
-            </div>
-
-            {/* Footer */}
-            <div
-              className="flex items-center justify-end gap-3 px-6 py-4"
-              style={{ borderTop: '1px solid var(--color-border)' }}
-            >
-              <button
-                onClick={() => setConflictModal(null)}
-                className="btn-secondary text-sm px-5 py-2"
-              >
-                Go Back &amp; Change Time
-              </button>
-              <button
-                onClick={handleForceSubmit}
-                disabled={loading}
-                className="btn-primary text-sm px-5 py-2 flex items-center gap-2 disabled:opacity-60"
-                style={{ background: 'var(--color-accent)', color: '#fff' }}
-              >
-                {loading
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  : <AlertTriangle className="w-3.5 h-3.5" strokeWidth={2} />
-                }
-                Continue Anyway
-              </button>
-            </div>
+      {/* ── Schedule conflict ── */}
+      <Modal
+        open={!!conflictModal}
+        onClose={() => setConflictModal(null)}
+        busy={loading}
+        width={460}
+        title="Schedule conflict"
+        footer={(
+          <>
+            <button type="button" onClick={() => setConflictModal(null)} className="btn-outline" disabled={loading}>
+              Change the time
+            </button>
+            <button type="button" onClick={handleForceSubmit} disabled={loading} className="btn-primary">
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <AlertTriangle size={14} />}
+              Continue anyway
+            </button>
+          </>
+        )}
+      >
+        {conflictModal && (
+          <div className="space-y-2">
+            {conflictModal.types.includes("HOST_BUSY") && conflictModal.host_conflict && (
+              <Note tone="warning" icon={AlertTriangle}>
+                <b>The host is busy.</b> {conflictModal.host_conflict.visitor_name} is already visiting the host
+                during <b>{conflictModal.host_conflict.time_window}</b>.
+              </Note>
+            )}
+            {conflictModal.types.includes("VISITOR_BUSY") && conflictModal.visitor_conflict && (
+              <Note tone="warning" icon={AlertTriangle}>
+                <b>The visitor has another visit.</b> They already have a request at{" "}
+                {conflictModal.visitor_conflict.dept_name} during <b>{conflictModal.visitor_conflict.time_window}</b>.
+              </Note>
+            )}
+            <p className="text-[12.5px] text-ink-2 pt-1">
+              Change the time, or continue to override the conflict. Overridden requests are flagged for admin review.
+            </p>
           </div>
-        </div>
-        , document.body)}
-
-
-
+        )}
+      </Modal>
     </div>
   );
 }
-
