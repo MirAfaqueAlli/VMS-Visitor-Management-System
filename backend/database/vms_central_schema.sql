@@ -110,6 +110,23 @@ CREATE TABLE IF NOT EXISTS public_otp_logs (
     INDEX idx_pub_otp (identifier, identifier_type, is_used)
 );
 
+-- Public registered visitors (portal users who registered via /public-request)
+-- Only visitors who specifically registered through the public portal can log in.
+-- Spot walk-in visitors and employee-hosted visitors are NOT stored here.
+CREATE TABLE IF NOT EXISTS public_registered_visitors (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    phone         VARCHAR(20)               NOT NULL UNIQUE,
+    full_name     VARCHAR(150)              NOT NULL,
+    email         VARCHAR(150)              NOT NULL,
+    password_hash VARCHAR(255)              NULL,
+    address       TEXT,
+    company_name  VARCHAR(150)              NULL,
+    created_at    DATETIME                  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME                  NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_pub_reg_phone (phone),
+    INDEX idx_pub_reg_email (email)
+);
+
 -- Pending staff login OTPs (step 2 of sign-in). Kept in the DB rather than in
 -- process memory so they survive pm2 reloads and work across cluster workers.
 -- Only SHA-256 hashes of the login token and the OTP are stored.

@@ -8,6 +8,7 @@ const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
 const { verifyQRToken }          = require('../utils/qrToken.util');
 const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
 const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
+const { sendNotification }       = require('../services/notification.service');
 
 // IST calendar date as YYYY-MM-DD (mirrors approval/visitRequest controllers)
 const getISTDateString = (d = new Date()) =>
@@ -243,7 +244,7 @@ const checkIn = async (req, res) => {
 
     // ── 3. Upsert visitor record (created only on first check-in) ─────────────
     let visitorId = request.visitor_id;
-    const visitorType = request.visit_category === 'VENDOR' ? 'business' : 'individual';
+    const visitorType = (request.visit_category === 'VENDOR' || request.company_name) ? 'business' : 'individual';
 
     if (!visitorId && request.visitor_phone) {
       // Check if visitor already exists by phone
@@ -375,6 +376,49 @@ const checkIn = async (req, res) => {
         department_name:  deptInfoRows[0]?.name || null,
         check_in_at:      new Date().toISOString(),
         visit_log_id:     visitLogId,
+      });
+
+      // SMS/email/dashboard to host so they know even if not in the app
+      setImmediate(async () => {
+        try {
+          const [hostRows] = await req.db.query(
+            'SELECT id, full_name, email, phone FROM users WHERE id = ?', [request.host_user_id]
+          );
+          if (!hostRows || hostRows.length === 0) return;
+          const host = hostRows[0];
+          const checkInAt = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+          if (host.phone) {
+            await sendNotification({
+              db: req.db, visitRequestId: requestId,
+              recipientUserId: host.id, recipientPhone: host.phone,
+              type: 'SMS',
+              message: `OHPC VMS: ${request.visitor_name} has checked in at the gate to meet you. Check-in time: ${checkInAt} IST. Pass: ${request.pass_number || 'N/A'}.`,
+            });
+          }
+          if (host.email) {
+            await sendNotification({
+              db: req.db, visitRequestId: requestId,
+              recipientUserId: host.id, recipientEmail: host.email,
+              type: 'EMAIL',
+              subject: `Visitor Arrived – ${request.visitor_name}`,
+              message: `<p>Hi ${host.full_name || 'there'},</p>
+<p><strong>${request.visitor_name}</strong> has checked in at the gate to visit you.</p>
+<p><strong>Check-in Time:</strong> ${checkInAt} IST<br/>
+<strong>Pass Number:</strong> ${request.pass_number || 'N/A'}<br/>
+<strong>Phone:</strong> ${request.visitor_phone || 'N/A'}</p>
+<p>Please proceed to receive your visitor.</p>
+<p>OHPC VMS Team</p>`,
+            });
+          }
+          await sendNotification({
+            db: req.db, visitRequestId: requestId,
+            recipientUserId: host.id,
+            type: 'DASHBOARD',
+            message: `${request.visitor_name} has checked in at the gate (Pass: ${request.pass_number || 'N/A'}) at ${checkInAt}.`,
+          });
+        } catch (checkInNotifyErr) {
+          console.error('[GateController] check-in host notification error:', checkInNotifyErr.message);
+        }
       });
     }
 

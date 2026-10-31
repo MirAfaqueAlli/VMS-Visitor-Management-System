@@ -467,10 +467,10 @@ const createRequest = async (req, res) => {
         visit_end_time   || null,
         accompanying_count,
         status,
-        typeCode === 'VENDOR' ? (company_name || null) : null,
-        typeCode === 'VENDOR' ? (vendor_email || null) : null,
-        typeCode === 'VENDOR' ? (service_type || null) : null,
-        typeCode === 'VENDOR' ? (work_order_ref || null) : null,
+        (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (company_name || null) : null,
+        (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (vendor_email || null) : null,
+        (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (service_type || null) : null,
+        (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (work_order_ref || null) : null,
         force_create ? 1 : 0,
       ]
     );
@@ -765,14 +765,16 @@ const createRequest = async (req, res) => {
     } else if (typeCode === 'SPOT') {
       // Tender 1.1.1: security needs the host's approval before issuing a pass, so
       // alert the host by SMS and email too — not only on the dashboard
-      await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `URGENT: Walk-in visitor waiting at reception for you. Purpose: ${purpose}` });
+      const typeLabel = company_name ? `Vendor/Business walk-in (${company_name})` : `Walk-in visitor`;
+      await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `URGENT: ${typeLabel} waiting at reception for you. Purpose: ${purpose}` });
       if (host.phone) {
         await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientPhone: host.phone, type: 'SMS',
-          message: `VMS: Walk-in visitor ${resolvedVisitorName || ''} is waiting at reception to meet you. Please approve or reject in VMS.` });
+          message: `VMS: ${typeLabel} ${resolvedVisitorName || ''} is waiting at reception to meet you. Please approve or reject in VMS.` });
       }
       if (host.email) {
-        const tmpl = emailService.visitRequestTemplate(resolvedVisitorName || 'Walk-in visitor', host.full_name, visit_date, purpose, '', visit_start_time || null);
-        await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientEmail: host.email, type: 'EMAIL', subject: `URGENT (walk-in waiting) — ${tmpl.subject}`, message: tmpl.html });
+        const displayName = resolvedVisitorName ? (company_name ? `${resolvedVisitorName} (${company_name})` : resolvedVisitorName) : (company_name || 'Walk-in visitor');
+        const tmpl = emailService.visitRequestTemplate(displayName, host.full_name, visit_date, purpose, '', visit_start_time || null);
+        await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientEmail: host.email, type: 'EMAIL', subject: `URGENT (${typeLabel}) — ${tmpl.subject}`, message: tmpl.html });
       }
     } else if (typeCode === 'PERSONAL_VISIT') {
       if (resolvedVisitorEmail) {
@@ -1188,6 +1190,76 @@ const cancelRequest = async (req, res) => {
       "UPDATE visit_requests SET status = 'CANCELLED', updated_at = NOW() WHERE id = ?", [id]
     );
 
+    // ── Notifications (fire-and-forget) ────────────────────────────────────────
+    // Fetch visitor/host details for notifications
+    setImmediate(async () => {
+      try {
+        const [details] = await targetDb.query(
+          `SELECT vr.visitor_name, vr.visitor_phone, vr.visitor_email,
+                  vr.visit_date, vr.visit_start_time, vr.purpose,
+                  h.id AS host_id, h.full_name AS host_name,
+                  h.email AS host_email, h.phone AS host_phone,
+                  d.name AS department_name
+           FROM visit_requests vr
+           LEFT JOIN users h ON h.id = vr.host_user_id
+           LEFT JOIN departments d ON d.id = vr.department_id
+           WHERE vr.id = ?`, [id]
+        );
+        if (!details || details.length === 0) return;
+        const d = details[0];
+        const timeStr = d.visit_start_time ? ` at ${d.visit_start_time}` : '';
+        const canceller = `${user.full_name || 'An admin'} (${user.role || 'staff'})`;
+
+        // Notify VISITOR
+        if (d.visitor_email) {
+          await sendNotification({
+            db: targetDb, visitRequestId: parseInt(id),
+            recipientEmail: d.visitor_email, type: 'EMAIL',
+            subject: `Your Visit Has Been Cancelled – OHPC VMS`,
+            message: `<p>Hi ${d.visitor_name || 'Visitor'},</p>
+<p>Your visit request to <strong>${d.host_name || 'your host'}</strong> scheduled for <strong>${d.visit_date}${timeStr}</strong> has been <strong>cancelled</strong> by ${canceller}.</p>
+<p>If you believe this is an error, please contact the OHPC VMS administration.</p>
+<p>Thank you,<br/>OHPC VMS Team</p>`,
+          });
+        }
+        if (d.visitor_phone) {
+          await sendNotification({
+            db: targetDb, visitRequestId: parseInt(id),
+            recipientPhone: d.visitor_phone, type: 'SMS',
+            message: `OHPC VMS: Your visit to ${d.host_name || 'your host'} on ${d.visit_date}${timeStr} has been cancelled by ${canceller}. Contact administration if this is an error.`,
+          });
+        }
+
+        // Notify HOST (if a different person from the canceller)
+        if (d.host_id && d.host_id !== user.id) {
+          if (d.host_email) {
+            await sendNotification({
+              db: targetDb, visitRequestId: parseInt(id),
+              recipientUserId: d.host_id, recipientEmail: d.host_email, type: 'EMAIL',
+              subject: `Visit Cancelled – OHPC VMS`,
+              message: `<p>Hi ${d.host_name || 'there'},</p>
+<p>The visit from <strong>${d.visitor_name || 'your visitor'}</strong> scheduled for <strong>${d.visit_date}${timeStr}</strong> (Purpose: ${d.purpose || 'N/A'}) has been <strong>cancelled</strong> by ${canceller}.</p>
+<p>No further action is required from your side.</p>`,
+            });
+          }
+          if (d.host_phone) {
+            await sendNotification({
+              db: targetDb, visitRequestId: parseInt(id),
+              recipientUserId: d.host_id, recipientPhone: d.host_phone, type: 'SMS',
+              message: `OHPC VMS: Visit from ${d.visitor_name || 'your visitor'} on ${d.visit_date}${timeStr} has been cancelled by ${canceller}.`,
+            });
+          }
+          await sendNotification({
+            db: targetDb, visitRequestId: parseInt(id),
+            recipientUserId: d.host_id, type: 'DASHBOARD',
+            message: `Visit from ${d.visitor_name || 'your visitor'} on ${d.visit_date}${timeStr} was cancelled by ${canceller}.`,
+          });
+        }
+      } catch (notifyErr) {
+        console.error('[VisitRequestController] cancelRequest notification error:', notifyErr.message);
+      }
+    });
+
     // Logged in the canceller's own unit (see createRequest audit note)
     await logAudit({
       db:        req.db,
@@ -1410,7 +1482,7 @@ const createPublicRequest = async (req, res) => {
          visit_category, request_source, purpose, visit_date,
          visit_start_time, visit_end_time, accompanying_count,
          company_name, status, created_at, updated_at
-       ) VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 'SELF', ?, ?,
+       ) VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 'PUBLIC', ?, ?,
                  ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
       [
         visitor_phone, visitor_full_name, visitor_email || null, visitor_address || null,
@@ -1422,6 +1494,21 @@ const createPublicRequest = async (req, res) => {
       ]
     );
     const visitRequestId = reqResult.insertId;
+
+    // Keep central public_registered_visitors profile up to date
+    try {
+      await centralPool.query(
+        `INSERT INTO public_registered_visitors (phone, full_name, email, address, company_name, created_at)
+         VALUES (?, ?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE
+           full_name    = VALUES(full_name),
+           email        = VALUES(email),
+           address      = VALUES(address),
+           company_name = COALESCE(VALUES(company_name), company_name),
+           updated_at   = NOW()`,
+        [visitor_phone, visitor_full_name, visitor_email || '', visitor_address || '', (visit_category === 'VENDOR' ? (company_name || null) : null)]
+      );
+    } catch (_) {}
 
 
     if (Array.isArray(companions) && companions.length > 0) {
@@ -1452,6 +1539,36 @@ const createPublicRequest = async (req, res) => {
       await sendNotification({ db: unitDb, visitRequestId, recipientUserId: host.id, recipientPhone: host.phone, type: 'SMS', message: `VMS: ${visitor_full_name} requested to visit you on ${visit_date}${timeStr}. Please approve/reject.` });
     }
     await sendNotification({ db: unitDb, visitRequestId, recipientUserId: host.id, type: 'DASHBOARD', message: `New prior-approved request from ${visitor_full_name} on ${visit_date}${timeStr} awaiting approval.` });
+
+    // Confirm submission to the VISITOR (email + SMS) — fire-and-forget
+    setImmediate(async () => {
+      try {
+        if (visitor_email) {
+          await sendNotification({
+            db: unitDb, visitRequestId,
+            recipientEmail: visitor_email,
+            type: 'EMAIL',
+            subject: `Visit Request Submitted – OHPC VMS`,
+            message: `<p>Hi ${visitor_full_name},</p>
+<p>Your visit request to <strong>${host.full_name}</strong> (${unit.name}) has been submitted successfully and is <strong>pending approval</strong>.</p>
+<p><strong>Date:</strong> ${visit_date}${timeStr}<br/>
+<strong>Purpose:</strong> ${purpose || 'N/A'}</p>
+<p>You will receive an email and SMS once your request is reviewed. You can also track its status by logging in to the Visitor Portal.</p>
+<p>Thank you,<br/>OHPC VMS Team</p>`,
+          });
+        }
+        if (visitor_phone) {
+          await sendNotification({
+            db: unitDb, visitRequestId,
+            recipientPhone: visitor_phone,
+            type: 'SMS',
+            message: `OHPC VMS: Your visit request to ${host.full_name} on ${visit_date}${timeStr} has been submitted and is pending approval. You will be notified once reviewed.`,
+          });
+        }
+      } catch (visitorNotifyErr) {
+        console.error('[VisitRequestController] Visitor confirmation notification failed:', visitorNotifyErr.message);
+      }
+    });
 
     // Emit socket notification to host
     try {

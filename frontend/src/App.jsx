@@ -11,6 +11,8 @@ import useAuth            from "./hooks/useAuth";
 // ── Always-eager: layout scaffolding needed on every route ───────────────────
 import AppLayout      from "./components/Layout/AppLayout";
 import ProtectedRoute from "./components/Layout/ProtectedRoute";
+import VisitorProtectedRoute from "./components/Layout/VisitorProtectedRoute";
+import VisitorLayout         from "./components/Layout/VisitorLayout";
 
 // ── Lazy page imports — each becomes a separate JS chunk ─────────────────────
 const Login                 = lazy(() => import("./pages/auth/Login"));
@@ -18,6 +20,13 @@ const Setup                 = lazy(() => import("./pages/auth/Setup"));
 const RegisterOrganization  = lazy(() => import("./pages/auth/RegisterOrganization"));
 const PublicRequest         = lazy(() => import("./pages/requests/PublicRequest"));
 const ResetPassword         = lazy(() => import("./pages/auth/ResetPassword"));
+
+// Visitor Portal pages
+const VisitorDashboard  = lazy(() => import("./pages/visitor/VisitorDashboard"));
+const VisitorNewRequest = lazy(() => import("./pages/visitor/VisitorNewRequest"));
+const VisitorHistory    = lazy(() => import("./pages/visitor/VisitorHistory"));
+const VisitorGatePass   = lazy(() => import("./pages/visitor/VisitorGatePass"));
+const VisitorProfile    = lazy(() => import("./pages/visitor/VisitorProfile"));
 
 // Dashboard — default export is SuperAdmin view; named export AdminDashboard is unit view.
 // For named exports, .then() lets us remap them to `default` for lazy().
@@ -95,6 +104,25 @@ const router = createBrowserRouter([
   { path: "/public-request",  element: <S><PublicRequest /></S> },
   { path: "/reset-password",  element: <S><ResetPassword /></S> },
 
+  // ── Visitor Portal (Public Visitors) ───────────────────────────────────────
+  {
+    path: "/visitor",
+    element: <VisitorProtectedRoute />,
+    children: [
+      {
+        element: <VisitorLayout />,
+        children: [
+          { index: true,                      element: <Navigate to="/visitor/dashboard" replace /> },
+          { path: "dashboard",                element: <S><VisitorDashboard /></S> },
+          { path: "new-request",              element: <S><VisitorNewRequest /></S> },
+          { path: "history",                  element: <S><VisitorHistory /></S> },
+          { path: "pass/:unitId/:passNumber", element: <S><VisitorGatePass /></S> },
+          { path: "profile",                  element: <S><VisitorProfile /></S> },
+        ],
+      },
+    ],
+  },
+
   {
     path: "/",
     element: <ProtectedRoute />,
@@ -164,7 +192,9 @@ const router = createBrowserRouter([
             path: "admin",
             element: <ProtectedRoute roles={ADMIN_ROLES} />,
             children: [
-              { index: true, element: <S><UserManagement /></S> },
+              { index: true, element: <Navigate to="/admin/employees" replace /> },
+              { path: "employees", element: <S><UserManagement initialTab="employees" /></S> },
+              { path: "security", element: <S><UserManagement initialTab="security" /></S> },
               {
                 path: "departments",
                 element: <ProtectedRoute roles={["super_admin", "unit_admin"]} />,

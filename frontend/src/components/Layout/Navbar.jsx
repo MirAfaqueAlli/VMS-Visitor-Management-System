@@ -17,18 +17,21 @@ const APPROVER_ROLES = ['unit_admin', 'employee'];
 const CENTRAL_ROLES  = ['super_admin', 'global_auditor'];
 
 const PAGE_NAMES = {
-  '/dashboard':    'Dashboard',
-  '/visitors':     'Visitors',
-  '/requests':     'Visit Requests',
-  '/approvals':    'Approvals',
-  '/gate':         'Gate Security',
-  '/reports':      'Reports',
-  '/admin':        'Admin Panel',
-  '/profile':      'My Profile',
-  '/super/units':  'Unit Management',
-  '/super/users':  'Central User Management',
-  '/audit-logs':   'Audit Logs',
-  '/departments':  'Department Management',
+  '/dashboard':          'Dashboard',
+  '/visitors':           'Visitors',
+  '/requests':           'Visit Requests',
+  '/approvals':          'Approvals',
+  '/gate':               'Gate Security',
+  '/reports':            'Reports',
+  '/admin/employees':    'Employee Management',
+  '/admin/security':     'Security & Reception Staff',
+  '/admin/departments':  'Department Management',
+  '/admin':              'Admin Panel',
+  '/profile':            'My Profile',
+  '/super/units':        'Unit Management',
+  '/super/users':        'Central User Management',
+  '/audit-logs':         'Audit Logs',
+  '/departments':        'Department Management',
 };
 
 const CATEGORY_LABELS = {

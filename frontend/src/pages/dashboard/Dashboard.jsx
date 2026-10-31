@@ -14,6 +14,9 @@ import {
   Users,
   Building2,
   TrendingUp,
+  LogOut,
+  User,
+  Briefcase,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import apiClient from "../../api/axios";
@@ -169,13 +172,111 @@ function RemarksModal({ mode, onConfirm, onCancel, loading }) {
   );
 }
 
+/* ─── Checkout Modal (Direct checkout from Security Dashboard) ───────────── */
+function CheckoutModal({ visitor, onConfirm, onCancel, loading }) {
+  const [remarks, setRemarks] = useState("");
+  if (!visitor) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)' }}
+    >
+      <div className="vms-card w-full max-w-md rounded-2xl p-6 shadow-2xl animate-fade-in">
+        <div className="flex items-center gap-3 mb-4">
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: 'rgba(239,68,68,0.12)' }}
+          >
+            <LogOut size={18} style={{ color: '#ef4444' }} />
+          </div>
+          <div>
+            <h3 className="font-semibold text-loud text-base">
+              Check Out Visitor
+            </h3>
+            <p className="text-xs text-faint mt-0.5">
+              Confirm departure from premises
+            </p>
+          </div>
+        </div>
+
+        <div
+          className="rounded-xl p-3.5 mb-4 text-xs space-y-1.5"
+          style={{ background: 'var(--color-bg-primary)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="flex justify-between items-center">
+            <span className="text-faint">Visitor:</span>
+            <span className="font-semibold text-loud">{visitor.visitor_name ?? '—'}</span>
+          </div>
+          {visitor.pass_number && (
+            <div className="flex justify-between items-center">
+              <span className="text-faint">Pass Number:</span>
+              <span className="font-mono font-bold text-accent">#{visitor.pass_number}</span>
+            </div>
+          )}
+          <div className="flex justify-between items-center">
+            <span className="text-faint">Host:</span>
+            <span className="text-muted">{visitor.host_name ?? '—'}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-faint">Check-in Time:</span>
+            <span className="font-semibold text-loud">
+              {fmtTime(visitor.check_in_at ?? visitor.check_in_time ?? visitor.checked_in_at)}
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-1.5 mb-5">
+          <label className="block text-xs font-semibold text-muted uppercase tracking-wider">
+            Remarks (optional)
+          </label>
+          <textarea
+            rows={2}
+            value={remarks}
+            onChange={e => setRemarks(e.target.value)}
+            placeholder="Any check-out notes or observations…"
+            className="w-full rounded-lg border px-3 py-2 text-sm text-loud resize-none focus:outline-none focus:border-accent transition-colors"
+            style={{ background: 'var(--color-bg-primary)', borderColor: 'var(--color-border)' }}
+          />
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={() => onConfirm(remarks.trim())}
+            disabled={loading}
+            className="flex-1 py-2.5 px-4 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors hover:opacity-90"
+            style={{ background: '#ef4444' }}
+          >
+            {loading ? (
+              <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Checking out…</>
+            ) : (
+              <><LogOut size={14} /> Confirm Check-Out</>
+            )}
+          </button>
+          <button onClick={onCancel} disabled={loading} className="btn-secondary py-2.5 px-4 text-sm">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function fmtTime(d) {
   if (!d) return "—";
-  return new Date(d).toLocaleTimeString("en-IN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
+  try {
+    const dateObj = typeof d === 'string' && d.includes(' ') && !d.includes('T')
+      ? new Date(d.replace(' ', 'T'))
+      : new Date(d);
+    if (isNaN(dateObj.getTime())) return "—";
+    return dateObj.toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch (_) {
+    return "—";
+  }
 }
 function fmtDate(d) {
   if (!d) return "—";
@@ -203,6 +304,10 @@ function SecurityDashboard() {
   const { hasRole } = useAuth();
   const [dashData, setDashData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [checkoutModal, setCheckoutModal] = useState(null);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [expectedFilter, setExpectedFilter] = useState({ category: '', search: '' });
+  const [insideFilter, setInsideFilter] = useState({ category: '', search: '' });
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -219,6 +324,42 @@ function SecurityDashboard() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const handleConfirmCheckout = async (remarks) => {
+    if (!checkoutModal) return;
+    setCheckoutLoading(true);
+    const logId = checkoutModal.visit_log_id;
+    const passNum = checkoutModal.pass_number;
+    try {
+      await apiClient.post(logId ? `/gate/checkout/${logId}` : '/gate/checkout', {
+        visit_log_id: logId,
+        pass_number: passNum,
+        remarks: remarks || undefined,
+      });
+      toast.success(`${checkoutModal.visitor_name ?? 'Visitor'} checked out successfully.`);
+      setDashData(prev => {
+        if (!prev) return prev;
+        const updatedActive = (prev.active ?? []).filter(
+          v => v.visit_log_id !== logId && v.visit_request_id !== checkoutModal.visit_request_id
+        );
+        return {
+          ...prev,
+          active: updatedActive,
+          summary: {
+            ...prev.summary,
+            active_count: updatedActive.length,
+            completed_today_count: (prev.summary?.completed_today_count ?? 0) + 1,
+          },
+        };
+      });
+      setCheckoutModal(null);
+      fetchData();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to check out visitor.');
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
 
   // ── Socket: new approved visit for today → add to Expected Today list ──────
   useSocketEvent('visit:approved:today', useCallback((data) => {
@@ -316,6 +457,26 @@ function SecurityDashboard() {
   const yetToCome = dashData?.yet_to_come ?? [];
   const active = dashData?.active ?? [];
 
+  /* ── Filter helpers ─────────────────────────────────────────────────── */
+  const applyFilter = (list, filter) => {
+    let result = list ?? [];
+    if (filter.category) result = result.filter(v => v.visit_category === filter.category);
+    if (filter.search.trim()) {
+      const q = filter.search.trim().toLowerCase();
+      result = result.filter(v =>
+        (v.visitor_name || '').toLowerCase().includes(q) ||
+        (v.company_name || '').toLowerCase().includes(q) ||
+        (v.visitor_phone || '').includes(q) ||
+        (v.host_name || '').toLowerCase().includes(q) ||
+        (v.pass_number || '').toLowerCase().includes(q)
+      );
+    }
+    return result;
+  };
+
+  const filteredExpected = applyFilter(yetToCome, expectedFilter);
+  const filteredInside = applyFilter(active, insideFilter);
+
   return (
     <div>
       <div className="mb-10">
@@ -381,14 +542,53 @@ function SecurityDashboard() {
             />
             <h2 className="text-[14px] font-semibold text-loud">
               Expected Today
+              {(expectedFilter.category || expectedFilter.search.trim()) && (
+                <span className="ml-2 text-faint font-normal text-[12px]">
+                  ({filteredExpected.length} of {yetToCome.length})
+                </span>
+              )}
             </h2>
           </div>
           <span className="badge badge-scheduled">
             {yetToCome.length} visitor{yetToCome.length !== 1 ? "s" : ""}
           </span>
         </div>
+        {/* Filter bar */}
+        <div className="px-5 py-3 flex flex-wrap gap-2 items-center" style={{ borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-secondary, var(--color-surface))' }}>
+          <select
+            value={expectedFilter.category}
+            onChange={e => setExpectedFilter(f => ({ ...f, category: e.target.value }))}
+            className="vms-input text-xs py-1 px-2 pr-6 h-7 min-w-[130px]"
+            style={{ fontSize: '11px' }}
+          >
+            <option value="">All Types</option>
+            <option value="SPOT">Walk-in (Spot)</option>
+            <option value="VENDOR">Vendor</option>
+            <option value="PERSONAL_VISIT">Personal Visit</option>
+            <option value="EMPLOYEE_VISIT">Employee Visit</option>
+          </select>
+          <input
+            type="text"
+            placeholder="Search name, phone, host…"
+            value={expectedFilter.search}
+            onChange={e => setExpectedFilter(f => ({ ...f, search: e.target.value }))}
+            className="vms-input text-xs py-1 px-3 h-7 flex-1 min-w-[160px]"
+            style={{ fontSize: '11px' }}
+          />
+          {(expectedFilter.category || expectedFilter.search.trim()) && (
+            <button
+              onClick={() => setExpectedFilter({ category: '', search: '' })}
+              className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded font-medium text-faint hover:text-loud transition-colors"
+              title="Clear filters"
+            >
+              <X size={12} /> Clear
+            </button>
+          )}
+        </div>
         {yetToCome.length === 0 ? (
           <EmptyState message="No visitors expected today" />
+        ) : filteredExpected.length === 0 ? (
+          <EmptyState message="No visitors match the current filters" />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm font-sans">
@@ -403,7 +603,7 @@ function SecurityDashboard() {
                 ]}
               />
               <tbody className="divide-y divide-[var(--color-border)]">
-                {yetToCome.map((v, i) => (
+                {filteredExpected.map((v, i) => (
                   <tr
                     key={v.id ?? i}
                     className="hover:bg-surface-hover transition-colors"
@@ -454,31 +654,96 @@ function SecurityDashboard() {
             />
             <h2 className="text-[14px] font-semibold text-loud">
               Currently Inside
+              {(insideFilter.category || insideFilter.search.trim()) && (
+                <span className="ml-2 text-faint font-normal text-[12px]">
+                  ({filteredInside.length} of {active.length})
+                </span>
+              )}
             </h2>
           </div>
           <span className="badge badge-active">{active.length} active</span>
         </div>
+        {/* Filter bar */}
+        <div className="px-5 py-3 flex flex-wrap gap-2 items-center" style={{ borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-secondary, var(--color-surface))' }}>
+          <select
+            value={insideFilter.category}
+            onChange={e => setInsideFilter(f => ({ ...f, category: e.target.value }))}
+            className="vms-input text-xs py-1 px-2 pr-6 h-7 min-w-[130px]"
+            style={{ fontSize: '11px' }}
+          >
+            <option value="">All Types</option>
+            <option value="SPOT">Walk-in (Spot)</option>
+            <option value="VENDOR">Vendor</option>
+            <option value="PERSONAL_VISIT">Personal Visit</option>
+            <option value="EMPLOYEE_VISIT">Employee Visit</option>
+          </select>
+          <input
+            type="text"
+            placeholder="Search name, phone, pass…"
+            value={insideFilter.search}
+            onChange={e => setInsideFilter(f => ({ ...f, search: e.target.value }))}
+            className="vms-input text-xs py-1 px-3 h-7 flex-1 min-w-[160px]"
+            style={{ fontSize: '11px' }}
+          />
+          {(insideFilter.category || insideFilter.search.trim()) && (
+            <button
+              onClick={() => setInsideFilter({ category: '', search: '' })}
+              className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded font-medium text-faint hover:text-loud transition-colors"
+              title="Clear filters"
+            >
+              <X size={12} /> Clear
+            </button>
+          )}
+        </div>
         {active.length === 0 ? (
           <EmptyState message="No visitors currently on the premises" />
+        ) : filteredInside.length === 0 ? (
+          <EmptyState message="No visitors match the current filters" />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm font-sans">
-              <TableHead cols={["Visitor", "Host", "Check-in Time"]} />
+              <TableHead cols={["Visitor", "Host", "Check-in Time", "Actions"]} />
               <tbody className="divide-y divide-[var(--color-border)]">
-                {active.map((v, i) => (
+                {filteredInside.map((v, i) => (
                   <tr
-                    key={v.id ?? i}
+                    key={v.visit_log_id ?? v.id ?? i}
                     className="hover:bg-surface-hover transition-colors"
                   >
                     <td className="px-5 py-3 font-medium text-loud whitespace-nowrap">
                       <span className="pulse-dot" />
                       {v.visitor_name ?? "—"}
+                      {v.pass_number && (
+                        <span className="ml-2 text-[10px] font-mono bg-bg-primary px-1.5 py-0.5 rounded border border-border text-muted">
+                          #{v.pass_number}
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-muted whitespace-nowrap">
                       {v.host_name ?? "—"}
+                      {v.department_name && (
+                        <span className="block text-[11px] text-faint">{v.department_name}</span>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-faint whitespace-nowrap">
-                      {fmtTime(v.check_in_time ?? v.checked_in_at)}
+                      {fmtTime(v.check_in_at ?? v.check_in_time ?? v.checked_in_at)}
+                    </td>
+                    <td className="px-5 py-3 whitespace-nowrap">
+                      {hasRole("security", "receptionist", "unit_admin") && (
+                        <button
+                          onClick={() => setCheckoutModal(v)}
+                          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-semibold tracking-wide uppercase transition-all duration-200"
+                          style={{
+                            background: "rgba(239,68,68,0.08)",
+                            color: "#dc2626",
+                            border: "1px solid rgba(239,68,68,0.25)",
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.background = "#dc2626"; e.currentTarget.style.color = "#fff"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,0.08)"; e.currentTarget.style.color = "#dc2626"; }}
+                          title="Check out visitor"
+                        >
+                          <LogOut strokeWidth={1.5} size={12} /> Check Out
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -487,6 +752,15 @@ function SecurityDashboard() {
           </div>
         )}
       </div>
+
+      {checkoutModal && (
+        <CheckoutModal
+          visitor={checkoutModal}
+          loading={checkoutLoading}
+          onConfirm={handleConfirmCheckout}
+          onCancel={() => setCheckoutModal(null)}
+        />
+      )}
     </div>
   );
 }

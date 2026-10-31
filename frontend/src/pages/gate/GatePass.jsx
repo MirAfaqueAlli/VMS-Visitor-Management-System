@@ -91,6 +91,11 @@ export default function GatePass() {
     <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted text-center">
       Odisha Hydro Power Corporation Ltd.
     </p>
+    {passData.unit_name && (
+      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-accent text-center mt-1">
+        {passData.unit_name}{passData.unit_code ? ` (${passData.unit_code})` : ''}
+      </p>
+    )}
 
     {/* Pass number */}
     <div className="inline-flex items-center gap-1.5 btn-secondary text-xs font-mono text-loud font-medium shadow-soft-sm mt-3">
@@ -128,6 +133,16 @@ export default function GatePass() {
  {passData.department_name}
  </p>
  </div>
+ {passData.unit_name && (
+ <div>
+ <p className="text-[10px] uppercase tracking-widest text-faint mb-0.5">
+ Unit / Location
+ </p>
+ <p className="text-xs font-semibold text-loud">
+ {passData.unit_name}{passData.unit_code ? ` (${passData.unit_code})` : ''}
+ </p>
+ </div>
+ )}
  </div>
  </div>
 

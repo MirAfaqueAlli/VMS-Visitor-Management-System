@@ -2,7 +2,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ClipboardList, CheckSquare,
-  Shield, BarChart3, Settings, LogOut, Building2, Globe, ShieldAlert, X, UserCheck,
+  Shield, BarChart3, Settings, LogOut, Building2, Globe, ShieldAlert, X, UserCheck, ShieldCheck,
 } from 'lucide-react';
 
 import useAuth from '../../hooks/useAuth';
@@ -10,14 +10,15 @@ import toast from 'react-hot-toast';
 
 // ── Nav item sets ─────────────────────────────────────────────────────────────
 const unitNavItems = [
-  { label: 'Dashboard',      icon: LayoutDashboard, path: '/dashboard', roles: null },
-  { label: 'Visitors',       icon: Users,           path: '/visitors',  roles: ['unit_admin', 'employee', 'receptionist', 'security'] },
-  { label: 'Visit Requests', icon: ClipboardList,   path: '/requests',  roles: ['unit_admin', 'employee', 'receptionist', 'security'] },
-  { label: 'Approvals',      icon: CheckSquare,     path: '/approvals', roles: ['unit_admin', 'employee'] },
-  { label: 'Gate Security',  icon: Shield,          path: '/gate',      roles: ['security', 'receptionist', 'unit_admin'] },
-  { label: 'Reports',        icon: BarChart3,       path: '/reports',   roles: ['unit_admin', 'unit_auditor'] },
-  { label: 'Audit Logs',     icon: ShieldAlert,     path: '/audit-logs',roles: ['unit_admin', 'unit_auditor'] },
-  { label: 'User Management',icon: Settings,        path: '/admin',     roles: ['unit_admin'], end: true },
+  { label: 'Dashboard',            icon: LayoutDashboard, path: '/dashboard',       roles: null },
+  { label: 'Visitors',             icon: Users,           path: '/visitors',        roles: ['unit_admin', 'employee', 'receptionist'] },
+  { label: 'Visit Requests',       icon: ClipboardList,   path: '/requests',        roles: ['unit_admin', 'employee', 'receptionist'] },
+  { label: 'Approvals',            icon: CheckSquare,     path: '/approvals',       roles: ['unit_admin', 'employee'] },
+  { label: 'Gate Security',        icon: Shield,          path: '/gate',            roles: ['security', 'receptionist', 'unit_admin'] },
+  { label: 'Reports',              icon: BarChart3,       path: '/reports',         roles: ['unit_admin', 'unit_auditor'] },
+  { label: 'Audit Logs',           icon: ShieldAlert,     path: '/audit-logs',      roles: ['unit_admin', 'unit_auditor'] },
+  { label: 'Employees',            icon: Users,           path: '/admin/employees', roles: ['unit_admin'] },
+  { label: 'Security & Reception', icon: ShieldCheck,     path: '/admin/security',  roles: ['unit_admin'] },
 ];
 
 // Central (super admin-only) links
@@ -32,10 +33,11 @@ const superAdminCentralItems = [
 // Unit-level links shown to super admin when they are managing a unit.
 // No Gate Security: gate operations are unit staff only (segregation of duties).
 const superAdminUnitItems = [
-  { label: 'Dashboard',       icon: LayoutDashboard, path: '/unit-dashboard' },
-  { label: 'Visitors',        icon: Users,           path: '/visitors' },
-  { label: 'Visit Requests',  icon: ClipboardList,   path: '/requests' },
-  { label: 'User Management', icon: Settings,        path: '/admin', end: true },
+  { label: 'Dashboard',            icon: LayoutDashboard, path: '/unit-dashboard' },
+  { label: 'Visitors',             icon: Users,           path: '/visitors' },
+  { label: 'Visit Requests',       icon: ClipboardList,   path: '/requests' },
+  { label: 'Employees',            icon: Users,           path: '/admin/employees' },
+  { label: 'Security & Reception', icon: ShieldCheck,     path: '/admin/security' },
 ];
 
 const auditorNavItems = [

@@ -19,6 +19,12 @@ const STATUS_CLASSES = {
 };
 
 const DISPLAY_LABELS = {
+  PENDING:           'Pending Review',
+  APPROVED:          'Approved',
+  REJECTED:          'Rejected',
+  CANCELLED:         'Cancelled',
+  COMPLETED:         'Completed',
+  ACTIVE:            'Inside Premises',
   EMPLOYEE_VISIT:    'Employee Visit',
   PERSONAL_VISIT:    'Personal Visit',
   INTER_UNIT_VISIT:  'Inter-Unit Visit',

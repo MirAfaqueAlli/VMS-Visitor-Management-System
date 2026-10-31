@@ -12,8 +12,15 @@ const STRENGTH_LABELS = ['Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'];
  *   - show: boolean (optional, default true) — whether to show the checklist
  *   - hideWhenValid: boolean (optional) — once every rule passes, replace the
  *     bar + checklist with a single "all requirements met" line
+ *   - hideChecklistWhenValid: boolean (optional) — once every rule passes, keeps
+ *     the full strength bar visible but hides the checklist items to save space
  */
-export default function PasswordStrength({ password, show = true, hideWhenValid = false }) {
+export default function PasswordStrength({
+  password,
+  show = true,
+  hideWhenValid = false,
+  hideChecklistWhenValid = false,
+}) {
   if (!password || !show) return null;
 
   const { valid, results } = validatePassword(password);
@@ -43,21 +50,23 @@ export default function PasswordStrength({ password, show = true, hideWhenValid 
         </span>
       </div>
 
-      {/* Rule checklist */}
-      <ul className="space-y-1">
-        {results.map((r) => (
-          <li
-            key={r.key}
-            className="flex items-center gap-1.5 text-[11px] transition-colors duration-200"
-            style={{ color: r.passed ? '#16a34a' : 'var(--color-text-faint, #94a3b8)' }}
-          >
-            <span style={{ fontSize: '10px' }}>{r.passed ? '✓' : '○'}</span>
-            <span style={{ textDecoration: r.passed ? 'line-through' : 'none', opacity: r.passed ? 0.7 : 1 }}>
-              {r.label}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {/* Rule checklist - hidden once all requirements are met if hideChecklistWhenValid is true */}
+      {(!hideChecklistWhenValid || !valid) && (
+        <ul className="space-y-1">
+          {results.map((r) => (
+            <li
+              key={r.key}
+              className="flex items-center gap-1.5 text-[11px] transition-colors duration-200"
+              style={{ color: r.passed ? '#16a34a' : 'var(--color-text-faint, #94a3b8)' }}
+            >
+              <span style={{ fontSize: '10px' }}>{r.passed ? '✓' : '○'}</span>
+              <span style={{ textDecoration: r.passed ? 'line-through' : 'none', opacity: r.passed ? 0.7 : 1 }}>
+                {r.label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

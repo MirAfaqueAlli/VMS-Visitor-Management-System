@@ -95,7 +95,8 @@ async function addIndexIfMissing(conn, dbName, tableName, indexName, columnsSql)
   );
   if (idx.length > 0) return false;
 
-  await conn.query(`CREATE INDEX \`${indexName}\` ON \`${dbName}\`.\`${tableName}\` ${columnsSql}`);
+  const cols = columnsSql.trim().startsWith('(') ? columnsSql.trim() : `(${columnsSql.trim()})`;
+  await conn.query(`CREATE INDEX \`${indexName}\` ON \`${dbName}\`.\`${tableName}\` ${cols}`);
   return true;
 }
 
@@ -139,6 +140,28 @@ async function ensureCentralDatabase(adminConn) {
   await addColumnIfMissing(adminConn, CENTRAL_DB, 'public_otp_logs', 'attempts', 'INT NOT NULL DEFAULT 0 AFTER is_used');
   // Sessions issued before the last password change/reset are rejected (auth.middleware)
   await addColumnIfMissing(adminConn, CENTRAL_DB, 'users', 'password_changed_at', 'DATETIME NULL AFTER password_hash');
+
+  // Public portal registered visitors table (strictly for /public-request registrants)
+  await adminConn.query(`
+    CREATE TABLE IF NOT EXISTS public_registered_visitors (
+      id            INT AUTO_INCREMENT PRIMARY KEY,
+      phone         VARCHAR(20)               NOT NULL UNIQUE,
+      full_name     VARCHAR(150)              NOT NULL,
+      email         VARCHAR(150)              NOT NULL,
+      password_hash VARCHAR(255)              NULL,
+      address       TEXT,
+      company_name  VARCHAR(150)              NULL,
+      created_at    DATETIME                  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME                  NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_pub_reg_phone (phone),
+      INDEX idx_pub_reg_email (email)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+  await addColumnIfMissing(adminConn, CENTRAL_DB, 'public_registered_visitors', 'password_hash', 'VARCHAR(255) NULL AFTER email');
+  await addColumnIfMissing(adminConn, CENTRAL_DB, 'public_registered_visitors', 'govt_id_type', 'VARCHAR(50) NULL AFTER company_name');
+  await addColumnIfMissing(adminConn, CENTRAL_DB, 'public_registered_visitors', 'govt_id_number', 'VARCHAR(100) NULL AFTER govt_id_type');
+  await addColumnIfMissing(adminConn, CENTRAL_DB, 'public_registered_visitors', 'photo_url', 'TEXT NULL AFTER govt_id_number');
+  await addIndexIfMissing(adminConn, CENTRAL_DB, 'public_registered_visitors', 'idx_pub_reg_email', '(email)');
 
   // Guarantee seed data is present in central lookup tables
   await adminConn.query(`USE \`${CENTRAL_DB}\``);

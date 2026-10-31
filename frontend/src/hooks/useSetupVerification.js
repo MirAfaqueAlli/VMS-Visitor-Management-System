@@ -29,6 +29,10 @@ const firebaseMessage = (err, fallback) => FIREBASE_ERRORS[err?.code] || getApiE
 const clearVerifier = (ref) => {
   try { ref.current?.clear(); } catch { /* already cleared */ }
   ref.current = null;
+  // Wipe the DOM container so Firebase can inject a fresh widget on the next call.
+  // Without this, retrying OTP entry causes a RECAPTCHA failure error.
+  const container = document.getElementById('recaptcha-container');
+  if (container) container.innerHTML = '';
 };
 
 export default function useSetupVerification() {

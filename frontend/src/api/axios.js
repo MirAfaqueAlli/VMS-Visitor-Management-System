@@ -23,16 +23,29 @@ let isRefreshing = false;
 // ── Request interceptor — inject Bearer token + active-unit headers ───────────
 apiClient.interceptors.request.use(
   (config) => {
+    // Only attach staff token if this is not a public visitor auth endpoint
+    const isPublicAuth = config.url?.includes("/public-auth/");
     const token = localStorage.getItem("vms_token");
-    if (token) {
+    if (token && !isPublicAuth) {
       config.headers.Authorization = `Bearer ${token}`;
     }
 
+    // Attach visitor token if available (for visitor portal endpoints)
+    const visitorToken =
+      sessionStorage.getItem("vms_visitor_token") ||
+      localStorage.getItem("vms_visitor_token");
+    if (visitorToken) {
+      config.headers["X-Visitor-Token"] = visitorToken;
+      if (isPublicAuth && !config.headers.Authorization) {
+        config.headers.Authorization = `Bearer ${visitorToken}`;
+      }
+    }
+
     // Support dynamic unit overriding for central admins.
-    // Skip auth endpoints — those are always about the logged-in user.
-    const isAuthEndpoint = config.url?.includes("/auth/");
+    // Skip auth and public endpoints — those are always context-specific.
+    const isAuthOrPublic = config.url?.includes("/auth/") || isPublicAuth;
     const activeUnitStr  = localStorage.getItem("vms_active_unit");
-    if (!isAuthEndpoint && activeUnitStr) {
+    if (!isAuthOrPublic && activeUnitStr) {
       try {
         const activeUnit = JSON.parse(activeUnitStr);
         if (activeUnit.id && activeUnit.db_name) {
@@ -54,10 +67,12 @@ apiClient.interceptors.response.use(
   async (response) => {
     // After every successful response, check if the token is close to expiry.
     // If < 2 hours remain and we're not already refreshing, silently renew.
-    // Skip the refresh endpoint itself to avoid an infinite loop.
-    const isRefreshCall = response.config?.url?.includes("/auth/refresh");
+    // Skip refresh and public endpoints to avoid unnecessary calls.
+    const url = response.config?.url || "";
+    const isRefreshCall = url.includes("/auth/refresh");
+    const isPublicCall  = url.includes("/public-auth/") || url.includes("/public");
 
-    if (!isRefreshing && !isRefreshCall) {
+    if (!isRefreshing && !isRefreshCall && !isPublicCall) {
       const token = localStorage.getItem("vms_token");
       if (token) {
         const expiresAt = getTokenExpiryMs(token);
@@ -85,17 +100,36 @@ apiClient.interceptors.response.use(
   },
 
   (error) => {
-    // IMPORTANT: Skip the redirect for /auth/login itself — a failed login
-    // (wrong password → 401) would otherwise wipe the error message before
-    // it can be displayed.
-    const isLoginEndpoint      = error.config?.url?.includes("/auth/login");
-    const isRefreshEndpoint    = error.config?.url?.includes("/auth/refresh");
+    // IMPORTANT: Skip the redirect for login endpoints (staff and public) — a failed login
+    // must display the error message on the page without redirecting.
+    // Also never redirect staff if the user is on the public visitor request portal or visitor portal.
+    const url = error.config?.url || "";
+    const isLoginEndpoint      = url.includes("/auth/login") || url.includes("/public-auth/login");
+    const isRefreshEndpoint    = url.includes("/auth/refresh");
+    const isVisitorPath        = typeof window !== "undefined" &&
+                                 (window.location.pathname.startsWith("/public-request") ||
+                                  window.location.pathname.startsWith("/visitor"));
+    const isPublicEndpoint     = url.includes("/public-auth/") ||
+                                 url.includes("/visit-requests/public") ||
+                                 url.includes("/units/public") ||
+                                 url.includes("/departments/public") ||
+                                 isVisitorPath;
 
     if (error.response?.status === 401 && !isLoginEndpoint && !isRefreshEndpoint) {
-      localStorage.removeItem("vms_token");
-      localStorage.removeItem("vms_user");
-      localStorage.removeItem("vms_active_unit");
-      window.location.href = "/login";
+      if (isVisitorPath) {
+        localStorage.removeItem("vms_visitor_token");
+        sessionStorage.removeItem("vms_visitor_token");
+        localStorage.removeItem("vms_visitor_data");
+        window.location.href = "/public-request";
+        return Promise.reject(error);
+      }
+
+      if (!isPublicEndpoint) {
+        localStorage.removeItem("vms_token");
+        localStorage.removeItem("vms_user");
+        localStorage.removeItem("vms_active_unit");
+        window.location.href = "/login";
+      }
     }
     return Promise.reject(error);
   },

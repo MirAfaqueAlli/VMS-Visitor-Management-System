@@ -31,14 +31,20 @@ const listUsers = async (req, res) => {
     }
 
     if (role) {
-      conditions.push('u.role_type = ?');
-      params.push(role);
+      const roleList = String(role).split(',').map(r => r.trim()).filter(Boolean);
+      if (roleList.length === 1) {
+        conditions.push('u.role_type = ?');
+        params.push(roleList[0]);
+      } else if (roleList.length > 1) {
+        conditions.push(`u.role_type IN (${roleList.map(() => '?').join(', ')})`);
+        params.push(...roleList);
+      }
     }
 
     if (search && search.trim()) {
-      conditions.push('(u.full_name LIKE ? OR u.email LIKE ? OR u.employee_code LIKE ?)');
+      conditions.push('(u.full_name LIKE ? OR u.email LIKE ? OR u.employee_code LIKE ? OR u.phone LIKE ?)');
       const like = `%${search.trim()}%`;
-      params.push(like, like, like);
+      params.push(like, like, like, like);
     }
 
     const where = `WHERE ${conditions.join(' AND ')}`;

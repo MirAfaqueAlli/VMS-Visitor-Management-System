@@ -17,27 +17,52 @@ import {
   Loader2,
   AlertTriangle,
   X,
+  Briefcase,
 } from "lucide-react";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 import { getApiErrorMessage } from "../../utils/apiError";
 
-// â”€â”€ Category definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Category definitions ─────────────────────────────────────────────────────────────
 const ALL_CATEGORIES = [
   { id: "EMPLOYEE_VISIT", label: "Employee Visit", desc: "Visit or invite a fellow employee" },
   { id: "PERSONAL_VISIT", label: "Personal Visit", desc: "Family / friend visiting you" },
   { id: "VENDOR", label: "Vendor / Contractor", desc: "Service and maintenance vendor" },
-  { id: "SPOT", label: "Spot Walk-in", desc: "Urgent unplanned visit" },
+  { id: "SPOT_INDIVIDUAL", label: "Individual Walk-in"},
+  { id: "SPOT_BUSINESS", label: "Vendor / Business Walk-in"},
 ];
 
 const ROLE_CATEGORIES = {
-  security: ["SPOT"],
+  security: ["SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
   employee: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR"],
-  unit_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
-  super_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
-  receptionist: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
-  org_admin: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT"],
+  unit_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
+  super_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
+  receptionist: ["EMPLOYEE_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
+  org_admin: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
+};
+
+// ── Time & Date Helpers ────────────────────────────────────────────────────────
+const getTodayDateYMD = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const getCurrentTimeHHMM = () => {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+};
+
+const addMinutesToTime = (timeStr, minutes = 30) => {
+  if (!timeStr) return '';
+  const [h, m] = timeStr.split(':').map(Number);
+  const total = h * 60 + m + minutes;
+  const hh = String(Math.floor(total / 60) % 24).padStart(2, '0');
+  const mm = String(total % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
 };
 
 export default function NewRequest() {
@@ -48,6 +73,17 @@ export default function NewRequest() {
   const [hosts, setHosts] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [selectedDeptId, setSelectedDeptId] = useState("");
+  const [spotVisitorType, setSpotVisitorType] = useState(() => {
+    const t = searchParams.get("type")?.toLowerCase();
+    return t === "business" ? "business" : "individual";
+  });
+
+  useEffect(() => {
+    const t = searchParams.get("type")?.toLowerCase();
+    if (t === "business" || t === "individual") {
+      setSpotVisitorType(t);
+    }
+  }, [searchParams]);
 
   // â”€â”€ Conflict confirmation modal state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [conflictModal, setConflictModal] = useState(null); // null | { types, host_conflict, visitor_conflict, pendingPayload }
@@ -111,23 +147,36 @@ export default function NewRequest() {
 
   const getInitialCategory = () => {
     const param = searchParams.get("category")?.toUpperCase();
+    if (param === "SPOT") {
+      const type = searchParams.get("type")?.toUpperCase();
+      if (type === "BUSINESS" && allowedIds.includes("SPOT_BUSINESS")) return "SPOT_BUSINESS";
+      if (allowedIds.includes("SPOT_INDIVIDUAL")) return "SPOT_INDIVIDUAL";
+    }
     if (allowedIds.includes(param)) return param;
-    return allowedIds[0];
+    return allowedIds[0] || "SPOT_INDIVIDUAL";
   };
+
+  const initialCat = getInitialCategory();
+  const [selectedCategory, setSelectedCategory] = useState(initialCat);
+  const isInitialSpot = initialCat === "SPOT" || initialCat === "SPOT_INDIVIDUAL" || initialCat === "SPOT_BUSINESS";
+
+  const initialDate = isInitialSpot ? getTodayDateYMD() : "";
+  const initialStartTime = isInitialSpot ? getCurrentTimeHHMM() : "";
+  const initialEndTime = isInitialSpot ? addMinutesToTime(initialStartTime, 30) : "";
 
   const isAdminOrStaff = ["super_admin", "admin", "receptionist", "security", "org_admin", "unit_admin"].includes(
     user?.role_type || user?.role
   );
 
   const [formData, setFormData] = useState({
-    visit_category: getInitialCategory(),
+    visit_category: isInitialSpot ? "SPOT" : initialCat,
     host_user_id: isAdminOrStaff ? "" : user?.id || "",
     department_id: user?.department_id || "",
     organization_id: user?.organization_id || "",
     purpose: "",
-    visit_date: "",
-    visit_start_time: "",
-    visit_end_time: "",
+    visit_date: initialDate,
+    visit_start_time: initialStartTime,
+    visit_end_time: initialEndTime,
     accompanying_count: 0,
     visitor_id: "",
     visitor_phone: "",
@@ -216,7 +265,17 @@ export default function NewRequest() {
           visitor_id: visitor.id || "",
           visitor_name: visitor.full_name || "",
           visitor_email: visitor.email || "",
+          company_name: visitor.company_name || p.company_name,
         }));
+        if (formData.visit_category === "SPOT") {
+          if (visitor.visitor_type === "business" || visitor.company_name) {
+            setSelectedCategory("SPOT_BUSINESS");
+            setSpotVisitorType("business");
+          } else {
+            setSelectedCategory("SPOT_INDIVIDUAL");
+            setSpotVisitorType("individual");
+          }
+        }
         toast.success(`Returning visitor found: ${visitor.full_name}`);
       } else {
         setVisitorLookupState("not_found");
@@ -270,18 +329,7 @@ export default function NewRequest() {
   }, []);
 
   // â”€â”€ Time helper: add minutes to "HH:MM" string â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const addMinutesToTime = (timeStr, minutes) => {
-    const [h, m] = timeStr.split(':').map(Number);
-    const total = h * 60 + m + minutes;
-    const hh = String(Math.floor(total / 60) % 24).padStart(2, '0');
-    const mm = String(total % 60).padStart(2, '0');
-    return `${hh}:${mm}`;
-  };
 
-  const getCurrentTimeHHMM = () => {
-    const now = new Date();
-    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  };
 
   // â”€â”€ Standard handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleInputChange = (e) => {
@@ -495,26 +543,43 @@ export default function NewRequest() {
   };
 
   // â”€â”€ Category change â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const handleCategoryChange = (category) => {
-    const isSpot = category === 'SPOT';
-    const isSecurity = ['security', 'receptionist', 'unit_admin'].includes(role);
-    const now = isSpot && isSecurity ? getCurrentTimeHHMM() : '';
-    const end = now ? addMinutesToTime(now, 30) : '';
+  const handleCategoryChange = (categoryId) => {
+    setSelectedCategory(categoryId);
+    const isSpotInd = categoryId === "SPOT_INDIVIDUAL";
+    const isSpotBiz = categoryId === "SPOT_BUSINESS";
+    const isSpot = isSpotInd || isSpotBiz || categoryId === "SPOT";
+    const resolvedCategory = isSpot ? "SPOT" : categoryId;
+    const subType = isSpotBiz ? "business" : "individual";
+    setSpotVisitorType(subType);
 
-    setFormData((prev) => ({
-      ...prev,
-      visit_category: category,
-      host_user_id: isAdminOrStaff ? "" : user?.id || "",
-      department_id: isAdminOrStaff ? "" : (category === "EMPLOYEE_VISIT" ? "" : user?.department_id || ""),
-      target_unit_id: "",
-      visitor_phone: "",
-      visitor_name: "",
-      visitor_email: "",
-      visitor_id: "",
-      visit_start_time: now,
-      visit_end_time: end,
-    }));
+    const nowTime = isSpot ? getCurrentTimeHHMM() : '';
+    const endTime = isSpot ? addMinutesToTime(nowTime, 30) : '';
+    const nowDate = isSpot ? getTodayDateYMD() : '';
+
+    setFormData((prev) => {
+      const isPrevSpot = prev.visit_category === "SPOT";
+      return {
+        ...prev,
+        visit_category: resolvedCategory,
+        host_user_id: isAdminOrStaff ? "" : user?.id || "",
+        department_id: isAdminOrStaff ? "" : (resolvedCategory === "EMPLOYEE_VISIT" ? "" : user?.department_id || ""),
+        target_unit_id: "",
+        visitor_phone: "",
+        visitor_name: "",
+        visitor_email: "",
+        company_name: "",
+        vendor_email: "",
+        contact_person: "",
+        service_type: "",
+        work_order_ref: "",
+        visitor_id: "",
+        visit_date: isSpot ? (isPrevSpot && prev.visit_date ? prev.visit_date : nowDate) : "",
+        visit_start_time: isSpot ? (isPrevSpot && prev.visit_start_time ? prev.visit_start_time : nowTime) : "",
+        visit_end_time: isSpot ? (isPrevSpot && prev.visit_end_time ? prev.visit_end_time : endTime) : "",
+      };
+    });
     resetVisitorLookup();
+    resetVendorLookup();
     setSelectedDeptId("");
     setHosts([]);
     setVisitMode("visiting");
@@ -562,7 +627,7 @@ export default function NewRequest() {
     const payload = { ...formData };
     const cat = payload.visit_category;
 
-    if (cat !== "VENDOR") {
+    if (cat !== "VENDOR" && !(cat === "SPOT" && spotVisitorType === "business")) {
       delete payload.company_name;
       delete payload.vendor_email;
       delete payload.contact_person;
@@ -668,6 +733,11 @@ export default function NewRequest() {
       }
     }
 
+    if (formData.visit_category === "SPOT" && spotVisitorType === "business" && !formData.company_name?.trim()) {
+      toast.error("Company / Organization name is required for vendor/business walk-in visits.");
+      return;
+    }
+
     setLoading(true);
     try {
       const payload = buildPayload();
@@ -719,11 +789,13 @@ export default function NewRequest() {
   const isAdminEmpVisit = (isUnitAdmin || (isSuperAdminUser && !!activeUnit));
   const cat = formData.visit_category;
   const isVendor = cat === "VENDOR";
+  const isSpotBusiness = cat === "SPOT" && spotVisitorType === "business";
+  const isVendorBusiness = isVendor || isSpotBusiness;
   const isEmpVisit = cat === "EMPLOYEE_VISIT";
   const isSelfHosting = !isAdminOrStaff && !isEmpVisit && !isUnitAdmin;
 
-  // Hide the standard visitor phone fields and host picker for EMPLOYEE_VISIT
-  const showVisitorFields = !isVendor && !isEmpVisit;
+  // Hide the standard visitor phone fields for VENDOR / SPOT_BUSINESS (they have their own Vendor Details card)
+  const showVisitorFields = !isVendorBusiness && !isEmpVisit;
   const showHostPicker = (!isSelfHosting || isUnitAdmin) && !isEmpVisit;
 
   // Shared input style
@@ -748,21 +820,29 @@ export default function NewRequest() {
             Visit Category
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {availableCategories.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => handleCategoryChange(c.id)}
-                className={`p-3 text-sm rounded-md border text-left transition-all duration-300 ${formData.visit_category === c.id
-                    ? "border-border bg-mixed-bg shadow-soft-sm"
-                    : "border-subtle hover:border-border hover:bg-bg-primary"
-                  }`}
-              >
-                <div className={`font-medium ${formData.visit_category === c.id ? "text-accent" : "text-loud"}`}>
-                  {c.label}
-                </div>
-              </button>
-            ))}
+            {availableCategories.map((c) => {
+              const isSelected = selectedCategory === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => handleCategoryChange(c.id)}
+                  className={`p-3.5 text-sm rounded-md border text-left transition-all duration-300 ${isSelected
+                      ? "border-border bg-mixed-bg shadow-soft-sm"
+                      : "border-subtle hover:border-border hover:bg-bg-primary"
+                    }`}
+                >
+                  <div className={`font-semibold ${isSelected ? "text-accent" : "text-loud"}`}>
+                    {c.label}
+                  </div>
+                  {c.desc && (
+                    <div className="text-xs text-muted mt-1 leading-relaxed">
+                      {c.desc}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -1108,7 +1188,7 @@ export default function NewRequest() {
                     <div className="space-y-4 md:col-span-2">
                       <label className="text-sm font-medium text-loud flex items-center gap-2">
                         <Phone className="w-4 h-4 text-accent" />
-                        Visitor *
+                        {cat === "SPOT" && spotVisitorType === "business" ? "Representative Mobile Number *" : "Visitor Mobile Number *"}
                       </label>
 
                       {/* Phone + Lookup button */}
@@ -1151,14 +1231,14 @@ export default function NewRequest() {
                         <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
                           style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
                           <CheckCircle2 className="w-4 h-4 shrink-0" />
-                          <span><strong>Returning visitor</strong>  -  details auto-filled from our records.</span>
+                          <span><strong>Returning visitor</strong> — details auto-filled from our records.</span>
                         </div>
                       )}
                       {visitorLookupState === 'not_found' && (
                         <div className="flex items-center gap-2 px-4 py-3 rounded-md text-sm"
                           style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
                           <AlertCircle className="w-4 h-4 shrink-0" />
-                          <span><strong>New visitor</strong>  -  fill in the details below. They will be saved automatically.</span>
+                          <span><strong>New visitor</strong> — fill in the details below. They will be saved automatically.</span>
                         </div>
                       )}
                       {visitorLookupState === 'idle' && (!formData.visitor_phone || formData.visitor_phone.length === 0) && (
@@ -1170,30 +1250,86 @@ export default function NewRequest() {
 
                       {/* Name + Email shown after lookup */}
                       {(visitorLookupState === 'found' || visitorLookupState === 'not_found') && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-1">
-                            <label className="block text-xs font-medium text-faint uppercase tracking-wider">Full Name *</label>
-                            <input
-                              type="text"
-                              required
-                              readOnly={visitorLookupState === 'found'}
-                              value={formData.visitor_name}
-                              onChange={e => setFormData(p => ({ ...p, visitor_name: e.target.value }))}
-                              placeholder="Visitor full name"
-                              className={`${inputCls}${visitorLookupState === 'found' ? ' opacity-60 cursor-default' : ''}`}
-                            />
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className="block text-xs font-medium text-faint uppercase tracking-wider">
+                                {cat === "SPOT" && spotVisitorType === "business" ? "Representative Full Name *" : "Full Name *"}
+                              </label>
+                              <input
+                                type="text"
+                                required
+                                readOnly={visitorLookupState === 'found'}
+                                value={formData.visitor_name}
+                                onChange={e => setFormData(p => ({ ...p, visitor_name: e.target.value }))}
+                                placeholder={cat === "SPOT" && spotVisitorType === "business" ? "Representative full name" : "Visitor full name"}
+                                className={`${inputCls}${visitorLookupState === 'found' ? ' opacity-60 cursor-default' : ''}`}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="block text-xs font-medium text-faint uppercase tracking-wider">Email (optional)</label>
+                              <input
+                                type="email"
+                                readOnly={visitorLookupState === 'found'}
+                                value={formData.visitor_email}
+                                onChange={e => setFormData(p => ({ ...p, visitor_email: e.target.value }))}
+                                placeholder="visitor@email.com"
+                                className={`${inputCls}${visitorLookupState === 'found' ? ' opacity-60 cursor-default' : ''}`}
+                              />
+                            </div>
                           </div>
-                          <div className="space-y-1">
-                            <label className="block text-xs font-medium text-faint uppercase tracking-wider">Email (optional)</label>
-                            <input
-                              type="email"
-                              readOnly={visitorLookupState === 'found'}
-                              value={formData.visitor_email}
-                              onChange={e => setFormData(p => ({ ...p, visitor_email: e.target.value }))}
-                              placeholder="visitor@email.com"
-                              className={`${inputCls}${visitorLookupState === 'found' ? ' opacity-60 cursor-default' : ''}`}
-                            />
-                          </div>
+
+                          {/* Vendor/Business specific fields for SPOT walk-in */}
+                          {cat === "SPOT" && spotVisitorType === "business" && (
+                            <div className="p-4 rounded-xl border border-accent/20 bg-accent/5 space-y-4 animate-fade-in">
+                              <div className="flex items-center gap-2 text-accent text-xs font-bold uppercase tracking-wider">
+                                <Building className="w-4 h-4" />
+                                <span>Vendor / Organization Details</span>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="space-y-1 sm:col-span-2">
+                                  <label className="block text-xs font-semibold text-muted">
+                                    Company / Vendor Name *
+                                  </label>
+                                  <input
+                                    type="text"
+                                    name="company_name"
+                                    required
+                                    value={formData.company_name}
+                                    onChange={handleInputChange}
+                                    placeholder="e.g., L&T Hydro, BHEL, Siemens, Schneider Electric"
+                                    className={inputCls}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="block text-xs font-semibold text-muted">
+                                    Service / Work Nature (optional)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    name="service_type"
+                                    value={formData.service_type}
+                                    onChange={handleInputChange}
+                                    placeholder="e.g., Transformer maintenance, cable supply"
+                                    className={inputCls}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="block text-xs font-semibold text-muted">
+                                    Work Order / Reference # (optional)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    name="work_order_ref"
+                                    value={formData.work_order_ref}
+                                    onChange={handleInputChange}
+                                    placeholder="e.g., WO-2026-0812"
+                                    className={inputCls}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1285,14 +1421,14 @@ export default function NewRequest() {
 
 
         {/* â”€â”€ Step 3: Vendor Details (conditional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        {isVendor && (
+        {isVendorBusiness && (
           <div className="vms-card rounded-md p-8 shadow-card animate-fade-in">
             <h2 className="text-xl text-loud mb-6 flex items-center gap-2">
               <span className="w-8 h-8 rounded-full bg-mixed-bg text-accent flex items-center justify-center text-sm font-bold">
                 3
               </span>
               <Building className="w-5 h-5 text-accent" />
-              Vendor Details
+              {isSpotBusiness ? "Vendor / Business Details" : "Vendor Details"}
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               {/* Company Name */}
@@ -1379,7 +1515,7 @@ export default function NewRequest() {
                 <input
                   type="text" name="contact_person" required
                   value={formData.contact_person}
-                  onChange={e => setFormData(p => ({ ...p, contact_person: e.target.value }))}
+                  onChange={e => setFormData(p => ({ ...p, contact_person: e.target.value, visitor_name: e.target.value }))}
                   readOnly={vendorLookupState === 'found'}
                   placeholder="Representative's full name"
                   className={`${inputCls}${vendorLookupState === 'found' ? ' opacity-60 cursor-default' : ''}`}
@@ -1406,7 +1542,7 @@ export default function NewRequest() {
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
             <h2 className="text-sm text-loud flex items-center gap-2">
               <span className="w-6 h-6 rounded-sm bg-mixed-bg text-loud flex items-center justify-center text-sm font-bold shrink-0">
-                {isVendor ? "4" : "3"}
+                {isVendorBusiness ? "4" : "3"}
               </span>
               <Users className="w-5 h-5 text-accent shrink-0" />
               <span>Companions <span className="text-base font-normal text-muted">({formData.accompanying_count})</span></span>

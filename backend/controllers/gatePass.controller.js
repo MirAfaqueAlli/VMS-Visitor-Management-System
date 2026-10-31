@@ -19,6 +19,7 @@ async function fetchFullPass(db, passId) {
             vr.visit_date, vr.visit_start_time, vr.visit_end_time,
             vr.purpose, vr.status AS request_status, vr.visit_category,
             vr.visitor_name, vr.visitor_phone, vr.company_name,
+            vr.unit_id,
             COALESCE(v.full_name, vr.visitor_name) AS resolved_visitor_name,
             h.full_name  AS host_name,
             d.name       AS department_name
@@ -31,7 +32,37 @@ async function fetchFullPass(db, passId) {
     [passId]
   );
   if (!rows[0]) return null;
-  return { ...rows[0], qr_code_path: await getSignedFileUrl(rows[0].qr_code_path) };
+  const row = rows[0];
+
+  // Fetch unit name from central DB (units table lives in central, not unit DBs)
+  let unit_name = null;
+  let unit_code = null;
+  if (row.unit_id) {
+    try {
+      const [unitRows] = await centralPool.query(
+        'SELECT name, code FROM units WHERE id = ? LIMIT 1', [row.unit_id]
+      );
+      if (unitRows[0]) { unit_name = unitRows[0].name; unit_code = unitRows[0].code; }
+    } catch (_) { /* non-fatal */ }
+  }
+
+  // Fallback: extract unit code from pass_number (e.g., VMS-U1-20261022-97667)
+  if (!unit_name && row.pass_number) {
+    const match = row.pass_number.match(/^VMS-([A-Za-z0-9_]+)-/);
+    if (match) {
+      try {
+        const [unitRows] = await centralPool.query(
+          'SELECT name, code FROM units WHERE code = ? LIMIT 1', [match[1]]
+        );
+        if (unitRows[0]) {
+          unit_name = unitRows[0].name;
+          unit_code = unitRows[0].code;
+        }
+      } catch (_) {}
+    }
+  }
+
+  return { ...row, unit_name, unit_code, qr_code_path: await getSignedFileUrl(row.qr_code_path) };
 }
 
 // ── generatePass ──────────────────────────────────────────────────────────────

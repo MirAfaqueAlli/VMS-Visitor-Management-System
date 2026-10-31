@@ -1,16 +1,19 @@
 // frontend/src/pages/requests/PublicRequest.jsx
 import { useState, useEffect, useRef } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import {
   Building2, User, FileText, CheckCircle2, ChevronDown,
   Briefcase, UserCircle, Lock, Phone, Mail, MapPin,
   ArrowRight, RefreshCw, Loader2, Check, ArrowLeft,
   UserPlus, Calendar, ShieldCheck, LogOut, KeyRound,
-  Shield, HelpCircle,
+  Shield, HelpCircle, AlertTriangle, Eye, EyeOff,
 } from "lucide-react";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
 import { auth, DEV_PHONE_OTP } from "../../utils/firebase";
 import useCountdown from "../../hooks/useCountdown";
 import BrandLogo from "../../components/BrandLogo";
+import PasswordStrength from "../../components/PasswordStrength";
+import { validatePassword } from "../../utils/passwordValidator";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 
@@ -187,8 +190,24 @@ function Shell({ step, children }) {
    MAIN COMPONENT
 ============================================================================== */
 export default function PublicRequest() {
+  const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [authMode, setAuthMode] = useState("login"); // "login" | "register"
+  const [existingVisitorSession, setExistingVisitorSession] = useState(null);
+
+  useEffect(() => {
+    try {
+      const token =
+        sessionStorage.getItem("vms_visitor_token") ||
+        localStorage.getItem("vms_visitor_token");
+      if (token) {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        if (payload.purpose === "PUBLIC_VISITOR" && payload.exp * 1000 > Date.now()) {
+          setExistingVisitorSession(payload);
+        }
+      }
+    } catch {}
+  }, []);
 
   const [identity, setIdentity] = useState({
     visitor_name: "",
@@ -198,6 +217,35 @@ export default function PublicRequest() {
   });
   const [isExistingProfile, setIsExistingProfile] = useState(false);
   const [step1Busy, setStep1Busy] = useState(false);
+  const [phoneFeedback, setPhoneFeedback] = useState(null); // null | { isRegistered: boolean, name?: string }
+
+  // Check phone in background when 10 digits are reached to provide instant guidance
+  useEffect(() => {
+    const raw = identity.visitor_phone.trim();
+    if (raw.length !== 10) {
+      setPhoneFeedback(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      apiClient
+        .post("/public-auth/check-phone", { phone: raw })
+        .then((res) => {
+          if (!cancelled && res.data?.data) {
+            setPhoneFeedback({
+              isRegistered: !!res.data.data.registered,
+              name: res.data.data.visitor_name,
+            });
+          }
+        })
+        .catch(() => {});
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [identity.visitor_phone]);
 
   // Phone OTP
   const [confirmationResult, setConfirmationResult] = useState(null);
@@ -209,10 +257,29 @@ export default function PublicRequest() {
 
   // Email OTP
   const [emailOtp, setEmailOtp] = useState("");
+  const [emailToken, setEmailToken] = useState(null);
   const [emailVerified, setEmailVerified] = useState(false);
   const [emailVerifying, setEmailVerifying] = useState(false);
   const [emailResending, setEmailResending] = useState(false);
   const [devEmailOtp, setDevEmailOtp] = useState(null);
+
+  // Login with Email or Mobile + Password
+  const [loginIdentifier, setLoginIdentifier] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
+
+  // Password creation & confirm (Registration & Forgot Password)
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+
+  // Forgot Password (Mobile Number Only)
+  const [forgotPhone, setForgotPhone] = useState("");
+  const [forgotMaskedPhone, setForgotMaskedPhone] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
 
   const phoneTimer = useCountdown();
   const emailTimer = useCountdown();
@@ -225,13 +292,17 @@ export default function PublicRequest() {
       try { recaptchaVerifierRef.current.clear(); } catch { /* ignore */ }
       recaptchaVerifierRef.current = null;
     }
+    // Always wipe the DOM container so Firebase can create a fresh widget.
+    // Without this, re-attempting OTP after a previous session causes RECAPTCHA failure.
+    const container = document.getElementById('recaptcha-container');
+    if (container) container.innerHTML = '';
   };
 
   useEffect(() => clearRecaptcha, []);
 
-  const sendFirebaseSms = async (phone) => {
+  const sendFirebaseSms = async (phone, mode = null) => {
     if (DEV_PHONE_OTP) {
-      await apiClient.post("/public-auth/send-phone-otp", { phone });
+      await apiClient.post("/public-auth/send-phone-otp", { phone, mode });
       return;
     }
     clearRecaptcha();
@@ -310,38 +381,90 @@ export default function PublicRequest() {
       .finally(() => setLoadingHosts(false));
   }, [formData.department_id, formData.unit_id]);
 
-  /* ── Step 1: Send OTPs ────────────────────────────────────────────────────── */
-  const handleExistingVisitorLogin = async (e) => {
+  /* ── Step 1: Authentication Handlers ─────────────────────────────────────── */
+  const handleLogin = async (e) => {
     e.preventDefault();
-    const phone = identity.visitor_phone.trim();
-    if (!/^\d{10}$/.test(phone)) {
-      toast.error("Please enter a valid 10-digit mobile number.");
+    const identifier = loginIdentifier.trim();
+    if (!identifier) {
+      toast.error("Please enter your registered email address or mobile number.");
+      return;
+    }
+    if (!loginPassword) {
+      toast.error("Please enter your password.");
       return;
     }
 
-    setStep1Busy(true);
+    setLoginBusy(true);
     try {
-      // 1. Check if this mobile number is registered
-      const checkRes = await apiClient.post("/public-auth/check-phone", { phone });
-      const isRegistered = checkRes.data?.data?.registered;
+      const res = await apiClient.post("/public-auth/login", {
+        identifier,
+        password: loginPassword,
+      });
 
-      if (!isRegistered) {
-        toast.error("This mobile number is not registered. Please register as a new visitor.");
-        setAuthMode("register"); // Automatically switch to registration mode with this number
+      const data = res.data?.data;
+      if (data?.visitor_token) {
+        toast.success(res.data?.message || `Welcome back, ${data.visitor?.visitor_name || "Visitor"}!`);
+        sessionStorage.setItem("vms_visitor_token", data.visitor_token);
+        localStorage.setItem("vms_visitor_token", data.visitor_token);
+        if (data.visitor) {
+          localStorage.setItem("vms_visitor_data", JSON.stringify(data.visitor));
+        }
+        navigate("/visitor/dashboard");
         return;
       }
-
-      // 2. Only if registered, send the login OTP!
-      await sendFirebaseSms(phone);
-      phoneTimer.start();
-      setPhoneOtp("");
-      setPhoneVerified(false);
-      toast.success("Verification code sent to +91 " + phone);
-      setStep(2);
     } catch (err) {
-      toast.error(err?.response?.data?.message || err?.message || "Failed to verify mobile number.");
+      toast.error(err?.response?.data?.message || err?.message || "Invalid credentials.");
     } finally {
-      setStep1Busy(false);
+      setLoginBusy(false);
+    }
+  };
+
+  const handleForgotPasswordInit = async (e) => {
+    e.preventDefault();
+    const phone = forgotPhone.trim();
+    if (phone.length !== 10) {
+      toast.error("Please enter your registered 10-digit mobile number.");
+      return;
+    }
+
+    setForgotBusy(true);
+    try {
+      const res = await apiClient.post("/public-auth/forgot-password/init", { phone });
+      const data = res.data?.data;
+      if (data) {
+        setIdentity((p) => ({
+          ...p,
+          visitor_name: data.visitor_name || "",
+          visitor_email: data.email || "",
+          visitor_phone: data.phone,
+        }));
+        setForgotMaskedPhone(data.masked_phone || `+91 ******${data.phone.slice(-4)}`);
+
+        // Send Phone SMS — if cooldown (429), code is still valid, advance anyway
+        try {
+          await sendFirebaseSms(data.phone, "login");
+        } catch (phoneErr) {
+          const status = phoneErr?.response?.status;
+          const msg = phoneErr?.response?.data?.message || phoneErr?.message || "";
+          if (status !== 429 && !msg.toLowerCase().includes("wait")) {
+            throw phoneErr;
+          }
+          // 429 cooldown → previous code is still usable, continue silently
+        }
+        phoneTimer.start();
+        setPhoneOtp("");
+        setPhoneVerified(false);
+        setPhoneToken(null);
+        setNewPassword("");
+        setConfirmPassword("");
+
+        toast.success(res.data?.message || "A verification code has been sent to your mobile number.");
+        setStep(2);
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.message || err?.message || "Failed to initiate password reset.");
+    } finally {
+      setForgotBusy(false);
     }
   };
 
@@ -357,25 +480,71 @@ export default function PublicRequest() {
 
     setStep1Busy(true);
     try {
-      // 1. Check if this mobile number is ALREADY registered!
+      // 1. Check if mobile number is ALREADY registered
       const checkRes = await apiClient.post("/public-auth/check-phone", { phone: visitor_phone.trim() });
-      const isRegistered = checkRes.data?.data?.registered;
+      if (checkRes.data?.data?.registered) {
+        toast.error("This mobile number is already registered through this portal! Please login instead.");
+        setAuthMode("login");
+        setLoginIdentifier(visitor_phone.trim());
+        return;
+      }
 
-      if (isRegistered) {
-        toast.error("This mobile number is already registered. Please login instead.");
-        setAuthMode("login"); // Automatically switch to login mode with this number
+      // Check email
+      const checkEmailRes = await apiClient.post("/public-auth/check-email", { email: visitor_email.trim() });
+      if (checkEmailRes.data?.data?.registered) {
+        toast.error("This email address is already registered through this portal! Please login instead.");
+        setAuthMode("login");
+        setLoginIdentifier(visitor_email.trim());
         return;
       }
 
       // 2. If not registered, proceed to send verification codes (SMS + Email)
-      await sendFirebaseSms(visitor_phone.trim());
-      phoneTimer.start();
+      // If the backend says a code was sent recently (429 cooldown), that code is still valid —
+      // skip re-sending and advance to Step 2 anyway so the user can use the existing OTP.
+      let phoneSentOk = false;
+      try {
+        await sendFirebaseSms(visitor_phone.trim(), "register");
+        phoneSentOk = true;
+      } catch (phoneErr) {
+        const status = phoneErr?.response?.status;
+        const msg = phoneErr?.response?.data?.message || phoneErr?.message || "";
+        if (status === 429 || msg.toLowerCase().includes("wait")) {
+          // Code already sent recently — still usable, advance to step 2
+          phoneSentOk = true;
+          toast("A phone code was already sent — use that one.", { icon: "ℹ️" });
+        } else {
+          throw phoneErr;
+        }
+      }
+      if (phoneSentOk) phoneTimer.start();
 
-      const emailRes = await apiClient.post("/public-auth/send-email-otp", {
-        email: visitor_email.trim(),
-      });
-      if (emailRes.data?.data?.dev_otp) setDevEmailOtp(emailRes.data.data.dev_otp);
+      let emailDevOtp = null;
+      try {
+        const emailRes = await apiClient.post("/public-auth/send-email-otp", {
+          email: visitor_email.trim(),
+        });
+        if (emailRes.data?.data?.dev_otp) emailDevOtp = emailRes.data.data.dev_otp;
+      } catch (emailErr) {
+        const status = emailErr?.response?.status;
+        const msg = emailErr?.response?.data?.message || emailErr?.message || "";
+        if (status === 429 || msg.toLowerCase().includes("wait")) {
+          // Code already sent recently — still usable, advance to step 2
+          toast("An email code was already sent — use that one.", { icon: "ℹ️" });
+        } else {
+          throw emailErr;
+        }
+      }
+      if (emailDevOtp) setDevEmailOtp(emailDevOtp);
       emailTimer.start();
+
+      setPhoneOtp("");
+      setEmailOtp("");
+      setPhoneVerified(false);
+      setEmailVerified(false);
+      setPhoneToken(null);
+      setEmailToken(null);
+      setNewPassword("");
+      setConfirmPassword("");
 
       toast.success("Verification codes sent to your phone and email!");
       setStep(2);
@@ -386,60 +555,7 @@ export default function PublicRequest() {
     }
   };
 
-  /* ── Step 2: Verify OTPs ──────────────────────────────────────────────────── */
-  const handleVerifyExistingVisitor = async () => {
-    if (phoneOtp.length !== 6) { toast.error("Please enter the 6-digit OTP."); return; }
-    if (!DEV_PHONE_OTP && !confirmationResult) {
-      toast.error("No active OTP session. Please request a new code."); return;
-    }
-
-    setPhoneVerifying(true);
-    try {
-      const proof = DEV_PHONE_OTP
-        ? { otp: phoneOtp }
-        : { idToken: await (await confirmationResult.confirm(phoneOtp)).user.getIdToken() };
-
-      const res = await apiClient.post("/public-auth/existing-visitor-verify", {
-        phone: identity.visitor_phone.trim(),
-        ...proof,
-      });
-
-      const data = res.data?.data || {};
-
-      if (data.found && data.visitor_token) {
-        toast.success(`Welcome back, ${data.visitor.visitor_name}!`);
-        setIdentity({
-          visitor_name: data.visitor.visitor_name || "",
-          visitor_email: data.visitor.visitor_email || "",
-          visitor_phone: data.visitor.visitor_phone || identity.visitor_phone,
-          visitor_address: data.visitor.visitor_address || "",
-        });
-        if (data.visitor.company_name) {
-          setFormData((p) => ({ ...p, company_name: data.visitor.company_name, visit_type: "BUSINESS" }));
-        }
-        setIsExistingProfile(true);
-        setVisitorToken(data.visitor_token);
-        sessionStorage.setItem("vms_visitor_token", data.visitor_token);
-        setPhoneVerified(true);
-        setEmailVerified(true);
-        setStep(3);
-      } else {
-        toast("Phone verified! No previous visits found. Please complete your registration.", {
-          icon: "ℹ️",
-          duration: 5000,
-        });
-        setPhoneVerified(true);
-        setPhoneToken(data.phone_token);
-        setAuthMode("register");
-        setStep(1);
-      }
-    } catch (err) {
-      toast.error(err?.response?.data?.message || err?.message || "Invalid OTP code.");
-    } finally {
-      setPhoneVerifying(false);
-    }
-  };
-
+  /* ── Step 2: OTP Verification & Password Handlers ────────────────────────── */
   const verifyNewVisitorPhone = async () => {
     if (phoneOtp.length !== 6) { toast.error("Please enter the 6-digit phone OTP."); return; }
     if (!DEV_PHONE_OTP && !confirmationResult) { toast.error("No active phone verification session."); return; }
@@ -458,6 +574,15 @@ export default function PublicRequest() {
       setPhoneVerified(true);
       toast.success("Mobile number verified! ✓");
     } catch (err) {
+      // Retryable Firebase errors (wrong code): keep confirmationResult so the user
+      // can just fix the digits and try again without resending.
+      // Non-retryable errors (expired session, quota, etc.): clear so Resend works.
+      const retryable = ['auth/invalid-verification-code'].includes(err?.code);
+      if (!retryable && !err?.response) {
+        // Firebase error that is NOT retryable → clear session so Resend re-fires correctly
+        setConfirmationResult(null);
+        clearRecaptcha();
+      }
       toast.error(err?.response?.data?.message || err?.message || "Invalid phone OTP.");
     } finally {
       setPhoneVerifying(false);
@@ -473,12 +598,8 @@ export default function PublicRequest() {
       const res = await apiClient.post("/public-auth/verify-email-otp", {
         email: identity.visitor_email.trim(),
         otp: emailOtp,
-        visitor_name: identity.visitor_name.trim(),
-        visitor_phone: identity.visitor_phone.trim(),
-        visitor_address: identity.visitor_address.trim(),
-        phone_token: phoneToken,
       });
-      setVisitorToken(res.data?.data?.visitor_token);
+      setEmailToken(res.data?.data?.email_token ?? null);
       setEmailVerified(true);
       toast.success("Email verified! ✓");
     } catch (err) {
@@ -488,21 +609,130 @@ export default function PublicRequest() {
     }
   };
 
+  const handleCompleteRegistrationSubmit = async (e) => {
+    e.preventDefault();
+    if (!newPassword || !confirmPassword) {
+      toast.error("Please enter and confirm your password.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match.");
+      return;
+    }
+    const check = validatePassword(newPassword);
+    if (!check.valid) {
+      toast.error(check.results.find((r) => !r.passed)?.label || "Password is not strong enough.");
+      return;
+    }
+    if (!phoneToken || !emailToken) {
+      toast.error("Please complete phone and email verification first.");
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      const res = await apiClient.post("/public-auth/register-with-password", {
+        visitor_name: identity.visitor_name.trim(),
+        visitor_phone: identity.visitor_phone.trim(),
+        visitor_email: identity.visitor_email.trim(),
+        visitor_address: identity.visitor_address.trim(),
+        password: newPassword,
+        phone_token: phoneToken,
+        email_token: emailToken,
+      });
+
+      const token = res.data?.data?.visitor_token;
+      if (token) {
+        setVisitorToken(token);
+        sessionStorage.setItem("vms_visitor_token", token);
+        localStorage.setItem("vms_visitor_token", token);
+        const visitorData = res.data?.data?.visitor || {
+          full_name: identity.visitor_name.trim(),
+          phone: identity.visitor_phone.trim(),
+          email: identity.visitor_email.trim(),
+          address: identity.visitor_address.trim(),
+        };
+        localStorage.setItem("vms_visitor_data", JSON.stringify(visitorData));
+        toast.success("Account registered successfully! Welcome to your visitor portal.");
+        navigate("/visitor/dashboard");
+        return;
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.message || err?.message || "Failed to create account.");
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
+  const handleResetPasswordSubmit = async (e) => {
+    e.preventDefault();
+    if (!newPassword || !confirmPassword) {
+      toast.error("Please enter and confirm your new password.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match.");
+      return;
+    }
+    const check = validatePassword(newPassword);
+    if (!check.valid) {
+      toast.error(check.results.find((r) => !r.passed)?.label || "Password is not strong enough.");
+      return;
+    }
+    if (!phoneToken) {
+      toast.error("Please complete phone verification first.");
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      await apiClient.post("/public-auth/forgot-password/reset", {
+        phone: identity.visitor_phone.trim(),
+        phone_token: phoneToken,
+        new_password: newPassword,
+      });
+
+      // Clear password reset session state
+      const phoneForLogin = identity.visitor_phone.trim();
+      setPhoneOtp("");
+      setPhoneToken(null);
+      setPhoneVerified(false);
+      setNewPassword("");
+      setConfirmPassword("");
+      setForgotPhone("");
+      setForgotMaskedPhone("");
+
+      // Redirect back to login step with the phone prefilled
+      setLoginIdentifier(phoneForLogin);
+      setLoginPassword("");
+      setAuthMode("login");
+      setStep(1);
+
+      toast.success("Password reset successfully! Please log in with your new password.");
+    } catch (err) {
+      toast.error(err?.response?.data?.message || err?.message || "Failed to reset password.");
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
   const resendPhone = async () => {
+    if (phoneTimer.count > 0 || phoneResending) return;
     setPhoneResending(true);
     try {
-      await sendFirebaseSms(identity.visitor_phone.trim());
+      await sendFirebaseSms(identity.visitor_phone.trim(), authMode === "forgot" ? "login" : "register");
       phoneTimer.start();
       setPhoneOtp("");
       toast.success("New code sent to your mobile.");
     } catch (err) {
-      toast.error(err?.message || "Failed to resend mobile OTP.");
+      toast.error(err?.response?.data?.message || err?.message || "Failed to resend mobile OTP.");
     } finally {
       setPhoneResending(false);
     }
   };
 
   const resendEmail = async () => {
+    if (emailTimer.count > 0 || emailResending) return;
     setEmailResending(true);
     try {
       const res = await apiClient.post("/public-auth/send-email-otp", {
@@ -512,8 +742,8 @@ export default function PublicRequest() {
       emailTimer.start();
       setEmailOtp("");
       toast.success("New code sent to your email.");
-    } catch {
-      toast.error("Failed to resend email OTP.");
+    } catch (err) {
+      toast.error(err?.response?.data?.message || err?.message || "Failed to resend email OTP.");
     } finally {
       setEmailResending(false);
     }
@@ -581,7 +811,14 @@ export default function PublicRequest() {
     setPhoneOtp("");
     setEmailOtp("");
     setVisitorToken(null);
+    setEmailToken(null);
     sessionStorage.removeItem("vms_visitor_token");
+    setLoginIdentifier("");
+    setLoginPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setForgotPhone("");
+    setForgotMaskedPhone("");
     setFormData({
       visit_type: "INDIVIDUAL",
       unit_id: "",
@@ -660,6 +897,43 @@ export default function PublicRequest() {
   if (step === 1) {
     return (
       <Shell step={step}>
+        {existingVisitorSession && (
+          <div className="w-full max-w-xl mx-auto mb-4 p-4 rounded-xl bg-mixed-bg border border-accent/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <ShieldCheck size={18} className="text-accent shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-loud">
+                  You are signed in as {existingVisitorSession.visitor_name}
+                </p>
+                <p className="text-[11px] text-faint">
+                  Jump directly to your visitor portal or schedule revisits.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Link
+                to="/visitor/dashboard"
+                className="btn-primary py-1.5 px-3 text-xs font-bold flex items-center gap-1 shadow-sm"
+              >
+                <span>Dashboard</span>
+                <ArrowRight size={13} />
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  sessionStorage.removeItem("vms_visitor_token");
+                  localStorage.removeItem("vms_visitor_token");
+                  localStorage.removeItem("vms_visitor_data");
+                  setExistingVisitorSession(null);
+                  toast.success("Signed out.");
+                }}
+                className="text-xs text-muted hover:text-error px-2 py-1"
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        )}
         <div className="w-full max-w-xl mx-auto bg-bg-secondary border border-border rounded-2xl p-6 sm:p-8 shadow-card space-y-6 animate-fade-in">
           {/* Segmented Mode Toggle Tabs */}
           <div className="flex p-1 bg-bg-primary rounded-xl border border-subtle">
@@ -694,50 +968,79 @@ export default function PublicRequest() {
             <div className="space-y-5 animate-fade-in">
               <div>
                 <h3 className="text-base font-bold text-loud flex items-center gap-2 mb-1">
-                  <Phone size={17} className="text-accent" /> Login with Mobile Number
+                  <KeyRound size={17} className="text-accent" /> Visitor Account Login
                 </h3>
                 <p className="text-xs text-faint leading-relaxed">
-                  Enter your registered 10-digit mobile number. We will send an OTP to verify your identity and automatically load your saved profile.
+                  Enter your registered email address or 10-digit mobile number and password to sign in and submit your visit request.
                 </p>
               </div>
 
-              <form onSubmit={handleExistingVisitorLogin} className="space-y-5">
-                <div className="space-y-2">
-                  <label className={labelCls}>Mobile Number *</label>
-                  <div className="relative flex items-center">
-                    <span className="absolute left-3.5 text-sm font-bold text-muted pointer-events-none">
-                      +91
-                    </span>
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className={labelCls}>Email Address or Mobile Number *</label>
+                  <div className="relative">
+                    <User size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
                     <input
-                      type="tel"
+                      type="text"
                       required
                       autoFocus
-                      value={identity.visitor_phone}
-                      onChange={(e) =>
-                        setIdentity((p) => ({
-                          ...p,
-                          visitor_phone: e.target.value.replace(/\D/g, "").slice(0, 10),
-                        }))
-                      }
-                      placeholder="98765 43210"
-                      maxLength={10}
-                      className={`${inputCls} pl-12 text-base font-medium tracking-wide`}
+                      value={loginIdentifier}
+                      onChange={(e) => setLoginIdentifier(e.target.value)}
+                      placeholder="name@example.com or 10-digit mobile"
+                      className={`${inputCls} pl-10`}
                     />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className={labelCls}>Password *</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cleanDigits = loginIdentifier.replace(/\D/g, "");
+                        if (cleanDigits.length === 10) {
+                          setForgotPhone(cleanDigits);
+                        }
+                        setAuthMode("forgot");
+                      }}
+                      className="text-xs text-accent hover:underline font-semibold cursor-pointer"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
+                    <input
+                      type={showLoginPassword ? "text" : "password"}
+                      required
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="Enter your account password"
+                      className={`${inputCls} pl-10 pr-10`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword((p) => !p)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-faint hover:text-loud transition-colors"
+                    >
+                      {showLoginPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
                   </div>
                 </div>
 
                 <button
                   type="submit"
-                  disabled={step1Busy || identity.visitor_phone.length !== 10}
-                  className="btn-primary w-full py-3 text-sm font-semibold justify-center shadow-md disabled:opacity-50"
+                  disabled={loginBusy || !loginIdentifier || !loginPassword}
+                  className="btn-primary w-full py-3 text-sm font-semibold justify-center shadow-md disabled:opacity-50 mt-2"
                 >
-                  {step1Busy ? (
+                  {loginBusy ? (
                     <>
-                      <Loader2 size={16} className="animate-spin" /> Checking & Sending OTP...
+                      <Loader2 size={16} className="animate-spin" /> Signing In...
                     </>
                   ) : (
                     <>
-                      Send Login OTP <ArrowRight size={16} />
+                      Sign In & Continue <ArrowRight size={16} />
                     </>
                   )}
                 </button>
@@ -749,6 +1052,65 @@ export default function PublicRequest() {
                     className="text-xs text-muted hover:text-accent transition-colors"
                   >
                     First time visiting OHPC? <span className="font-semibold text-accent underline">Register New Profile</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* MODE C: FORGOT PASSWORD */}
+          {authMode === "forgot" && (
+            <div className="space-y-5 animate-fade-in">
+              <div>
+                <h3 className="text-base font-bold text-loud flex items-center gap-2 mb-1">
+                  <KeyRound size={17} className="text-accent" /> Reset Your Password
+                </h3>
+                <p className="text-xs text-faint leading-relaxed">
+                  Enter your registered 10-digit mobile number. We will send an SMS verification code to reset your password.
+                </p>
+              </div>
+
+              <form onSubmit={handleForgotPasswordInit} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className={labelCls}>Registered Mobile Number *</label>
+                  <div className="relative">
+                    <Phone size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
+                    <input
+                      type="tel"
+                      required
+                      autoFocus
+                      maxLength={10}
+                      value={forgotPhone}
+                      onChange={(e) => setForgotPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                      placeholder="10-digit mobile number (e.g. 9876543210)"
+                      className={`${inputCls} pl-10`}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={forgotBusy || forgotPhone.length !== 10}
+                  className="btn-primary w-full py-3 text-sm font-semibold justify-center shadow-md disabled:opacity-50"
+                >
+                  {forgotBusy ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Sending Verification Code...
+                    </>
+                  ) : (
+                    <>
+                      Send Verification Code <ArrowRight size={16} />
+                    </>
+                  )}
+                </button>
+
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode("login")}
+                    className="text-xs text-muted hover:text-accent transition-colors inline-flex items-center gap-1 font-medium"
+                  >
+                    <ArrowLeft size={12} /> Back to Login
                   </button>
                 </div>
               </form>
@@ -812,6 +1174,32 @@ export default function PublicRequest() {
                         className={`${inputCls} pl-11`}
                       />
                     </div>
+
+                    {/* Real-time Phone Feedback for Registration */}
+                    {identity.visitor_phone.length === 10 && phoneFeedback !== null && (
+                      <div className="animate-fade-in pt-1">
+                        {phoneFeedback.isRegistered ? (
+                          <div className="flex items-start gap-1.5 text-xs font-medium text-warning bg-warning/10 border border-warning/20 rounded-lg px-3 py-2">
+                            <AlertTriangle size={15} className="shrink-0 mt-0.5 text-warning" />
+                            <div>
+                              <span>Already registered as <strong>{phoneFeedback.name}</strong>. </span>
+                              <button
+                                type="button"
+                                onClick={() => setAuthMode("login")}
+                                className="font-bold underline text-warning hover:opacity-80"
+                              >
+                                Login instead
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-success bg-success/10 border border-success/20 rounded-lg px-3 py-1.5">
+                            <CheckCircle2 size={14} className="shrink-0 text-success" />
+                            <span>Available for new registration</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-1.5">
@@ -870,7 +1258,7 @@ export default function PublicRequest() {
                     onClick={() => setAuthMode("login")}
                     className="text-xs text-muted hover:text-accent transition-colors"
                   >
-                    Already registered? <span className="font-semibold text-accent underline">Login with Mobile</span>
+                    Already registered? <span className="font-semibold text-accent underline">Login with Email & Password</span>
                   </button>
                 </div>
               </form>
@@ -882,228 +1270,264 @@ export default function PublicRequest() {
   }
 
   /* ==============================================================================
-     VIEW: Step 2 - Clean, Focused OTP Verification Page
+     VIEW: Step 2 - Verification & Password Creation
   ============================================================================== */
   if (step === 2) {
-    const isLoginFlow = authMode === "login";
+    const isBothVerified = authMode === "forgot"
+      ? phoneVerified                        // Forgot password: only phone needed
+      : phoneVerified && emailVerified;      // Registration: both phone + email needed
 
     return (
       <Shell step={step}>
         <div className="w-full max-w-xl mx-auto space-y-6 animate-fade-in">
-          {/* FLOW A: EXISTING VISITOR PHONE OTP */}
-          {isLoginFlow ? (
-            <div className="bg-bg-secondary border border-border rounded-2xl p-6 sm:p-8 shadow-card space-y-6 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-accent/10 text-accent flex items-center justify-center mx-auto border border-accent/20">
-                <Shield size={28} />
-              </div>
+          {/* Header & Back Button */}
+          <div className="flex items-center justify-between pb-3 border-b border-border">
+            <div>
+              <h3 className="text-base font-bold text-loud">
+                {isBothVerified
+                  ? authMode === "forgot" ? "Set New Password" : "Create Account Password"
+                  : authMode === "forgot" ? "Verify Mobile to Reset Password" : "Verify Phone & Email"}
+              </h3>
+              <p className="text-xs text-faint">
+                {isBothVerified
+                  ? "Enter a secure password to complete your profile"
+                  : authMode === "forgot"
+                    ? "Enter the verification code sent to your mobile number"
+                    : "Enter the verification codes sent to your phone and email"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setStep(1); setPhoneOtp(""); setEmailOtp(""); }}
+              className="text-xs text-muted hover:text-loud flex items-center gap-1 font-medium"
+            >
+              <ArrowLeft size={12} /> Back
+            </button>
+          </div>
 
-              <div>
-                <h3 className="text-lg font-bold text-loud">Enter SMS Verification Code</h3>
-                <p className="text-xs text-muted mt-1 leading-relaxed">
-                  We sent a 6-digit code to{" "}
-                  <strong className="text-loud font-semibold">
-                    +91 {identity.visitor_phone}
-                  </strong>
-                </p>
-                <button
-                  type="button"
-                  onClick={() => { setStep(1); setPhoneOtp(""); }}
-                  className="text-xs text-accent hover:underline mt-1 inline-flex items-center gap-1"
-                >
-                  <ArrowLeft size={11} /> Change Number
-                </button>
-              </div>
+          {/* Dev mode helper */}
+          {DEV_PHONE_OTP && (
+            <div className="text-xs text-accent bg-mixed-bg border border-accent/20 rounded-xl px-4 py-2.5 text-left flex items-center gap-2">
+              <HelpCircle size={15} className="shrink-0" />
+              <span>
+                <strong>Dev Mode:</strong> The SMS code is printed in the backend terminal log.
+              </span>
+            </div>
+          )}
 
-              {/* Dev mode helper */}
-              {DEV_PHONE_OTP && (
-                <div className="text-xs text-accent bg-mixed-bg border border-accent/20 rounded-xl px-4 py-2.5 text-left flex items-center gap-2">
-                  <HelpCircle size={15} className="shrink-0" />
-                  <span>
-                    <strong>Dev Mode:</strong> The SMS code is printed in the backend terminal log.
+          {/* STEP 2A: OTP VERIFICATION CARDS */}
+          <div className="space-y-4">
+            {/* 1. Phone OTP Card */}
+            <div
+              className={`p-4 rounded-xl border transition-all ${
+                phoneVerified ? "border-success/40 bg-success/5" : "border-border bg-bg-secondary shadow-card"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Phone size={15} className="text-accent" />
+                  <span className="text-xs font-bold text-loud">
+                    Mobile: {authMode === "forgot" && forgotMaskedPhone ? forgotMaskedPhone : `+91 ${identity.visitor_phone}`}
                   </span>
+                </div>
+                {phoneVerified ? (
+                  <span className="text-xs font-bold text-success flex items-center gap-1 bg-success/10 px-2 py-0.5 rounded-full">
+                    <Check size={11} strokeWidth={2.5} /> Verified
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-semibold text-accent">SMS Code</span>
+                )}
+              </div>
+
+              {!phoneVerified && (
+                <div className="space-y-3">
+                  <OtpField value={phoneOtp} onChange={setPhoneOtp} disabled={phoneVerifying} />
+                  <div className="flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={resendPhone}
+                      disabled={phoneTimer.count > 0 || phoneResending}
+                      className="text-xs font-semibold text-accent disabled:text-faint hover:underline disabled:no-underline flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                    >
+                      {phoneResending ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                      {phoneTimer.count > 0 ? `Resend OTP in ${phoneTimer.count}s` : "Resend OTP"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={verifyNewVisitorPhone}
+                      disabled={phoneVerifying || phoneOtp.length !== 6}
+                      className="btn-primary text-xs px-4 py-2"
+                    >
+                      {phoneVerifying ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      Verify Phone
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Email OTP Card — only for new registration, NOT for forgot password */}
+            {authMode !== "forgot" && (
+            <div
+              className={`p-4 rounded-xl border transition-all ${
+                emailVerified ? "border-success/40 bg-success/5" : "border-border bg-bg-secondary shadow-card"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Mail size={15} className="text-accent" />
+                  <span className="text-xs font-bold text-loud truncate max-w-[200px]">
+                    Email: {maskEmail(identity.visitor_email)}
+                  </span>
+                </div>
+                {emailVerified ? (
+                  <span className="text-xs font-bold text-success flex items-center gap-1 bg-success/10 px-2 py-0.5 rounded-full">
+                    <Check size={11} strokeWidth={2.5} /> Verified
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-semibold text-accent">Email Code</span>
+                )}
+              </div>
+
+              {devEmailOtp && !emailVerified && (
+                <div className="text-[11px] text-accent bg-mixed-bg border border-accent/20 rounded px-2.5 py-1 mb-2">
+                  <span>Dev OTP: </span>
+                  <strong className="font-mono">{devEmailOtp}</strong>
                 </div>
               )}
 
-              {/* OTP Input */}
-              <div className="space-y-3">
-                <OtpField
-                  value={phoneOtp}
-                  onChange={setPhoneOtp}
-                  disabled={phoneVerifying}
-                />
-
-                <div className="flex items-center justify-between text-xs px-1">
-                  <span className="text-faint">Didn't receive code?</span>
-                  <button
-                    type="button"
-                    onClick={resendPhone}
-                    disabled={phoneTimer.count > 0 || phoneResending}
-                    className="font-semibold text-accent disabled:text-faint disabled:cursor-not-allowed flex items-center gap-1 hover:underline"
-                  >
-                    {phoneResending ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                    {phoneTimer.count > 0 ? `Resend SMS in ${phoneTimer.count}s` : "Resend SMS"}
-                  </button>
+              {!emailVerified && (
+                <div className="space-y-3">
+                  <OtpField value={emailOtp} onChange={setEmailOtp} disabled={emailVerifying} />
+                  <div className="flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={resendEmail}
+                      disabled={emailTimer.count > 0 || emailResending}
+                      className="text-xs font-semibold text-accent disabled:text-faint hover:underline disabled:no-underline flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                    >
+                      {emailResending ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                      {emailTimer.count > 0 ? `Resend OTP in ${emailTimer.count}s` : "Resend OTP"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={verifyNewVisitorEmail}
+                      disabled={emailVerifying || emailOtp.length !== 6 || !phoneVerified}
+                      className="btn-primary text-xs px-4 py-2"
+                    >
+                      {emailVerifying ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      {phoneVerified ? "Verify Email" : "Verify phone first"}
+                    </button>
+                  </div>
                 </div>
-              </div>
-
-              {/* Verify & Sign In Button */}
-              <button
-                type="button"
-                onClick={handleVerifyExistingVisitor}
-                disabled={phoneVerifying || phoneOtp.length !== 6}
-                className="btn-primary w-full py-3.5 text-sm font-semibold justify-center shadow-md disabled:opacity-50"
-              >
-                {phoneVerifying ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" /> Verifying Profile...
-                  </>
-                ) : (
-                  <>
-                    <Check size={16} /> Verify & Access Request Form
-                  </>
-                )}
-              </button>
-
-              <div className="pt-2 text-center">
-                <button
-                  type="button"
-                  onClick={() => { setAuthMode("register"); setStep(1); }}
-                  className="text-xs text-faint hover:text-muted transition-colors"
-                >
-                  New visitor? Register your details instead
-                </button>
-              </div>
+              )}
             </div>
-          ) : (
-            /* FLOW B: NEW VISITOR DUAL OTP (PHONE + EMAIL) */
-            <div className="bg-bg-secondary border border-border rounded-2xl p-6 sm:p-8 shadow-card space-y-6">
-              <div className="flex items-center justify-between pb-3 border-b border-border">
-                <div>
-                  <h3 className="text-base font-bold text-loud">Verify Phone & Email</h3>
-                  <p className="text-xs text-faint">Enter the codes sent to confirm your identity</p>
+            )}
+          </div>
+
+          {/* STEP 2B: CREATE PASSWORD (SHOWN AS SOON AS BOTH OTPS ARE VERIFIED) */}
+          {isBothVerified && (
+            <div className="bg-bg-secondary border border-border rounded-2xl p-6 sm:p-8 shadow-card space-y-5 animate-fade-in">
+              <div className="text-center space-y-1 mb-2">
+                <div className="w-12 h-12 rounded-2xl bg-success/10 text-success flex items-center justify-center mx-auto mb-2 border border-success/20">
+                  <Lock size={22} />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => { setStep(1); setPhoneOtp(""); setEmailOtp(""); }}
-                  className="text-xs text-muted hover:text-loud flex items-center gap-1"
-                >
-                  <ArrowLeft size={12} /> Edit Details
-                </button>
+                <h3 className="text-base font-bold text-loud">
+                  {authMode === "forgot" ? "Set New Password" : "Create Account Password"}
+                </h3>
+                <p className="text-xs text-muted max-w-sm mx-auto">
+                  {authMode === "forgot"
+                    ? "Both phone and email verified! Enter and confirm your new password below."
+                    : "Both phone and email verified! Create a password to sign in to your visitor account in the future."}
+                </p>
               </div>
 
-              <div className="space-y-5">
-                {/* 1. Phone OTP */}
-                <div
-                  className={`p-4 rounded-xl border transition-all ${
-                    phoneVerified ? "border-success/40 bg-success/5" : "border-border bg-bg-primary"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Phone size={15} className="text-accent" />
-                      <span className="text-xs font-bold text-loud">Mobile: +91 {identity.visitor_phone}</span>
-                    </div>
-                    {phoneVerified ? (
-                      <span className="text-xs font-bold text-success flex items-center gap-1 bg-success/10 px-2 py-0.5 rounded-full">
-                        <Check size={11} strokeWidth={2.5} /> Verified
-                      </span>
-                    ) : (
-                      <span className="text-[11px] font-semibold text-accent">SMS Code</span>
-                    )}
-                  </div>
-
-                  {!phoneVerified && (
-                    <div className="space-y-3">
-                      <OtpField value={phoneOtp} onChange={setPhoneOtp} disabled={phoneVerifying} />
-                      <div className="flex items-center justify-between gap-3">
-                        <button
-                          type="button"
-                          onClick={resendPhone}
-                          disabled={phoneTimer.count > 0 || phoneResending}
-                          className="text-xs text-accent disabled:text-faint hover:underline flex items-center gap-1"
-                        >
-                          {phoneResending ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                          {phoneTimer.count > 0 ? `Resend (${phoneTimer.count}s)` : "Resend"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={verifyNewVisitorPhone}
-                          disabled={phoneVerifying || phoneOtp.length !== 6}
-                          className="btn-primary text-xs px-4 py-2"
-                        >
-                          {phoneVerifying ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                          Verify Phone
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* 2. Email OTP */}
-                <div
-                  className={`p-4 rounded-xl border transition-all ${
-                    emailVerified ? "border-success/40 bg-success/5" : "border-border bg-bg-primary"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Mail size={15} className="text-accent" />
-                      <span className="text-xs font-bold text-loud truncate max-w-[200px]">
-                        Email: {maskEmail(identity.visitor_email)}
-                      </span>
-                    </div>
-                    {emailVerified ? (
-                      <span className="text-xs font-bold text-success flex items-center gap-1 bg-success/10 px-2 py-0.5 rounded-full">
-                        <Check size={11} strokeWidth={2.5} /> Verified
-                      </span>
-                    ) : (
-                      <span className="text-[11px] font-semibold text-accent">Email Code</span>
-                    )}
-                  </div>
-
-                  {devEmailOtp && !emailVerified && (
-                    <div className="text-[11px] text-accent bg-mixed-bg border border-accent/20 rounded px-2.5 py-1 mb-2">
-                      <span>Dev OTP: </span>
-                      <strong className="font-mono">{devEmailOtp}</strong>
-                    </div>
-                  )}
-
-                  {!emailVerified && (
-                    <div className="space-y-3">
-                      <OtpField value={emailOtp} onChange={setEmailOtp} disabled={emailVerifying} />
-                      <div className="flex items-center justify-between gap-3">
-                        <button
-                          type="button"
-                          onClick={resendEmail}
-                          disabled={emailTimer.count > 0 || emailResending}
-                          className="text-xs text-accent disabled:text-faint hover:underline flex items-center gap-1"
-                        >
-                          {emailResending ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                          {emailTimer.count > 0 ? `Resend (${emailTimer.count}s)` : "Resend"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={verifyNewVisitorEmail}
-                          disabled={emailVerifying || emailOtp.length !== 6 || !phoneVerified}
-                          className="btn-primary text-xs px-4 py-2"
-                        >
-                          {emailVerifying ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                          {phoneVerified ? "Verify Email" : "Verify phone first"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={proceedToForm}
-                disabled={!phoneVerified || !emailVerified}
-                className="btn-primary w-full py-3 text-sm font-semibold justify-center shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+              <form
+                onSubmit={authMode === "forgot" ? handleResetPasswordSubmit : handleCompleteRegistrationSubmit}
+                className="space-y-4"
               >
-                Continue to Visit Details <ArrowRight size={16} />
-              </button>
+                {/* Field 1: Password WITH PasswordStrength meter */}
+                <div className="space-y-1.5">
+                  <label className={labelCls}>
+                    {authMode === "forgot" ? "New Password *" : "Create Password *"}
+                  </label>
+                  <div className="relative">
+                    <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
+                    <input
+                      type={showNewPassword ? "text" : "password"}
+                      required
+                      autoFocus
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Minimum 8 characters with letters, numbers, symbols"
+                      className={`${inputCls} pl-10 pr-10`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword((p) => !p)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-faint hover:text-loud transition-colors"
+                    >
+                      {showNewPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
+                  {/* Password Strength Meter right under the 1st field (checklist hides once all requirements are met) */}
+                  <PasswordStrength password={newPassword} hideChecklistWhenValid />
+                </div>
+
+                {/* Field 2: Confirm Password (NO STRENGTH METER - USER IS JUST REPEATING) */}
+                <div className="space-y-1.5">
+                  <label className={labelCls}>Confirm Password *</label>
+                  <div className="relative">
+                    <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
+                    <input
+                      type={showConfirmPassword ? "text" : "password"}
+                      required
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter your password"
+                      className={`${inputCls} pl-10 pr-10`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((p) => !p)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-faint hover:text-loud transition-colors"
+                    >
+                      {showConfirmPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
+                  {confirmPassword && (
+                    <p
+                      className={`text-[11px] font-medium flex items-center gap-1 ${
+                        newPassword === confirmPassword ? "text-success" : "text-danger"
+                      }`}
+                    >
+                      {newPassword === confirmPassword ? "✓ Passwords match" : "✕ Passwords do not match"}
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={
+                    passwordSaving ||
+                    !newPassword ||
+                    !confirmPassword ||
+                    newPassword !== confirmPassword ||
+                    !validatePassword(newPassword).valid
+                  }
+                  className="btn-primary w-full py-3 text-sm font-semibold justify-center shadow-md disabled:opacity-50 mt-4"
+                >
+                  {passwordSaving ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Saving Account...
+                    </>
+                  ) : (
+                    <>
+                      {authMode === "forgot" ? "Reset Password & Return to Login" : "Save Password & Continue to Visit Details"} <ArrowRight size={16} />
+                    </>
+                  )}
+                </button>
+              </form>
             </div>
           )}
         </div>

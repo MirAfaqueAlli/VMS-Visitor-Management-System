@@ -1996,6 +1996,7 @@ export default function Reports() {
 
   const role = user?.role_type;
   const isCentral = role === 'super_admin' || role === 'global_auditor';
+  const isUnitAdmin = role === 'unit_admin' || role === 'unit_auditor';
   const isAdminOrAuditor = ['super_admin', 'global_auditor', 'unit_admin', 'unit_auditor'].includes(role);
 
   if (!isAdminOrAuditor) {
@@ -2015,6 +2016,15 @@ export default function Reports() {
         <h1 className="text-lg font-bold text-loud flex items-center gap-3">
           Reports &amp; <em className="italic">Analytics</em>
         </h1>
+        {isUnitAdmin && user?.unit_name && (
+          <p className="text-sm text-muted mt-1 flex items-center gap-1.5">
+            <Building2 className="w-3.5 h-3.5 text-accent" />
+            Scoped to: <span className="font-medium text-loud">{user.unit_name}</span>
+          </p>
+        )}
+        {isCentral && (
+          <p className="text-sm text-muted mt-1">System-wide data across all units</p>
+        )}
       </div>
 
       {/* ── Overview Charts (collapsible) ─────────────────────────────── */}
@@ -2028,6 +2038,8 @@ export default function Reports() {
         <div className="flex overflow-x-auto border-b border-subtle">
           {TABS.map(t => {
             const Icon = t.icon;
+            // For unit-level users, rename "Unit/Office" tab to "Dept Breakdown"
+            const label = (!isCentral && t.id === 'unit') ? 'Dept Breakdown' : t.label;
             return (
               <button
                 key={t.id}
@@ -2039,7 +2051,7 @@ export default function Reports() {
                 }`}
               >
                 <Icon className="w-4 h-4" />
-                {t.label}
+                {label}
               </button>
             );
           })}
