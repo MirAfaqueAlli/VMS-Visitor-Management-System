@@ -7,10 +7,10 @@
 // Visit request workflow: Pending → Approved → On premises → Completed
 const WORKFLOW_STEPS = 4;
 const WORKFLOW = {
-  PENDING:       { label: 'Pending',         tone: 'warning', step: 1 },
+  PENDING:       { label: 'Pending review',  tone: 'warning', step: 1 },
   APPROVED:      { label: 'Approved',        tone: 'brand',   step: 2 },
   SCHEDULED:     { label: 'Scheduled',       tone: 'brand',   step: 2 },
-  CHECKED_IN:    { label: 'On premises',     tone: 'brand',   step: 3 },
+  CHECKED_IN:    { label: 'Inside premises', tone: 'brand',   step: 3 },
   COMPLETED:     { label: 'Completed',       tone: 'success', step: 4 },
   REJECTED:      { label: 'Rejected',        tone: 'danger',  step: 1 },
   CANCELLED:     { label: 'Cancelled',       tone: 'neutral', step: 1 },
@@ -24,7 +24,7 @@ const STATES = {
   EXPECTED: { label: 'Expected',    tone: 'brand' },
   USED:     { label: 'Used',        tone: 'success' },
   EXPIRED:  { label: 'Expired',     tone: 'neutral' },
-  ACTIVE:   { label: 'On premises', tone: 'info' },
+  ACTIVE:   { label: 'Inside premises', tone: 'info' },
   SENT:     { label: 'Sent',        tone: 'success' },
   FAILED:   { label: 'Failed',      tone: 'danger' },
   DEBARRED: { label: 'Debarred',    tone: 'danger' },

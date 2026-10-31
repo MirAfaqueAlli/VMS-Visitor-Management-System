@@ -3,7 +3,7 @@
 
 const QRCode           = require('qrcode');
 const { signQRPayload } = require('../utils/qrToken.util');
-const { uploadToS3 }   = require('../utils/s3.util');
+const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
 
 /**
  * Generates a signed QR code PNG and uploads it to AWS S3.
@@ -37,4 +37,25 @@ const generateQRCode = async (data, filename) => {
   return url;
 };
 
-module.exports = { generateQRCode };
+/**
+ * A gate pass's QR as an image the browser can show: the stored S3 image (as a
+ * short-lived signed link) when there is one, otherwise drawn on the fly from the
+ * pass's own data (gate_passes.qr_code_data). Passes issued without S3 — no AWS
+ * credentials, e.g. a dev machine — still get a scannable QR.
+ *
+ * @param {{ qr_code_path?: string|null, qr_code_data?: string|null }} pass
+ * @returns {Promise<string|null>} https link, data:image/png URL, or null
+ */
+const qrImageForPass = async (pass) => {
+  const signed = await getSignedFileUrl(pass?.qr_code_path);
+  if (signed) return signed;
+  if (!pass?.qr_code_data) return null;
+  try {
+    return await QRCode.toDataURL(signQRPayload(JSON.parse(pass.qr_code_data)), { width: 300, margin: 1, errorCorrectionLevel: 'H' });
+  } catch (err) {
+    console.warn('[QRCodeService] could not draw the QR:', err.message);
+    return null;
+  }
+};
+
+module.exports = { generateQRCode, qrImageForPass };

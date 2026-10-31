@@ -5,6 +5,7 @@
 // Always light (data-theme="light"), flat — no gradients or shadows.
 import { Lock, ShieldCheck, QrCode, ClipboardCheck } from './icons';
 import { NAVY } from '../utils/authTheme';
+import BrandLogo from './BrandLogo';
 
 /* -- Organisation shown on the auth pages (set per deployment in .env) ------ */
 const ORG_NAME    = import.meta.env.VITE_ORG_NAME    || 'Odisha Hydro Power Corporation Ltd.';
@@ -38,7 +39,7 @@ function BrandPanel({ eyebrow, title, description, features }) {
       <div className="relative flex-1 min-h-0 flex flex-col px-12 pt-10 pb-8">
         {/* Organisation */}
         <div className="flex items-center gap-3.5">
-          <img src="/brand/vms-icon-white.png" alt="" className="w-12 h-12 object-contain" />
+          <img src="/brand/ohpc-emblem-white.svg" alt="OHPC" className="h-12 w-auto" />
           <div>
             <p className="text-[15px] font-semibold text-white leading-tight">{ORG_NAME}</p>
             <p className="text-[11.5px] mt-0.5 tracking-[0.03em]" style={{ color: '#a9bad3' }}>{ORG_TAGLINE}</p>
@@ -110,7 +111,7 @@ export default function AuthLayout({
         <div className="lg:hidden" style={{ background: NAVY }}>
           <TricolourStrip height={3} />
           <div className="flex items-center gap-2.5 px-4 py-3.5">
-            <img src="/brand/vms-icon-white.png" alt="" className="w-9 h-9 object-contain" />
+            <img src="/brand/ohpc-emblem-white.svg" alt="OHPC" className="h-9 w-auto" />
             <div>
               <p className="text-white font-semibold text-[13.5px] leading-tight">Visitor Management System</p>
               <p className="text-[11px] mt-0.5" style={{ color: '#a9bad3' }}>{ORG_NAME}</p>
@@ -121,7 +122,7 @@ export default function AuthLayout({
         <div className="flex-1 flex items-center justify-center px-6" style={{ paddingTop: 'clamp(28px, 6vh, 64px)', paddingBottom: 'clamp(28px, 6vh, 64px)' }}>
           <div className="w-full" style={{ maxWidth }}>
             {/* Product wordmark above the form (small screens show the navy header instead) */}
-            <img src="/brand/vms-logo-blue.png" alt="OHPC VMS" className="hidden lg:block h-8 w-auto mb-7" />
+            <div className="hidden lg:block mb-7"><BrandLogo height={36} /></div>
             {children}
           </div>
         </div>

@@ -18,6 +18,7 @@ const PublicRequest         = lazy(() => import("./pages/requests/PublicRequest"
 const VisitorPortal         = lazy(() => import("./pages/visitor/VisitorPortal"));
 const ResetPassword         = lazy(() => import("./pages/auth/ResetPassword"));
 
+
 // Dashboard — default export is SuperAdmin view; named export AdminDashboard is unit view.
 // For named exports, .then() lets us remap them to `default` for lazy().
 const Dashboard     = lazy(() => import("./pages/dashboard/Dashboard"));
@@ -84,8 +85,9 @@ const router = createBrowserRouter([
   // Visitor portal: sign-in / register / dashboard, and the new-visit form
   { path: "/public-request",      element: <S><VisitorPortal /></S> },
   { path: "/public-request/new",  element: <S><PublicRequest /></S> },
-  { path: "/visitor",             element: <Navigate to="/public-request" replace /> },
+  { path: "/visitor/*",           element: <Navigate to="/public-request" replace /> },
   { path: "/reset-password",  element: <S><ResetPassword /></S> },
+
 
   {
     path: "/",
@@ -156,7 +158,9 @@ const router = createBrowserRouter([
             path: "admin",
             element: <ProtectedRoute roles={ADMIN_ROLES} />,
             children: [
-              { index: true, element: <S><UserManagement /></S> },
+              { index: true, element: <Navigate to="/admin/employees" replace /> },
+              { path: "employees", element: <S><UserManagement key="employees" initialTab="employees" /></S> },
+              { path: "security",  element: <S><UserManagement key="security" initialTab="security" /></S> },
               {
                 path: "departments",
                 element: <ProtectedRoute roles={["super_admin", "unit_admin"]} />,

@@ -12,7 +12,7 @@ const { encryptField, decryptField, decryptRows } = require('../utils/crypto.uti
  * Body: { full_name, phone, email?, address?, id_type?, id_number? }
  */
 const createVisitor = async (req, res) => {
-  const conn = await req.db.getConnection();
+  let conn = await req.db.getConnection();
   try {
     const { full_name, phone, email, address, id_type, id_number } = req.body;
 
@@ -63,13 +63,16 @@ const createVisitor = async (req, res) => {
     );
 
     conn.release();
+    conn = null;   // released: the catch below must not roll back / release it again (it may be serving another request by then)
     // Decrypt id_number before returning to client
     const row = newVisitor[0];
     if (row && row.id_number) row.id_number = decryptField(row.id_number);
     return sendSuccess(res, row, 'Visitor created successfully.', 201);
   } catch (err) {
-    try { await conn.rollback(); } catch (_) {}
-    conn.release();
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+      conn.release();
+    }
     console.error('[VisitorController] createVisitor error:', err.message);
     if (err.code === 'ER_DUP_ENTRY') {
       return sendError(res, 'A visitor with this phone number already exists.', 409);
@@ -93,7 +96,7 @@ const checkBlacklist = async (req, res) => {
       `SELECT bv.id, bv.reason, bv.blacklisted_at
        FROM blacklisted_visitors bv
        JOIN visitors v ON v.id = bv.visitor_id
-       WHERE v.phone = ? AND bv.is_active = TRUE
+       WHERE RIGHT(REGEXP_REPLACE(v.phone, '[^0-9]', ''), 10) = RIGHT(REGEXP_REPLACE(?, '[^0-9]', ''), 10) AND bv.is_active = TRUE
        LIMIT 1`,
       [phone]
     );

@@ -478,6 +478,7 @@ const passwordResetTemplate = (resetUrl, ttlMinutes) => {
 
 module.exports = {
   sendEmail,
+  escapeHtml,
   passwordResetTemplate,
   visitReminderTemplate,
   pendingApprovalsReminderTemplate,

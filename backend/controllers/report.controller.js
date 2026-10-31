@@ -565,7 +565,11 @@ const getGlobalAuditLogs = async (req, res) => {
     };
 
     // â”€â”€ Collect all rows from all sources â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Each source returns only the newest offset+limit rows (enough for this page
+    // after merging) plus its exact count — never its whole log
+    const take = offset + limit;
     let allRows = [];
+    let total = 0;
 
     // 1. Central global_audit_logs (super admin own actions)
     if (!unitDbFilter || unitDbFilter === 'central') {
@@ -582,10 +586,12 @@ const getGlobalAuditLogs = async (req, res) => {
          LEFT JOIN users u ON u.id = gal.user_id
          ${where}
          ORDER BY gal.created_at DESC
-         LIMIT 2000`,  // cap per-source to avoid memory explosion
-        params
+         LIMIT ?`,
+        [...params, take]
       );
+      const [[{ n }]] = await centralPool.query(`SELECT COUNT(*) AS n FROM global_audit_logs gal ${where}`, params);
       allRows = allRows.concat(centralRows);
+      total += Number(n);
     }
 
     // 2. Each active unit DB's audit_logs
@@ -610,27 +616,27 @@ const getGlobalAuditLogs = async (req, res) => {
              LEFT JOIN users u ON u.id = al.user_id
              ${where}
              ORDER BY al.created_at DESC
-             LIMIT 2000`,
-            params
+             LIMIT ?`,
+            [...params, take]
           );
+          const [[{ n }]] = await pool.query(`SELECT COUNT(*) AS n FROM audit_logs al ${where}`, params);
           // Unit identity added here rather than spliced into the SQL text
-          return rows.map(r => ({ ...r, unit_db: unit.db_name, unit_name: unit.unit_name }));
+          return { rows: rows.map(r => ({ ...r, unit_db: unit.db_name, unit_name: unit.unit_name })), n: Number(n) };
         } catch (unitErr) {
           console.warn(`[GlobalAuditLog] Skipping unit ${unit.db_name}:`, unitErr.message);
-          return [];
+          return { rows: [], n: 0 };
         }
       });
 
     const unitResults = await Promise.allSettled(unitFetches);
     for (const r of unitResults) {
-      if (r.status === 'fulfilled') allRows = allRows.concat(r.value);
+      if (r.status === 'fulfilled') { allRows = allRows.concat(r.value.rows); total += r.value.n; }
     }
 
     // â”€â”€ Sort merged results by created_at DESC â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     allRows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     // â”€â”€ Paginate in-memory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const total      = allRows.length;
     const pages      = Math.max(1, Math.ceil(total / limit));
     const pageSlice  = allRows.slice(offset, offset + limit);
 
@@ -854,12 +860,33 @@ const getMetaEmployees = async (req, res) => {
  *   - with unit_db → scoped to that unit, dept_id + host_user_id filters work
  *   - without unit_db → fans out across all units (date/type/search/employee filters)
  */
+/**
+ * One page of a report merged across every active unit DB. Each unit returns only
+ * its newest offset+limit rows (plus its own count) — never its whole table — and
+ * the results are merged, sorted and sliced. Same approach as the visit-request list.
+ */
+async function pageAcrossUnits({ select, where, params, orderBy, sortField, offset, limit, withUnitDb = true }) {
+  const { queryAllUnits } = require('../services/dbManager');
+  const [fanned, counts] = await Promise.all([
+    queryAllUnits(`${select} ${where} ${orderBy} LIMIT ?`, [...params, offset + limit]),
+    queryAllUnits(`SELECT COUNT(*) AS total FROM (${select} ${where}) AS page_src`, params),
+  ]);
+  let rows = [];
+  for (const r of fanned) {
+    rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name, ...(withUnitDb ? { unit_db: r.unit_db } : {}) })));
+  }
+  rows.sort((a, b) => new Date(b[sortField]) - new Date(a[sortField]));
+  const total = counts.reduce((n, r) => n + Number(r.rows[0]?.total || 0), 0);
+  return { rows: rows.slice(offset, offset + limit), total };
+}
+
 const getEmployeeWiseReport = async (req, res) => {
   try {
     const { from, to, visitor_type, search, department_id, host_user_id, employee_code, employee_name, unit_db, page = 1, limit = 50 } = req.query;
     const isExport = req.query.all === 'true' || req.query.export === 'true';
     const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const pageNo       = Math.max(1, parseInt(page, 10) || 1);
+    const parsedOffset = isExport ? 0 : (pageNo - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConditions = () => {
@@ -903,14 +930,14 @@ const getEmployeeWiseReport = async (req, res) => {
           `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN departments d ON d.id = vr.department_id ${where}`, params
         );
         const [rows] = await pool.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: pageNo, limit: parsedLimit });
       }
       // Fan-out across all active units
-      const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY vr.visit_date DESC`, params);
-      let rows = [];
-      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name, unit_db: r.unit_db })));
-      rows.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
-      return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
+      const paged = await pageAcrossUnits({
+        select: SELECT, where, params, orderBy: 'ORDER BY vr.visit_date DESC', sortField: 'visit_date',
+        offset: parsedOffset, limit: parsedLimit, withUnitDb: true,
+      });
+      return sendSuccess(res, { ...paged, page: pageNo, limit: parsedLimit });
     }
 
     // Unit-level
@@ -920,7 +947,7 @@ const getEmployeeWiseReport = async (req, res) => {
       `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN departments d ON d.id = vr.department_id ${where}`, params
     );
     const [rows] = await req.db.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-    return sendSuccess(res, { rows, total: Number(total), page: parseInt(page), limit: parsedLimit });
+    return sendSuccess(res, { rows, total: Number(total), page: pageNo, limit: parsedLimit });
   } catch (err) {
     console.error('[ReportController] getEmployeeWiseReport error:', err.message);
     return sendError(res, 'Failed to fetch employee-wise report.', 500);
@@ -933,7 +960,8 @@ const getDepartmentWiseReport = async (req, res) => {
     const { from, to, visitor_type, department_id, department_name, unit_db, search, page = 1, limit = 50 } = req.query;
     const isExport = req.query.all === 'true' || req.query.export === 'true';
     const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const pageNo       = Math.max(1, parseInt(page, 10) || 1);
+    const parsedOffset = isExport ? 0 : (pageNo - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConditions = () => {
@@ -975,13 +1003,13 @@ const getDepartmentWiseReport = async (req, res) => {
           `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
         );
         const [rows] = await pool.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: pageNo, limit: parsedLimit });
       }
-      const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY vr.visit_date DESC`, params);
-      let rows = [];
-      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name, unit_db: r.unit_db })));
-      rows.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
-      return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
+      const paged = await pageAcrossUnits({
+        select: SELECT, where, params, orderBy: 'ORDER BY vr.visit_date DESC', sortField: 'visit_date',
+        offset: parsedOffset, limit: parsedLimit, withUnitDb: true,
+      });
+      return sendSuccess(res, { ...paged, page: pageNo, limit: parsedLimit });
     }
 
     const { conditions, params } = buildConditions();
@@ -990,7 +1018,7 @@ const getDepartmentWiseReport = async (req, res) => {
       `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
     );
     const [rows] = await req.db.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-    return sendSuccess(res, { rows, total: Number(total), page: parseInt(page), limit: parsedLimit });
+    return sendSuccess(res, { rows, total: Number(total), page: pageNo, limit: parsedLimit });
   } catch (err) {
     console.error('[ReportController] getDepartmentWiseReport error:', err.message);
     return sendError(res, 'Failed to fetch department-wise report.', 500);
@@ -1006,7 +1034,8 @@ const getUnitWiseReport = async (req, res) => {
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
     const isExport = req.query.all === 'true' || req.query.export === 'true';
     const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const pageNo       = Math.max(1, parseInt(page, 10) || 1);
+    const parsedOffset = isExport ? 0 : (pageNo - 1) * parsedLimit;
 
     const buildConds = () => {
       const conditions = []; const params = [];
@@ -1058,7 +1087,7 @@ const getUnitWiseReport = async (req, res) => {
           return sendSuccess(res, {
             rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db, office_type: typeByDb[unit_db] || 'UNIT' })),
             total: Number(total),
-            page: parseInt(page),
+            page: pageNo,
             limit: parsedLimit,
             units: unitsMeta,
             unit_name: unitName,
@@ -1123,7 +1152,7 @@ const getUnitWiseReport = async (req, res) => {
       return sendSuccess(res, {
         rows: rows.map(r => ({ ...r, unit_name: req.user.unit_name || 'My Unit' })),
         total: Number(total),
-        page: parseInt(page),
+        page: pageNo,
         limit: parsedLimit,
       });
     }
@@ -1155,7 +1184,8 @@ const getRejectedReport = async (req, res) => {
     const { from, to, visitor_type, department_id, unit_db, search, status, page = 1, limit = 50 } = req.query;
     const isExport = req.query.all === 'true' || req.query.export === 'true';
     const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const pageNo       = Math.max(1, parseInt(page, 10) || 1);
+    const parsedOffset = isExport ? 0 : (pageNo - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConditions = () => {
@@ -1208,13 +1238,13 @@ const getRejectedReport = async (req, res) => {
           `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
         );
         const [rows] = await pool.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: pageNo, limit: parsedLimit });
       }
-      const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY vr.visit_date DESC`, params);
-      let rows = [];
-      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name, unit_db: r.unit_db })));
-      rows.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
-      return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
+      const paged = await pageAcrossUnits({
+        select: SELECT, where, params, orderBy: 'ORDER BY vr.visit_date DESC', sortField: 'visit_date',
+        offset: parsedOffset, limit: parsedLimit, withUnitDb: true,
+      });
+      return sendSuccess(res, { ...paged, page: pageNo, limit: parsedLimit });
     }
 
     const { conditions, params } = buildConditions();
@@ -1223,7 +1253,7 @@ const getRejectedReport = async (req, res) => {
       `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id ${where}`, params
     );
     const [rows] = await req.db.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-    return sendSuccess(res, { rows, total: Number(total), page: parseInt(page), limit: parsedLimit });
+    return sendSuccess(res, { rows, total: Number(total), page: pageNo, limit: parsedLimit });
   } catch (err) {
     console.error('[ReportController] getRejectedReport error:', err.message);
     return sendError(res, 'Failed to fetch rejected report.', 500);
@@ -1240,7 +1270,8 @@ const getDebarredReport = async (req, res) => {
   try {
     const { from, to, unit_db, search, status, page = 1, limit = 50 } = req.query;
     const parsedLimit  = Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const pageNo       = Math.max(1, parseInt(page, 10) || 1);
+    const parsedOffset = (pageNo - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const conditions = [];
@@ -1275,18 +1306,18 @@ const getDebarredReport = async (req, res) => {
         const { pool, unitName } = scoped;
         const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${FROM} ${where}`, params);
         const [rows] = await pool.query(`${SELECT} ${where} ORDER BY bv.blacklisted_at DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName })), total: Number(total), page: pageNo, limit: parsedLimit });
       }
-      const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY bv.blacklisted_at DESC`, params);
-      let rows = [];
-      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name })));
-      rows.sort((a, b) => new Date(b.blacklisted_at) - new Date(a.blacklisted_at));
-      return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
+      const paged = await pageAcrossUnits({
+        select: SELECT, where, params, orderBy: 'ORDER BY bv.blacklisted_at DESC', sortField: 'blacklisted_at',
+        offset: parsedOffset, limit: parsedLimit, withUnitDb: false,
+      });
+      return sendSuccess(res, { ...paged, page: pageNo, limit: parsedLimit });
     }
 
     const [[{ total }]] = await req.db.query(`SELECT COUNT(*) AS total ${FROM} ${where}`, params);
     const [rows] = await req.db.query(`${SELECT} ${where} ORDER BY bv.blacklisted_at DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-    return sendSuccess(res, { rows, total: Number(total), page: parseInt(page), limit: parsedLimit });
+    return sendSuccess(res, { rows, total: Number(total), page: pageNo, limit: parsedLimit });
   } catch (err) {
     console.error('[ReportController] getDebarredReport error:', err.message);
     return sendError(res, 'Failed to fetch debarred visitors report.', 500);
@@ -1351,7 +1382,8 @@ const getDetailedVisitHistory = async (req, res) => {
     const { from, to, visitor_type, status, department_id, unit_db, search, page = 1, limit = 50 } = req.query;
     const isExport = req.query.all === 'true' || req.query.export === 'true';
     const parsedLimit  = isExport ? 10000 : Math.min(200, parseInt(limit, 10) || 50);
-    const parsedOffset = isExport ? 0 : (Math.max(1, parseInt(page, 10)) - 1) * parsedLimit;
+    const pageNo       = Math.max(1, parseInt(page, 10) || 1);
+    const parsedOffset = isExport ? 0 : (pageNo - 1) * parsedLimit;
     const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
 
     const buildConditions = () => {
@@ -1393,13 +1425,13 @@ const getDetailedVisitHistory = async (req, res) => {
       `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN visit_logs vl ON vl.visit_request_id = vr.id AND vl.status = 'ACTIVE' ${where}`, params
         );
         const [rows] = await pool.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: parseInt(page), limit: parsedLimit });
+        return sendSuccess(res, { rows: rows.map(r => ({ ...r, unit_name: unitName, unit_db })), total: Number(total), page: pageNo, limit: parsedLimit });
       }
-      const fanned = await queryAllUnits(`${SELECT} ${where} ORDER BY vr.visit_date DESC`, params);
-      let rows = [];
-      for (const r of fanned) rows = rows.concat(r.rows.map(row => ({ ...row, unit_name: r.unit_name, unit_db: r.unit_db })));
-      rows.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
-      return sendSuccess(res, { rows: rows.slice(parsedOffset, parsedOffset + parsedLimit), total: rows.length, page: parseInt(page), limit: parsedLimit });
+      const paged = await pageAcrossUnits({
+        select: SELECT, where, params, orderBy: 'ORDER BY vr.visit_date DESC', sortField: 'visit_date',
+        offset: parsedOffset, limit: parsedLimit, withUnitDb: true,
+      });
+      return sendSuccess(res, { ...paged, page: pageNo, limit: parsedLimit });
     }
 
     const { conditions, params } = buildConditions();
@@ -1408,7 +1440,7 @@ const getDetailedVisitHistory = async (req, res) => {
       `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN departments d ON d.id = vr.department_id LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN visit_logs vl ON vl.visit_request_id = vr.id AND vl.status = 'ACTIVE' ${where}`, params
     );
     const [rows] = await req.db.query(`${SELECT} ${where} ORDER BY vr.visit_date DESC LIMIT ? OFFSET ?`, [...params, parsedLimit, parsedOffset]);
-    return sendSuccess(res, { rows, total: Number(total), page: parseInt(page), limit: parsedLimit });
+    return sendSuccess(res, { rows, total: Number(total), page: pageNo, limit: parsedLimit });
   } catch (err) {
     console.error('[ReportController] getDetailedVisitHistory error:', err.message);
     return sendError(res, 'Failed to fetch visit history.', 500);

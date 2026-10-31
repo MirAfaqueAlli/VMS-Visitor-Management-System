@@ -1,10 +1,13 @@
 // frontend/src/pages/admin/UserManagement.jsx
-// Unit users (DESIGN_RULES §6/§8/§12): title + Add user, toolbar (count · search ·
-// role), a sortable table whose rows open the edit drawer.
+// Unit users (DESIGN_RULES §6/§8/§12), split in two pages:
+//   /admin/employees — employees, unit admins and unit auditors (with departments)
+//   /admin/security  — gate security and reception staff (no department)
+// Each: title + Add, toolbar (count · search · role), a sortable table whose rows
+// open the edit drawer.
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
-  Plus, Check, Loader2, Users, UserX, UserCog, AlertTriangle, ArrowRight,
+  Plus, Check, Loader2, Users, UserX, UserCog, AlertTriangle, ArrowRight, Shield,
 } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
@@ -39,13 +42,16 @@ function RoleBadge({ role }) {
 function UserSlideOver({
   isOpen, onClose, onSuccess, editUser,
   departments, isUnitAdmin, lockedDepartmentId, designations,
-  onDepartmentChange,
+  onDepartmentChange, activeTab,
 }) {
   const isEdit   = !!editUser;
   const noDepts  = !isEdit && departments.length === 0;
+  // Security / reception staff are managed on their own page and have no department
+  const isSecurityTab = activeTab === "security" || ["security", "receptionist"].includes(editUser?.role_type);
+  const defaultRole   = isSecurityTab ? "security" : "employee";
   const emptyForm = {
     full_name: "", email: "", phone: "", employee_code: "",
-    role_type: "employee", department_id: "", designation_id: "", password: "",
+    role_type: defaultRole, department_id: "", designation_id: "", password: "",
   };
   const [form,       setForm]       = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
@@ -61,7 +67,7 @@ function UserSlideOver({
         email:          editUser.email || "",
         phone:          editUser.phone || "",
         employee_code:  editUser.employee_code || "",
-        role_type:      editUser.role_type || "employee",
+        role_type:      editUser.role_type || defaultRole,
         department_id:  editUser.department_id ? String(editUser.department_id) : "",
         designation_id: editUser.designation_id ? String(editUser.designation_id) : "",
         password:       "",
@@ -70,7 +76,7 @@ function UserSlideOver({
       setForm(emptyForm);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editUser, isOpen]);
+  }, [editUser, isOpen, activeTab]);
 
   // New user: fill in the next free employee code for the chosen role (e.g. H1-EMP-003)
   useEffect(() => {
@@ -87,11 +93,11 @@ function UserSlideOver({
 
   // Roles that don't belong to any department
   const NO_DEPT_ROLES = ['security', 'receptionist', 'unit_auditor'];
-  const isNoDeptRole = NO_DEPT_ROLES.includes(form.role_type);
+  const isNoDeptRole = NO_DEPT_ROLES.includes(form.role_type) || isSecurityTab;
 
   // Only block creation when dept is actually required for the selected role
   const deptRequiredForRole = !isNoDeptRole && form.role_type !== 'unit_admin';
-  const blockForNoDepts = noDepts && deptRequiredForRole;
+  const blockForNoDepts = noDepts && deptRequiredForRole && !isSecurityTab;
 
   const set = (field) => (e) => {
     const value = e.target.value;
@@ -144,16 +150,16 @@ function UserSlideOver({
         email:          form.email.trim(),
         phone:          phoneRaw,
         role_type:      form.role_type,
-        department_id:  form.department_id ? parseInt(form.department_id) : undefined,
-        designation_id: form.designation_id ? parseInt(form.designation_id) : undefined,
+        department_id:  !isNoDeptRole && form.department_id ? parseInt(form.department_id) : undefined,
+        designation_id: !isNoDeptRole && form.designation_id ? parseInt(form.designation_id) : undefined,
       };
 
       if (isEdit) {
         await apiClient.put(`/users/${editUser.id}`, payload);
-        toast.success("User updated successfully.");
+        toast.success(isSecurityTab ? "Staff member updated." : "Employee updated.");
       } else {
         if (!form.employee_code.trim() || !form.password.trim()) {
-          toast.error("Employee code and password are required for new users.");
+          toast.error(`${isSecurityTab ? "Staff" : "Employee"} code and password are required.`);
           setSubmitting(false);
           return;
         }
@@ -166,7 +172,7 @@ function UserSlideOver({
         payload.employee_code = form.employee_code.trim();
         payload.password      = form.password;
         await apiClient.post("/users", payload);
-        toast.success("New user created successfully.");
+        toast.success(isSecurityTab ? "Security / reception staff member created." : "Employee created.");
       }
       onSuccess();
       onClose();
@@ -186,9 +192,9 @@ function UserSlideOver({
       onClose={onClose}
       busy={submitting}
       width={520}
-      icon={isEdit ? UserCog : Plus}
-      title={isEdit ? `Edit ${editUser?.full_name}` : "New user"}
-      subtitle={isEdit ? editUser?.employee_code : "Create a system account in this unit"}
+      icon={isEdit ? UserCog : isSecurityTab ? Shield : Plus}
+      title={isEdit ? `Edit ${editUser?.full_name}` : isSecurityTab ? "New security / reception staff" : "New employee"}
+      subtitle={isEdit ? editUser?.employee_code : isSecurityTab ? "Gate security or front-desk account" : "Employee account in this unit"}
       footer={(
         <>
           <button type="button" onClick={onClose} className="btn-outline" disabled={submitting}>Cancel</button>
@@ -199,7 +205,7 @@ function UserSlideOver({
             className="btn-primary"
           >
             {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-            {submitting ? "Saving…" : isEdit ? "Save changes" : "Create user"}
+            {submitting ? "Saving…" : isEdit ? "Save changes" : isSecurityTab ? "Create staff member" : "Create employee"}
           </button>
         </>
       )}
@@ -234,24 +240,33 @@ function UserSlideOver({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Role" required>
               <Select value={form.role_type} onChange={set("role_type")} required aria-label="Role">
-                <option value="employee">Employee</option>
-                <option value="security">Security</option>
-                <option value="receptionist">Receptionist</option>
-                <option value="unit_auditor">Unit Auditor</option>
+                {isSecurityTab ? (
+                  <>
+                    <option value="security">Security guard / officer</option>
+                    <option value="receptionist">Receptionist / front desk</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="employee">Employee</option>
+                    {isUnitAdmin && <option value="unit_admin">Unit admin</option>}
+                    <option value="unit_auditor">Unit auditor</option>
+                  </>
+                )}
               </Select>
             </Field>
             {!isEdit ? (
-              <Field label="Employee code" htmlFor="u-code" required hint="Suggested from the role; you can change it.">
+              <Field label={isSecurityTab ? "Staff code" : "Employee code"} htmlFor="u-code" required hint="Suggested from the role; you can change it.">
                 <input id="u-code" className="control mono" value={form.employee_code}
                   onChange={e => {
                     const value = e.target.value;
                     setForm(f => ({ ...f, employee_code: value }));
                     setCodeEdited(value.trim() !== '');   // cleared → use the suggestion again
                   }}
-                  placeholder="EMP-001" required autoComplete="off" />
+                  placeholder={isSecurityTab ? "SEC-001" : "EMP-001"} required autoComplete="off" />
               </Field>
             ) : <div className="hidden sm:block" />}
 
+            {!isSecurityTab && (<>
             <Field label="Department" required={!isNoDeptRole && form.role_type !== 'unit_admin'}>
               {isNoDeptRole ? (
                 // Security / receptionist / auditor have no department
@@ -263,7 +278,7 @@ function UserSlideOver({
                   {departments.find(d => d.id === lockedDepartmentId)?.name || 'Your department'}
                 </div>
               ) : (
-                <Select
+                <Select searchable
                   value={form.department_id}
                   onChange={set("department_id")}
                   required={!isNoDeptRole && form.role_type !== 'unit_admin'}
@@ -276,7 +291,7 @@ function UserSlideOver({
             </Field>
 
             <Field label="Designation">
-              <Select
+              <Select searchable
                 value={form.designation_id || ""}
                 onChange={set("designation_id")}
                 disabled={isNoDeptRole || !deptId || designations.length === 0}
@@ -294,6 +309,7 @@ function UserSlideOver({
                 {designations.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </Select>
             </Field>
+            </>)}
           </div>
         </div>
 
@@ -313,8 +329,11 @@ function UserSlideOver({
 
 
 // ── Main Page ───────────────────────────────────────────────────────────────
-export default function UserManagement() {
+export default function UserManagement({ initialTab = "employees" }) {
   const { user: currentUser, isUnitAdmin } = useAuth();
+  // The route decides which page this is (App.jsx keys each one, so state never leaks)
+  const activeTab = initialTab === "security" ? "security" : "employees";
+  const isSecurity = activeTab === "security";
 
   const [users,          setUsers]          = useState([]);
   const [departments,    setDepartments]    = useState([]);
@@ -344,7 +363,8 @@ export default function UserManagement() {
     try {
       setLoading(true);
       const params = { page, limit };
-      if (roleFilter) params.role = roleFilter;
+      // Each page lists only its own roles
+      params.role = roleFilter || (isSecurity ? "security,receptionist" : "employee,unit_admin,unit_auditor");
       if (debouncedSearch) params.search = debouncedSearch;
       const [usersRes, deptRes] = await Promise.all([
         apiClient.get("/users", { params }),
@@ -360,7 +380,7 @@ export default function UserManagement() {
     } finally {
       setLoading(false);
     }
-  }, [roleFilter, page, debouncedSearch]);
+  }, [roleFilter, page, debouncedSearch, isSecurity]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -407,19 +427,25 @@ export default function UserManagement() {
     setPanelOpen(true);
   };
 
-  const roleFilters = [
-    { label: "All",          value: "" },
-    { label: "Unit Admin",   value: "unit_admin" },
-    { label: "Employee",     value: "employee" },
-    { label: "Security",     value: "security" },
-    { label: "Receptionist", value: "receptionist" },
-  ].filter(f => isUnitAdmin ? true : !['unit_admin'].includes(f.value));
+  const roleFilters = isSecurity
+    ? [
+        { label: "All roles",     value: "" },
+        { label: "Security",      value: "security" },
+        { label: "Receptionists", value: "receptionist" },
+      ]
+    : [
+        { label: "All roles",     value: "" },
+        { label: "Employees",     value: "employee" },
+        ...(isUnitAdmin ? [{ label: "Unit admins", value: "unit_admin" }] : []),
+        { label: "Unit auditors", value: "unit_auditor" },
+      ];
+  const noun = isSecurity ? "staff member" : "employee";
 
   const { rows, sort, onSort } = useSort(users, {
     name: (u) => u.full_name,
     code: (u) => u.employee_code,
     role: (u) => ROLE_CONFIG[u.role_type]?.label ?? u.role_type,
-    dept: (u) => u.department_name,
+    dept: (u) => (isSecurity ? u.phone : u.department_name),
     status: (u) => (u.is_active ? 0 : 1),
   });
 
@@ -435,22 +461,26 @@ export default function UserManagement() {
   return (
     <div className="animate-fade-in">
       <PageHeader
-        title="Users"
-        actions={<button type="button" onClick={openCreate} className="btn-primary"><Plus size={14} /> Add user</button>}
+        title={isSecurity ? "Security & reception" : "Employees"}
+        actions={(
+          <button type="button" onClick={openCreate} className="btn-primary">
+            <Plus size={14} /> {isSecurity ? "Add staff member" : "Add employee"}
+          </button>
+        )}
       />
 
-      {!loading && departments.length === 0 && (
+      {!isSecurity && !loading && departments.length === 0 && (
         <Note tone="warning" icon={AlertTriangle} className="mb-4">
-          <b>No departments yet.</b> Security, receptionist and auditor users need no department; employees do.{" "}
+          <b>No departments yet.</b> Employees need a department; unit auditors don&apos;t.{" "}
           <Link to="/admin/departments" className="text-link font-medium">Create a department</Link>
         </Note>
       )}
 
-      <Toolbar count={loading ? null : totalCount} noun={totalCount === 1 ? "user" : "users"}>
-        <SearchInput value={search} onChange={setSearch} placeholder="Search name, email or code" width={260} />
+      <Toolbar count={loading ? null : totalCount} noun={totalCount === 1 ? noun : `${noun}s`}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Search name, email, phone or code" width={280} />
         <Select value={roleFilter} onChange={e => { setRoleFilter(e.target.value); setPage(1); }} aria-label="Role" style={{ width: 160 }}>
           {roleFilters.map(({ label, value }) => (
-            <option key={value} value={value}>{value ? label : "All roles"}</option>
+            <option key={value} value={value}>{label}</option>
           ))}
         </Select>
         {(search || roleFilter) && (
@@ -465,7 +495,7 @@ export default function UserManagement() {
               <Th sortKey="name" sort={sort} onSort={onSort}>Name</Th>
               <Th sortKey="code" sort={sort} onSort={onSort}>Code</Th>
               <Th sortKey="role" sort={sort} onSort={onSort}>Role</Th>
-              <Th sortKey="dept" sort={sort} onSort={onSort}>Department</Th>
+              <Th sortKey="dept" sort={sort} onSort={onSort}>{isSecurity ? "Phone" : "Department"}</Th>
               <Th sortKey="status" sort={sort} onSort={onSort}>Status</Th>
               <th className="w-10"><span className="sr-only">Deactivate</span></th>
             </tr>
@@ -478,8 +508,10 @@ export default function UserManagement() {
                 <td colSpan={6} className="!p-0">
                   <Empty
                     icon={Users}
-                    title={search || roleFilter ? "No users match these filters" : "No users yet"}
-                    hint={search || roleFilter ? "Try another search or role." : "Add the people who host, approve and guard visits."}
+                    title={search || roleFilter ? `No ${noun}s match these filters` : `No ${noun}s yet`}
+                    hint={search || roleFilter
+                      ? "Try another search or role."
+                      : isSecurity ? "Add the guards and front-desk staff who check visitors in." : "Add the people who host and approve visits."}
                   />
                 </td>
               </tr>
@@ -499,10 +531,17 @@ export default function UserManagement() {
                   </td>
                   <td className="mono">{u.employee_code}</td>
                   <td><RoleBadge role={u.role_type} /></td>
-                  <td className="text-ink-2">{u.department_name || "—"}</td>
+                  {isSecurity ? (
+                    <td className="tabular text-ink-2">{u.phone || "—"}</td>
+                  ) : (
+                    <td className="text-ink-2">
+                      {u.department_name || "—"}
+                      {u.designation && <span className="cell-sub">{u.designation}</span>}
+                    </td>
+                  )}
                   <td>{u.is_active ? <State tone="success">Active</State> : <State tone="neutral">Inactive</State>}</td>
                   <td>
-                    {u.is_active && u.id !== currentUser?.id && (
+                    {u.is_active && u.id !== currentUser?.id && (u.role_type !== "unit_admin" || currentUser?.role_type === "super_admin") && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setDeactivatingId(u.id); }}
@@ -533,6 +572,7 @@ export default function UserManagement() {
         lockedDepartmentId={null}
         designations={designations}
         onDepartmentChange={fetchDesignations}
+        activeTab={activeTab}
       />
 
       <Modal

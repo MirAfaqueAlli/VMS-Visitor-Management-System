@@ -21,6 +21,7 @@
  *   POST /me/password           set / change the password
  *   GET  /me/visits             every request in every unit, with pass + gate status
  *   GET  /me/visits/:unitId/:id/pass   the gate pass with a fresh QR
+ *   POST /me/visits/:unitId/:id/cancel cancel a request still waiting for approval
  *   POST /me/visitor-token      short-lived token for POST /visit-requests/public
  *
  * Mobile OTPs use the same Firebase / development codes as the public form; email
@@ -38,6 +39,8 @@ const { centralPool, getPool } = require('../services/dbManager');
 const { validatePassword } = require('../utils/passwordValidator.util');
 const { signQRPayload } = require('../utils/qrToken.util');
 const { sendSuccess, sendError } = require('../utils/response.util');
+const { sendNotification } = require('../services/notification.service');
+const { escapeHtml: esc } = require('../services/email.service');
 
 const SESSION_EXPIRY       = '12h';
 const VISITOR_TOKEN_EXPIRY = '30m';
@@ -327,7 +330,7 @@ const sendEmailVerification = async (req, res) => {
     if (await emailTaken(email, req.visitorAccount.id)) return sendError(res, 'This email is already linked to another visitor account.', 409);
 
     const sent = await sendEmailCode(email, emailKey(req.visitorAccount.id, email));
-    if (sent.status === 'cooldown') return sendError(res, 'A code was sent recently. Please wait 60 seconds.', 429);
+    if (sent.status === 'cooldown') return sendError(res, 'A code was sent recently. Please wait 20 seconds.', 429);
     if (sent.status === 'failed') {
       if (!sent.devOtp) return sendError(res, 'Could not send the email. Check the address and try again.', 500);
       return sendSuccess(res, { dev_otp: sent.devOtp }, 'Development mode: email delivery failed, use the code shown.');
@@ -492,6 +495,100 @@ const myPass = async (req, res) => {
   }
 };
 
+/**
+ * POST /me/visits/:unitId/:id/cancel — the visitor withdraws a request that is
+ * still waiting for approval. The host and the visitor are told (SMS, email,
+ * and a dashboard alert for the host).
+ */
+const cancelVisit = async (req, res) => {
+  try {
+    const unitId = parseInt(req.params.unitId, 10);
+    const id     = parseInt(req.params.id, 10);
+    const unit   = (await activeUnits()).find((u) => u.id === unitId);
+    if (!unit || !id) return sendError(res, 'Visit not found.', 404);
+    const pool = getPool(unit.db_name);
+
+    const [rows] = await pool.query(
+      `SELECT vr.id, vr.status, vr.visit_date, vr.visit_start_time, vr.purpose,
+              h.id AS host_id, h.full_name AS host_name, h.email AS host_email, h.phone AS host_phone
+         FROM visit_requests vr
+         LEFT JOIN visitors v ON v.id = vr.visitor_id
+         LEFT JOIN users h    ON h.id = vr.host_user_id
+        WHERE vr.id = ? AND ${PHONE_MATCH}
+        LIMIT 1`,
+      [id, req.visitorAccount.phone]
+    );
+    if (!rows.length) return sendError(res, 'Visit not found.', 404);
+    const visit = rows[0];
+    if (visit.status !== 'PENDING') {
+      return sendError(res, `This request is already ${visit.status.toLowerCase()} and can't be cancelled here. Please contact your host.`, 400);
+    }
+
+    // Only a still-pending request flips (guards a host approving at the same moment)
+    const [upd] = await pool.query(
+      "UPDATE visit_requests SET status = 'CANCELLED', updated_at = NOW() WHERE id = ? AND status = 'PENDING'", [id]
+    );
+    if (!upd.affectedRows) return sendError(res, 'This request was just reviewed — refresh to see its status.', 409);
+    await pool.query(
+      `INSERT INTO approval_history (visit_request_id, acted_by_user_id, action, remarks, created_at)
+       VALUES (?, ?, 'CANCELLED', 'Cancelled by the visitor.', NOW())`,
+      [id, visit.host_id]
+    );
+
+    // ── Notifications (fire-and-forget) ──
+    const a        = req.visitorAccount;
+    const dateStr  = new Date(visit.visit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+    const when     = `${dateStr}${visit.visit_start_time ? ` at ${String(visit.visit_start_time).slice(0, 5)}` : ''}`;
+    const hostName = visit.host_name || 'your host';
+    setImmediate(async () => {
+      try {
+        if (a.email) {
+          await sendNotification({
+            db: pool, visitRequestId: id, recipientEmail: a.email, type: 'EMAIL',
+            subject: 'Visit request cancelled – OHPC VMS',
+            message: `<p>Hi ${esc(a.full_name)},</p>
+<p>Your visit request to <strong>${esc(hostName)}</strong> (${esc(unit.name)}) for <strong>${esc(when)}</strong> has been cancelled as you asked.</p>
+<p>You can request a new visit any time from the visitor portal.</p>
+<p>OHPC VMS</p>`,
+          });
+        }
+        await sendNotification({
+          db: pool, visitRequestId: id, recipientPhone: a.phone, type: 'SMS',
+          message: `OHPC VMS: Your visit to ${hostName} on ${when} has been cancelled as requested.`,
+        });
+        if (visit.host_id) {
+          if (visit.host_email) {
+            await sendNotification({
+              db: pool, visitRequestId: id, recipientUserId: visit.host_id, recipientEmail: visit.host_email, type: 'EMAIL',
+              subject: 'Visit cancelled by the visitor – OHPC VMS',
+              message: `<p>Hi ${esc(visit.host_name || 'there')},</p>
+<p><strong>${esc(a.full_name)}</strong> has cancelled their visit request for <strong>${esc(when)}</strong>. No action is needed.</p>
+<p>OHPC VMS</p>`,
+            });
+          }
+          if (visit.host_phone) {
+            await sendNotification({
+              db: pool, visitRequestId: id, recipientUserId: visit.host_id, recipientPhone: visit.host_phone, type: 'SMS',
+              message: `OHPC VMS: ${a.full_name} has cancelled their visit to you on ${when}. No action needed.`,
+            });
+          }
+          await sendNotification({
+            db: pool, visitRequestId: id, recipientUserId: visit.host_id, type: 'DASHBOARD',
+            message: `${a.full_name} cancelled their visit request for ${when}.`,
+          });
+        }
+      } catch (notifyErr) {
+        console.error('[VisitorPortal] cancel notification error:', notifyErr.message);
+      }
+    });
+
+    return sendSuccess(res, { id, unit_id: unitId, status: 'CANCELLED' }, 'Visit request cancelled.');
+  } catch (err) {
+    console.error('[VisitorPortal] cancelVisit error:', err.message);
+    return sendError(res, 'Could not cancel the request. Please try again.', 500);
+  }
+};
+
 /** Short-lived PUBLIC_VISITOR token so the existing request form can submit for this account. */
 const visitorToken = async (req, res) => {
   const a = req.visitorAccount;
@@ -514,5 +611,5 @@ module.exports = {
   requireVisitorSession,
   identify, login, loginWithOtp, register,
   me, updateMe, sendEmailVerification, verifyEmail, verifyPhone, setPassword,
-  myVisits, myPass, visitorToken,
+  myVisits, myPass, cancelVisit, visitorToken,
 };

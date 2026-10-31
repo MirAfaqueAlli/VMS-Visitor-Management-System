@@ -37,7 +37,8 @@ export default function GatePass() {
   if (loading) return <><PageHeader title="Gate pass" /><Spinner label="Loading the pass…" /></>;
   if (!passData) return null;
 
-  const hasQr = /^https?:\/\//.test(passData.qr_code_path ?? '');
+  // A signed S3 link, or a QR the server drew from the pass data (no S3 on this server)
+  const hasQr = /^(https?:\/\/|data:image\/)/.test(passData.qr_code_path ?? '');
 
   return (
     <div className="animate-fade-in">
@@ -62,6 +63,11 @@ export default function GatePass() {
           <div className="flex justify-center mb-3"><BrandLogo height={32} /></div>
           <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted">Government of Odisha</p>
           <p className="text-[12.5px] font-semibold text-ink-2">Odisha Hydro Power Corporation Ltd.</p>
+          {passData.unit_name && (
+            <p className="text-[12px] text-ink-2 mt-0.5">
+              {passData.unit_name}{passData.unit_code ? <span className="mono text-muted"> · {passData.unit_code}</span> : null}
+            </p>
+          )}
           <h2 className="mt-3 text-[22px] font-bold tracking-[0.12em] uppercase text-ink">Gate pass</h2>
           <p className="mt-1 mono text-[12.5px] text-ink-2">{passData.pass_number}</p>
         </header>
@@ -81,7 +87,7 @@ export default function GatePass() {
             </div>
           </div>
 
-          {/* qr_code_path is a short-lived signed S3 link from the API (null for old pre-S3 passes).
+          {/* qr_code_path: a short-lived signed S3 link, or a data: image drawn by the API.
               No crossOrigin attribute: it would require a CORS rule on the private bucket. */}
           <div className="shrink-0 p-1.5 bg-white rounded border border-line">
             {hasQr ? (

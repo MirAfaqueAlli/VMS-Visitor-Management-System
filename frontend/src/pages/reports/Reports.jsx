@@ -219,7 +219,7 @@ function CascadeFilters({ isCentral, filters, showDept = false, showEmp = false 
     <>
       {/* Unit selector — global users only */}
       {isCentral && (
-        <Select value={selUnit} onChange={e => setSelUnit(e.target.value)} id="cascade-unit" aria-label="Unit" style={{ width: 180 }}>
+        <Select searchable value={selUnit} onChange={e => setSelUnit(e.target.value)} id="cascade-unit" aria-label="Unit" style={{ width: 180 }}>
           <option value="">All units</option>
           {units.map(u => <option key={u.db_name} value={u.db_name}>{u.name}</option>)}
         </Select>
@@ -227,7 +227,7 @@ function CascadeFilters({ isCentral, filters, showDept = false, showEmp = false 
 
       {/* Department selector — shown when applicable */}
       {showDept && (
-        <Select
+        <Select searchable
           value={selDept}
           onChange={e => setSelDept(e.target.value)}
           disabled={isCentral ? !selUnit : false}
@@ -242,7 +242,7 @@ function CascadeFilters({ isCentral, filters, showDept = false, showEmp = false 
 
       {/* Employee selector — only for employee-wise report */}
       {showEmp && (
-        <Select
+        <Select searchable
           value={selEmp}
           onChange={e => setSelEmp(e.target.value)}
           disabled={isCentral ? !selUnit : false}
@@ -1751,16 +1751,26 @@ export default function Reports() {
     );
   }
 
+  // What the figures cover: one unit for unit-level users, everything for central users
+  const scope = isCentral
+    ? 'All units'
+    : (user?.unit_name ? user.unit_name : null);
+  // A unit-level user's "Unit / office" tab is really a department breakdown of their unit
+  const tabs = isCentral ? TABS : TABS.map((t) => (t.id === 'unit' ? { ...t, label: 'Department breakdown' } : t));
+
   return (
     <div className="animate-fade-in">
-      <PageHeader title="Reports" />
+      <PageHeader
+        title="Reports"
+        meta={scope && <span className="inline-flex items-center gap-1"><Building2 size={12} /> {scope}</span>}
+      />
 
       <OverviewCharts
         from={chartFrom} to={chartTo}
         onFromChange={setChartFrom} onToChange={setChartTo}
       />
 
-      <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} className="mb-4 overflow-x-auto no-scrollbar" />
+      <Tabs tabs={tabs} value={activeTab} onChange={setActiveTab} className="mb-4 overflow-x-auto no-scrollbar" />
 
       {activeTab === 'employee' && <EmployeeReport   isCentral={isCentral} />}
       {activeTab === 'dept'     && <DepartmentReport isCentral={isCentral} />}

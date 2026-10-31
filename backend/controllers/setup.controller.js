@@ -200,7 +200,7 @@ const sendEmailOtp = async (req, res) => {
     const { email } = req.body;
     const sent = await sendEmailCode(email, setupEmailKey(email));
     if (sent.status === 'cooldown') {
-      return sendError(res, 'A code was sent recently. Please wait 60 seconds before requesting another.', 429);
+      return sendError(res, 'A code was sent recently. Please wait 20 seconds before requesting another.', 429);
     }
     if (sent.status === 'failed') {
       if (!sent.devOtp) {
@@ -245,7 +245,7 @@ const sendPhoneOtp = async (req, res) => {
     const sent = await sendDevPhoneCode(phone, setupPhoneKey(phone));
     if (sent.status === 'disabled') return sendError(res, 'On this server mobile codes are sent by Firebase.', 400);
     if (sent.status === 'cooldown') {
-      return sendError(res, 'A code was sent recently. Please wait 60 seconds before requesting another.', 429);
+      return sendError(res, 'A code was sent recently. Please wait 20 seconds before requesting another.', 429);
     }
     return sendSuccess(res, {}, 'Development mode: the SMS code is printed in the backend log.');
   } catch (err) {

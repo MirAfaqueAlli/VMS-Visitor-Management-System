@@ -18,8 +18,10 @@ const STRENGTH = [
  *   - show: boolean (optional, default true) — whether to show the checklist
  *   - hideWhenValid: boolean (optional) — once every rule passes, replace the
  *     bar + checklist with a single "all requirements met" line
+ *   - hideChecklistWhenValid: boolean (optional) — once every rule passes, keep the
+ *     strength bar but drop the checklist to save space
  */
-export default function PasswordStrength({ password, show = true, hideWhenValid = false }) {
+export default function PasswordStrength({ password, show = true, hideWhenValid = false, hideChecklistWhenValid = false }) {
   if (!password || !show) return null;
 
   const { valid, results } = validatePassword(password);
@@ -47,6 +49,7 @@ export default function PasswordStrength({ password, show = true, hideWhenValid 
       </div>
 
       {/* Rule checklist */}
+      {!(hideChecklistWhenValid && valid) && (
       <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
         {results.map((r) => (
           <li key={r.key} className={`flex items-center gap-1.5 text-[11px] ${r.passed ? 'text-success' : 'text-muted'}`}>
@@ -55,6 +58,7 @@ export default function PasswordStrength({ password, show = true, hideWhenValid 
           </li>
         ))}
       </ul>
+      )}
     </div>
   );
 }

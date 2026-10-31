@@ -32,14 +32,20 @@ const listUsers = async (req, res) => {
     }
 
     if (role) {
-      conditions.push('u.role_type = ?');
-      params.push(role);
+      const roleList = String(role).split(',').map(r => r.trim()).filter(Boolean);
+      if (roleList.length === 1) {
+        conditions.push('u.role_type = ?');
+        params.push(roleList[0]);
+      } else if (roleList.length > 1) {
+        conditions.push(`u.role_type IN (${roleList.map(() => '?').join(', ')})`);
+        params.push(...roleList);
+      }
     }
 
     if (search && search.trim()) {
-      conditions.push('(u.full_name LIKE ? OR u.email LIKE ? OR u.employee_code LIKE ?)');
+      conditions.push('(u.full_name LIKE ? OR u.email LIKE ? OR u.employee_code LIKE ? OR u.phone LIKE ?)');
       const like = `%${search.trim()}%`;
-      params.push(like, like, like);
+      params.push(like, like, like, like);
     }
 
     const where = `WHERE ${conditions.join(' AND ')}`;
@@ -429,11 +435,15 @@ const deactivateUser = async (req, res) => {
     }
 
     const [existing] = await req.db.query(
-      `SELECT id, is_active, department_id FROM users WHERE id = ? AND deleted_at IS NULL`, [id]
+      `SELECT id, is_active, department_id, role_type FROM users WHERE id = ? AND deleted_at IS NULL`, [id]
     );
     if (existing.length === 0) return sendError(res, 'User not found.', 404);
 
-
+    // A unit admin can't remove another unit admin (it could lock the unit out) —
+    // only a super admin can, the same rule as editing unit admins
+    if (existing[0].role_type === 'unit_admin' && !isSuperAdmin(req.user)) {
+      return sendError(res, 'Only a super admin can deactivate a unit admin.', 403);
+    }
 
     if (!existing[0].is_active) return sendError(res, 'User is already deactivated.', 400);
 

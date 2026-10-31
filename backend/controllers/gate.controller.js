@@ -8,6 +8,8 @@ const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
 const { verifyQRToken }          = require('../utils/qrToken.util');
 const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
 const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
+const { sendNotification }       = require('../services/notification.service');
+const { escapeHtml: esc }        = require('../services/email.service');
 
 // IST calendar date as YYYY-MM-DD (mirrors approval/visitRequest controllers)
 const getISTDateString = (d = new Date()) =>
@@ -135,7 +137,7 @@ const getDashboard = async (req, res) => {
  * 6. No qr_scan_logs (table removed from schema)
  */
 const checkIn = async (req, res) => {
-  const conn = await req.db.getConnection();
+  let conn = await req.db.getConnection();
   try {
     const requestId = parseInt(req.params.requestId, 10);
     if (isNaN(requestId)) { conn.release(); return sendError(res, 'Invalid request ID.', 400); }
@@ -190,6 +192,11 @@ const checkIn = async (req, res) => {
       conn.release();
       return sendError(res, 'Gate pass has already been used or cancelled.', 400);
     }
+    // The visit itself must still be on (a cancelled / rejected visit can't enter)
+    if (!['APPROVED', 'SCHEDULED'].includes(request.status)) {
+      conn.release();
+      return sendError(res, `This visit is ${String(request.status).toLowerCase()} — the visitor can't be checked in.`, 403);
+    }
     if (request.pass_number !== pass_number) {
       conn.release();
       return sendError(res, 'Gate pass number mismatch. Verification failed.', 403);
@@ -220,7 +227,7 @@ const checkIn = async (req, res) => {
       const [blRows] = await req.db.query(
         `SELECT bv.id, bv.reason FROM blacklisted_visitors bv
          JOIN visitors v ON v.id = bv.visitor_id
-         WHERE v.phone = ? AND bv.is_active = TRUE LIMIT 1`,
+         WHERE RIGHT(REGEXP_REPLACE(v.phone, '[^0-9]', ''), 10) = RIGHT(REGEXP_REPLACE(?, '[^0-9]', ''), 10) AND bv.is_active = TRUE LIMIT 1`,
         [request.visitor_phone]
       );
       if (blRows.length > 0) {
@@ -243,7 +250,7 @@ const checkIn = async (req, res) => {
 
     // ── 3. Upsert visitor record (created only on first check-in) ─────────────
     let visitorId = request.visitor_id;
-    const visitorType = request.visit_category === 'VENDOR' ? 'business' : 'individual';
+    const visitorType = (request.visit_category === 'VENDOR' || request.company_name) ? 'business' : 'individual';
 
     if (!visitorId && request.visitor_phone) {
       // Check if visitor already exists by phone
@@ -341,6 +348,7 @@ const checkIn = async (req, res) => {
 
     await conn.commit();
     conn.release();
+    conn = null;   // released: the catch below must not roll back / release it again (it may be serving another request by then)
 
     // ── Socket.IO: notify all security/gate users that a visitor just checked in ─
     // Fetch host and dept name for the payload (reuse data we already have)
@@ -375,6 +383,49 @@ const checkIn = async (req, res) => {
         department_name:  deptInfoRows[0]?.name || null,
         check_in_at:      new Date().toISOString(),
         visit_log_id:     visitLogId,
+      });
+
+      // SMS/email/dashboard to host so they know even if not in the app
+      setImmediate(async () => {
+        try {
+          const [hostRows] = await req.db.query(
+            'SELECT id, full_name, email, phone FROM users WHERE id = ?', [request.host_user_id]
+          );
+          if (!hostRows || hostRows.length === 0) return;
+          const host = hostRows[0];
+          const checkInAt = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+          if (host.phone) {
+            await sendNotification({
+              db: req.db, visitRequestId: requestId,
+              recipientUserId: host.id, recipientPhone: host.phone,
+              type: 'SMS',
+              message: `OHPC VMS: ${request.visitor_name} has checked in at the gate to meet you. Check-in time: ${checkInAt} IST. Pass: ${request.pass_number || 'N/A'}.`,
+            });
+          }
+          if (host.email) {
+            await sendNotification({
+              db: req.db, visitRequestId: requestId,
+              recipientUserId: host.id, recipientEmail: host.email,
+              type: 'EMAIL',
+              subject: `Visitor Arrived – ${request.visitor_name}`,
+              message: `<p>Hi ${esc(host.full_name || 'there')},</p>
+<p><strong>${esc(request.visitor_name)}</strong> has checked in at the gate to visit you.</p>
+<p><strong>Check-in Time:</strong> ${esc(checkInAt)} IST<br/>
+<strong>Pass Number:</strong> ${esc(request.pass_number || 'N/A')}<br/>
+<strong>Phone:</strong> ${esc(request.visitor_phone || 'N/A')}</p>
+<p>Please proceed to receive your visitor.</p>
+<p>OHPC VMS Team</p>`,
+            });
+          }
+          await sendNotification({
+            db: req.db, visitRequestId: requestId,
+            recipientUserId: host.id,
+            type: 'DASHBOARD',
+            message: `${request.visitor_name} has checked in at the gate (Pass: ${request.pass_number || 'N/A'}) at ${checkInAt}.`,
+          });
+        } catch (checkInNotifyErr) {
+          console.error('[GateController] check-in host notification error:', checkInNotifyErr.message);
+        }
       });
     }
 
@@ -461,11 +512,10 @@ const checkIn = async (req, res) => {
     const visitLog = logRows[0] && { ...logRows[0], visitor_photo_path: await getSignedFileUrl(logRows[0].visitor_photo_path) };
     return sendSuccess(res, visitLog, 'Visitor checked in successfully.');
   } catch (err) {
-    // Only touch the connection if it hasn't been returned to the pool yet —
-    // once released it may already be serving another request, and a ROLLBACK
-    // here would undo that request's transaction. (`_released` lives on the
-    // underlying mysql2 PoolConnection, not on the promise wrapper.)
-    if (!conn.connection?._released) {
+    // Only touch the connection if we still hold it — once released (conn = null
+    // above) it may be serving another request, and a ROLLBACK here would undo
+    // that request's transaction.
+    if (conn) {
       try { await conn.rollback(); } catch (_) {}
       conn.release();
     }
@@ -482,7 +532,6 @@ const checkOut = async (req, res) => {
     const visit_log_id = req.params.visitLogId || req.body.visit_log_id;
 
     if (!visit_log_id && !pass_number) {
-      conn.release();
       return sendError(res, 'Provide either visit_log_id or pass_number.', 400);
     }
 
@@ -503,7 +552,6 @@ const checkOut = async (req, res) => {
     }
 
     if (!logRows || !logRows.length) {
-      conn.release();
       return sendError(res, 'No active visit found for checkout.', 404);
     }
 
@@ -527,9 +575,12 @@ const checkOut = async (req, res) => {
       [visitRequestId]
     );
 
-    // Direct checkout: mark method. Gate pass stays USED (valid within its 24h window).
+    // Direct checkout ends the pass at once, like a QR checkout: the visit is over,
+    // so neither the pass nor its QR may be used again
     await conn.query(
-      "UPDATE gate_passes SET checkout_method = 'DIRECT' WHERE id = ?",
+      `UPDATE gate_passes
+       SET status = 'EXPIRED', checkout_method = 'DIRECT', qr_expires_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
       [visitLog.gate_pass_id]
     );
 
@@ -709,7 +760,6 @@ const checkOutByQR = async (req, res) => {
     const { pass_number } = req.body;
 
     if (!pass_number) {
-      conn.release();
       return sendError(res, 'pass_number is required.', 400);
     }
 
@@ -725,14 +775,12 @@ const checkOutByQR = async (req, res) => {
       const { valid, payload, error } = verifyQRToken(pass_number.trim());
 
       if (!valid) {
-        conn.release();
         console.warn(`[GateController] QR signature verification FAILED: ${error}`);
         return sendError(res, `Invalid QR code: ${error}`, 403);
       }
 
       // Extract the pass_number from the verified payload
       if (!payload.pass_number) {
-        conn.release();
         return sendError(res, 'QR token payload is missing pass_number.', 400);
       }
 
@@ -750,7 +798,6 @@ const checkOutByQR = async (req, res) => {
     );
 
     if (!passRows.length) {
-      conn.release();
       return sendError(res, 'Gate pass not found or not in a checked-in state.', 404);
     }
 
@@ -758,7 +805,6 @@ const checkOutByQR = async (req, res) => {
 
     // ── 2. Validate QR is within its 24-hour validity window ──────────────────
     if (!gatePass.qr_expires_at || new Date() > new Date(gatePass.qr_expires_at)) {
-      conn.release();
       return sendError(res, 'QR code has expired (24-hour window elapsed). Use direct checkout.', 410);
     }
 
@@ -769,7 +815,6 @@ const checkOutByQR = async (req, res) => {
     );
 
     if (!logRows.length) {
-      conn.release();
       return sendError(res, 'No active visit found for this gate pass.', 404);
     }
 

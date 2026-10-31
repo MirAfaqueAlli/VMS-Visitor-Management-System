@@ -6,13 +6,16 @@ const { centralPool, getPool } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { sendNotification }       = require('../services/notification.service');
 const emailService               = require('../services/email.service');
+const esc                        = emailService.escapeHtml;
 const { logAudit }               = require('../utils/auditLogger.util');
 const { generateGatePass }       = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin, isEmployee, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
+const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
 const { emitToUser, emitToUnitSecurity } = require('../socket/socketManager');
 const { encryptField, decryptRows } = require('../utils/crypto.util');
 const { getSignedFileUrl }          = require('../utils/s3.util');
 const { gatePassMediaUrl }          = require('../services/whatsapp.service');
+const { qrImageForPass }            = require('../services/qrcode.service');
 
 // IST date helper (mirrors the one in approval.controller.js)
 const getISTDateString = (d = new Date()) =>
@@ -39,7 +42,7 @@ const isBlacklisted = async (db, visitorId = null, phone = null) => {
     [rows] = await db.query(
       `SELECT bv.id, bv.reason FROM blacklisted_visitors bv
        JOIN visitors v ON v.id = bv.visitor_id
-       WHERE v.phone = ? AND bv.is_active = TRUE LIMIT 1`,
+       WHERE RIGHT(REGEXP_REPLACE(v.phone, '[^0-9]', ''), 10) = RIGHT(REGEXP_REPLACE(?, '[^0-9]', ''), 10) AND bv.is_active = TRUE LIMIT 1`,
       [phone]
     );
   }
@@ -113,16 +116,6 @@ const checkScheduleConflict = async (db, hostUserId, visitDate, startTime, endTi
   }
 
   return result;
-};
-
-/**
- * getCrossUnitId — reads ?unit_id= for an employee opening/cancelling an
- * EMPLOYEE_VISIT they raised in another unit (stored in that unit's DB).
- * Returns the other unit's id, or null if absent / it is the caller's own unit.
- */
-const getCrossUnitId = (req) => {
-  const unitId = parseInt(req.query.unit_id, 10);
-  return unitId && unitId !== parseInt(req.user.unit_id, 10) ? unitId : null;
 };
 
 /** Returns the pool for an active unit, or null if the unit is unknown/inactive. */
@@ -214,8 +207,9 @@ const createRequest = async (req, res) => {
     let db = req.db;
     let isCrossUnit    = false;  // true when EMPLOYEE_VISIT routes to a different unit's DB
     let crossUnitDbName = null;  // db_name of the target unit (cross-unit only)
+    const requesterUnitId = await ownUnitId(req);
     if (typeCode === 'EMPLOYEE_VISIT' && target_unit_id) {
-      if (req.user?.unit_id && parseInt(target_unit_id) === parseInt(req.user.unit_id)) {
+      if (requesterUnitId && parseInt(target_unit_id) === requesterUnitId) {
         return sendError(res, 'Target unit cannot be your own unit for an inter-unit employee visit.', 400);
       }
       const { centralPool, getPool } = require('../services/dbManager');
@@ -235,7 +229,8 @@ const createRequest = async (req, res) => {
     conn = await db.getConnection();
 
     // ── Resolve effective unit & department ───────────────────────────────────
-    const effectiveUnitId = isCrossUnit ? target_unit_id : (unit_id || req.user?.unit_id);
+    // The unit whose DB stores this request (the host's unit)
+    const effectiveUnitId = isCrossUnit ? Number(target_unit_id) : (unit_id || requesterUnitId);
     let effectiveDeptId = (isSuperAdmin(req.user) || isUnitAdmin(req.user) || isCrossUnit || typeCode === 'EMPLOYEE_VISIT')
       ? department_id
       : (req.user?.department_id || department_id);
@@ -340,7 +335,7 @@ const createRequest = async (req, res) => {
     if (resolvedVisitorPhone && effectiveHostId) {
       const [hostBlRows] = await db.query(
         `SELECT id, reason FROM host_phone_blacklist
-         WHERE host_user_id = ? AND visitor_phone = ? AND is_active = TRUE LIMIT 1`,
+         WHERE host_user_id = ? AND RIGHT(REGEXP_REPLACE(visitor_phone, '[^0-9]', ''), 10) = RIGHT(REGEXP_REPLACE(?, '[^0-9]', ''), 10) AND is_active = TRUE LIMIT 1`,
         [effectiveHostId, resolvedVisitorPhone]
       );
       if (hostBlRows.length > 0) {
@@ -454,7 +449,7 @@ const createRequest = async (req, res) => {
         // It goes into cross_unit_requester_id + requester_unit_id instead.
         isCrossUnit ? null : requester_user_id,
         isCrossUnit ? requester_user_id : null,
-        isCrossUnit ? (req.user?.unit_id || null) : null,
+        isCrossUnit ? requesterUnitId : null,   // the unit it was raised from (lists it there too)
         effectiveHostId,
         effectiveDeptId || null,
         effectiveUnitId,
@@ -467,10 +462,10 @@ const createRequest = async (req, res) => {
         visit_end_time   || null,
         accompanying_count,
         status,
-        typeCode === 'VENDOR' ? (company_name || null) : null,
-        typeCode === 'VENDOR' ? (vendor_email || null) : null,
-        typeCode === 'VENDOR' ? (service_type || null) : null,
-        typeCode === 'VENDOR' ? (work_order_ref || null) : null,
+        (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (company_name || null) : null,
+        (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (vendor_email || null) : null,
+        (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (service_type || null) : null,
+        (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (work_order_ref || null) : null,
         force_create ? 1 : 0,
       ]
     );
@@ -513,6 +508,7 @@ const createRequest = async (req, res) => {
 
     await conn.commit();
     conn.release();
+    conn = null;   // released: the catch below must not roll back / release it again (it may be serving another request by then)
 
     // ── Auto-generate gate pass for APPROVED types ────────────────────────────
     let passResult = null;
@@ -660,7 +656,7 @@ const createRequest = async (req, res) => {
         // Resolve host unit name if possible
         let hostUnitName = '';
         try {
-          const uIdToQuery = req.user?.unit_id || unit_id;
+          const uIdToQuery = effectiveUnitId;   // the host's unit (where the request is stored)
           if (uIdToQuery) {
             const [huRows] = await centralPool.query('SELECT name FROM units WHERE id = ?', [uIdToQuery]);
             if (huRows.length > 0) hostUnitName = huRows[0].name;
@@ -739,7 +735,7 @@ const createRequest = async (req, res) => {
                 host_name: hostName,
                 pass_number: passNum,
                 is_hosted: true,
-                cross_unit_id: req.user?.unit_id || unit_id || null,
+                cross_unit_id: effectiveUnitId || null,   // where the request lives, so the link opens it
                 message: dashMsg,
               });
             } catch (sockErr) {
@@ -765,14 +761,16 @@ const createRequest = async (req, res) => {
     } else if (typeCode === 'SPOT') {
       // Tender 1.1.1: security needs the host's approval before issuing a pass, so
       // alert the host by SMS and email too — not only on the dashboard
-      await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `URGENT: Walk-in visitor waiting at reception for you. Purpose: ${purpose}` });
+      const typeLabel = company_name ? `Vendor/Business walk-in (${company_name})` : `Walk-in visitor`;
+      await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `URGENT: ${typeLabel} waiting at reception for you. Purpose: ${purpose}` });
       if (host.phone) {
         await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientPhone: host.phone, type: 'SMS',
-          message: `VMS: Walk-in visitor ${resolvedVisitorName || ''} is waiting at reception to meet you. Please approve or reject in VMS.` });
+          message: `VMS: ${typeLabel} ${resolvedVisitorName || ''} is waiting at reception to meet you. Please approve or reject in VMS.` });
       }
       if (host.email) {
-        const tmpl = emailService.visitRequestTemplate(resolvedVisitorName || 'Walk-in visitor', host.full_name, visit_date, purpose, '', visit_start_time || null);
-        await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientEmail: host.email, type: 'EMAIL', subject: `URGENT (walk-in waiting) — ${tmpl.subject}`, message: tmpl.html });
+        const displayName = resolvedVisitorName ? (company_name ? `${resolvedVisitorName} (${company_name})` : resolvedVisitorName) : (company_name || 'Walk-in visitor');
+        const tmpl = emailService.visitRequestTemplate(displayName, host.full_name, visit_date, purpose, '', visit_start_time || null);
+        await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientEmail: host.email, type: 'EMAIL', subject: `URGENT (${typeLabel}) — ${tmpl.subject}`, message: tmpl.html });
       }
     } else if (typeCode === 'PERSONAL_VISIT') {
       if (resolvedVisitorEmail) {
@@ -863,7 +861,9 @@ const getRequest = async (req, res) => {
 
     // ?unit_id=<other unit> → an EMPLOYEE_VISIT the caller raised in another unit.
     // Only that requester may open it (matched on cross_unit_requester_id + requester_unit_id).
-    const crossUnitId = getCrossUnitId(req);
+    const myUnitId = await ownUnitId(req);
+    const askedUnit = parseInt(req.query.unit_id, 10);
+    const crossUnitId = askedUnit && askedUnit !== myUnitId ? askedUnit : null;
     let db = req.db;
     let crossUnitScope = '';
     const params = [id];
@@ -871,7 +871,12 @@ const getRequest = async (req, res) => {
       db = await getActiveUnitPool(crossUnitId);
       if (!db) return sendError(res, 'Visit request not found.', 404);
       const xScopeOr = ['(vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?)'];
-      params.push(req.user.id, req.user.unit_id);
+      params.push(req.user.id, myUnitId);
+      // The requesting unit's admin sees every visit raised from their unit
+      if (isUnitLevelAdmin(req) && myUnitId) {
+        xScopeOr.push("(vr.requester_unit_id = ? AND vr.visit_category = 'EMPLOYEE_VISIT')");
+        params.push(myUnitId);
+      }
       if (req.user.email) {
         xScopeOr.push('vr.visitor_email = ?');
         params.push(req.user.email);
@@ -887,7 +892,7 @@ const getRequest = async (req, res) => {
       `SELECT vr.*,
               h.full_name AS host_name, h.email AS host_email, h.phone AS host_phone, h.designation AS host_designation,
               d.name AS department_name,
-              gp.pass_number, gp.qr_code_path, gp.status AS gate_pass_status, gp.id AS gate_pass_id
+              gp.pass_number, gp.qr_code_path, gp.qr_code_data, gp.status AS gate_pass_status, gp.id AS gate_pass_id
        FROM visit_requests vr
        JOIN users h ON h.id = vr.host_user_id
        LEFT JOIN departments d ON d.id = vr.department_id
@@ -941,7 +946,7 @@ const getRequest = async (req, res) => {
       try {
         const [blCheck] = await db.query(
           `SELECT id FROM host_phone_blacklist
-           WHERE host_user_id = ? AND visitor_phone = ? AND is_active = TRUE LIMIT 1`,
+           WHERE host_user_id = ? AND RIGHT(REGEXP_REPLACE(visitor_phone, '[^0-9]', ''), 10) = RIGHT(REGEXP_REPLACE(?, '[^0-9]', ''), 10) AND is_active = TRUE LIMIT 1`,
           [request.host_user_id, request.visitor_phone]
         );
         if (blCheck.length > 0) hostBlockId = blCheck[0].id;
@@ -951,7 +956,8 @@ const getRequest = async (req, res) => {
     return sendSuccess(res, {
       ...request,
       my_role: isHost ? 'HOST' : 'VISITOR',
-      qr_code_path: await getSignedFileUrl(request.qr_code_path), // private bucket → signed link
+      qr_code_path: await qrImageForPass(request), // signed S3 link, or drawn from the pass data
+      qr_code_data: undefined,
       companions,
       approval_history: approvalRows,
       visitor: visitorDetails,
@@ -1040,7 +1046,11 @@ const listRequests = async (req, res) => {
     // Employees' lists merge rows from several unit DBs (see fan-out below). To page
     // the merged list correctly, fetch the first offset+limit rows from every source,
     // merge-sort them, then slice out the requested page.
-    const shouldFanOut = (isEmployee || tab === 'as_visitor') && tab !== 'as_host' && req.user.unit_id;
+    // Unit admins (and super admins managing a unit) on the default tab also get the
+    // EMPLOYEE_VISITs raised from their unit but stored in the host unit's database
+    const myUnitId    = await ownUnitId(req);
+    const adminFanOut = isUnitLevelAdmin(req) && (!tab || tab === 'all');
+    const shouldFanOut = (isEmployee || tab === 'as_visitor' || adminFanOut) && tab !== 'as_host' && !!myUnitId;
     const fetchLimit  = shouldFanOut ? offset + limit : limit;
     const fetchOffset = shouldFanOut ? 0 : offset;
 
@@ -1067,13 +1077,17 @@ const listRequests = async (req, res) => {
         const [activeUnits] = await centralPool.query(
           `SELECT u.id, u.db_name FROM units u
            WHERE u.is_active = 1 AND u.db_status = 'ACTIVE' AND u.id != ?`,
-          [req.user.unit_id]
+          [myUnitId]
         );
         await Promise.all(activeUnits.map(async (unit) => {
           try {
             const otherDb  = getPool(unit.db_name);
             const xOr = ['(vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?)'];
-            const xOrParams = [req.user.id, req.user.unit_id];
+            const xOrParams = [req.user.id, myUnitId];
+            if (adminFanOut) {
+              xOr.push('vr.requester_unit_id = ?');
+              xOrParams.push(myUnitId);
+            }
             if (req.user.email) {
               xOr.push('vr.visitor_email = ?');
               xOrParams.push(req.user.email);
@@ -1151,7 +1165,9 @@ const cancelRequest = async (req, res) => {
     // unit; only that requester may (matched on cross_unit_requester_id + requester_unit_id).
     // Without it, only the caller's own unit DB is searched — never fan out by id alone,
     // since ids repeat across unit DBs.
-    const crossUnitId = getCrossUnitId(req);
+    const myUnitId = await ownUnitId(req);
+    const askedUnit = parseInt(req.query.unit_id, 10);
+    const crossUnitId = askedUnit && askedUnit !== myUnitId ? askedUnit : null;
     let targetDb = req.db;
     let rows;
     if (crossUnitId) {
@@ -1160,7 +1176,7 @@ const cancelRequest = async (req, res) => {
       [rows] = await targetDb.query(
         `SELECT id, status FROM visit_requests
          WHERE id = ? AND cross_unit_requester_id = ? AND requester_unit_id = ?`,
-        [id, user.id, user.unit_id]
+        [id, user.id, myUnitId]
       );
     } else {
       [rows] = await req.db.query(
@@ -1184,9 +1200,103 @@ const cancelRequest = async (req, res) => {
       }
     }
 
-    await targetDb.query(
-      "UPDATE visit_requests SET status = 'CANCELLED', updated_at = NOW() WHERE id = ?", [id]
+    // An approved visit has a gate pass: cancel it first, atomically, so a visitor
+    // can't be checked in on a cancelled visit. If the pass is no longer ISSUED the
+    // visitor has already checked in (or it was cancelled) — the visit is under way
+    // or over, so it can't be cancelled here (check the visitor out instead).
+    const [[pass]] = await targetDb.query(
+      'SELECT id FROM gate_passes WHERE visit_request_id = ? LIMIT 1', [id]
     );
+    if (pass) {
+      const [passFlip] = await targetDb.query(
+        "UPDATE gate_passes SET status = 'CANCELLED', updated_at = NOW() WHERE id = ? AND status = 'ISSUED'", [pass.id]
+      );
+      if (passFlip.affectedRows === 0) {
+        return sendError(res, 'The visitor has already checked in, so this visit can no longer be cancelled.', 409);
+      }
+    }
+
+    // Only a request that is still open flips (guards a simultaneous approve / reject)
+    const [cancelled] = await targetDb.query(
+      "UPDATE visit_requests SET status = 'CANCELLED', updated_at = NOW() WHERE id = ? AND status IN ('PENDING', 'APPROVED')", [id]
+    );
+    if (cancelled.affectedRows === 0) {
+      return sendError(res, 'This request was just changed by someone else. Refresh to see its status.', 409);
+    }
+
+    // ── Notifications (fire-and-forget) ────────────────────────────────────────
+    // Fetch visitor/host details for notifications
+    setImmediate(async () => {
+      try {
+        const [details] = await targetDb.query(
+          `SELECT vr.visitor_name, vr.visitor_phone, vr.visitor_email,
+                  vr.visit_date, vr.visit_start_time, vr.purpose,
+                  h.id AS host_id, h.full_name AS host_name,
+                  h.email AS host_email, h.phone AS host_phone,
+                  d.name AS department_name
+           FROM visit_requests vr
+           LEFT JOIN users h ON h.id = vr.host_user_id
+           LEFT JOIN departments d ON d.id = vr.department_id
+           WHERE vr.id = ?`, [id]
+        );
+        if (!details || details.length === 0) return;
+        const d = details[0];
+        // DATE columns come back as Date objects — show "30 Oct 2026", not the JS default
+        d.visit_date = d.visit_date instanceof Date
+          ? d.visit_date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+          : d.visit_date;
+        const timeStr = d.visit_start_time ? ` at ${String(d.visit_start_time).slice(0, 5)}` : '';
+        const canceller = `${user.full_name || 'An admin'} (${user.role || 'staff'})`;
+
+        // Notify VISITOR
+        if (d.visitor_email) {
+          await sendNotification({
+            db: targetDb, visitRequestId: parseInt(id),
+            recipientEmail: d.visitor_email, type: 'EMAIL',
+            subject: `Your Visit Has Been Cancelled – OHPC VMS`,
+            message: `<p>Hi ${esc(d.visitor_name || 'Visitor')},</p>
+<p>Your visit request to <strong>${esc(d.host_name || 'your host')}</strong> scheduled for <strong>${esc(d.visit_date + timeStr)}</strong> has been <strong>cancelled</strong> by ${esc(canceller)}.</p>
+<p>If you believe this is an error, please contact the OHPC VMS administration.</p>
+<p>Thank you,<br/>OHPC VMS Team</p>`,
+          });
+        }
+        if (d.visitor_phone) {
+          await sendNotification({
+            db: targetDb, visitRequestId: parseInt(id),
+            recipientPhone: d.visitor_phone, type: 'SMS',
+            message: `OHPC VMS: Your visit to ${d.host_name || 'your host'} on ${d.visit_date}${timeStr} has been cancelled by ${canceller}. Contact administration if this is an error.`,
+          });
+        }
+
+        // Notify HOST (if a different person from the canceller)
+        if (d.host_id && d.host_id !== user.id) {
+          if (d.host_email) {
+            await sendNotification({
+              db: targetDb, visitRequestId: parseInt(id),
+              recipientUserId: d.host_id, recipientEmail: d.host_email, type: 'EMAIL',
+              subject: `Visit Cancelled – OHPC VMS`,
+              message: `<p>Hi ${esc(d.host_name || 'there')},</p>
+<p>The visit from <strong>${esc(d.visitor_name || 'your visitor')}</strong> scheduled for <strong>${esc(d.visit_date + timeStr)}</strong> (Purpose: ${esc(d.purpose || 'N/A')}) has been <strong>cancelled</strong> by ${esc(canceller)}.</p>
+<p>No further action is required from your side.</p>`,
+            });
+          }
+          if (d.host_phone) {
+            await sendNotification({
+              db: targetDb, visitRequestId: parseInt(id),
+              recipientUserId: d.host_id, recipientPhone: d.host_phone, type: 'SMS',
+              message: `OHPC VMS: Visit from ${d.visitor_name || 'your visitor'} on ${d.visit_date}${timeStr} has been cancelled by ${canceller}.`,
+            });
+          }
+          await sendNotification({
+            db: targetDb, visitRequestId: parseInt(id),
+            recipientUserId: d.host_id, type: 'DASHBOARD',
+            message: `Visit from ${d.visitor_name || 'your visitor'} on ${d.visit_date}${timeStr} was cancelled by ${canceller}.`,
+          });
+        }
+      } catch (notifyErr) {
+        console.error('[VisitRequestController] cancelRequest notification error:', notifyErr.message);
+      }
+    });
 
     // Logged in the canceller's own unit (see createRequest audit note)
     await logAudit({
@@ -1344,7 +1454,7 @@ const createPublicRequest = async (req, res) => {
     // ── Host-level phone blacklist check ─────────────────────────────────────
     const [hostBlRows] = await unitDb.query(
       `SELECT id, reason FROM host_phone_blacklist
-       WHERE host_user_id = ? AND visitor_phone = ? AND is_active = TRUE LIMIT 1`,
+       WHERE host_user_id = ? AND RIGHT(REGEXP_REPLACE(visitor_phone, '[^0-9]', ''), 10) = RIGHT(REGEXP_REPLACE(?, '[^0-9]', ''), 10) AND is_active = TRUE LIMIT 1`,
       [host_user_id, visitor_phone]
     );
     if (hostBlRows.length > 0) {
@@ -1410,7 +1520,7 @@ const createPublicRequest = async (req, res) => {
          visit_category, request_source, purpose, visit_date,
          visit_start_time, visit_end_time, accompanying_count,
          company_name, status, created_at, updated_at
-       ) VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 'SELF', ?, ?,
+       ) VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 'PUBLIC', ?, ?,
                  ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
       [
         visitor_phone, visitor_full_name, visitor_email || null, visitor_address || null,
@@ -1422,6 +1532,7 @@ const createPublicRequest = async (req, res) => {
       ]
     );
     const visitRequestId = reqResult.insertId;
+
 
 
     if (Array.isArray(companions) && companions.length > 0) {
@@ -1441,6 +1552,7 @@ const createPublicRequest = async (req, res) => {
 
     await conn.commit();
     conn.release();
+    conn = null;   // released: the catch below must not roll back / release it again (it may be serving another request by then)
 
     // Notify host
     const timeStr = visit_start_time ? ` at ${visit_start_time}` : '';
@@ -1452,6 +1564,36 @@ const createPublicRequest = async (req, res) => {
       await sendNotification({ db: unitDb, visitRequestId, recipientUserId: host.id, recipientPhone: host.phone, type: 'SMS', message: `VMS: ${visitor_full_name} requested to visit you on ${visit_date}${timeStr}. Please approve/reject.` });
     }
     await sendNotification({ db: unitDb, visitRequestId, recipientUserId: host.id, type: 'DASHBOARD', message: `New prior-approved request from ${visitor_full_name} on ${visit_date}${timeStr} awaiting approval.` });
+
+    // Confirm submission to the VISITOR (email + SMS) — fire-and-forget
+    setImmediate(async () => {
+      try {
+        if (visitor_email) {
+          await sendNotification({
+            db: unitDb, visitRequestId,
+            recipientEmail: visitor_email,
+            type: 'EMAIL',
+            subject: `Visit Request Submitted – OHPC VMS`,
+            message: `<p>Hi ${esc(visitor_full_name)},</p>
+<p>Your visit request to <strong>${esc(host.full_name)}</strong> (${esc(unit.name)}) has been submitted successfully and is <strong>pending approval</strong>.</p>
+<p><strong>Date:</strong> ${esc(visit_date + timeStr)}<br/>
+<strong>Purpose:</strong> ${esc(purpose || 'N/A')}</p>
+<p>You will receive an email and SMS once your request is reviewed. You can also track its status by logging in to the Visitor Portal.</p>
+<p>Thank you,<br/>OHPC VMS Team</p>`,
+          });
+        }
+        if (visitor_phone) {
+          await sendNotification({
+            db: unitDb, visitRequestId,
+            recipientPhone: visitor_phone,
+            type: 'SMS',
+            message: `OHPC VMS: Your visit request to ${host.full_name} on ${visit_date}${timeStr} has been submitted and is pending approval. You will be notified once reviewed.`,
+          });
+        }
+      } catch (visitorNotifyErr) {
+        console.error('[VisitRequestController] Visitor confirmation notification failed:', visitorNotifyErr.message);
+      }
+    });
 
     // Emit socket notification to host
     try {
@@ -1561,7 +1703,7 @@ const blacklistVisitorFromRequest = async (req, res) => {
 
     // Check if already blocked by this host
     const [existing] = await req.db.query(
-      'SELECT id FROM host_phone_blacklist WHERE host_user_id = ? AND visitor_phone = ? AND is_active = TRUE LIMIT 1',
+      `SELECT id FROM host_phone_blacklist WHERE host_user_id = ? AND RIGHT(REGEXP_REPLACE(visitor_phone, '[^0-9]', ''), 10) = RIGHT(REGEXP_REPLACE(?, '[^0-9]', ''), 10) AND is_active = TRUE LIMIT 1`,
       [vr.host_user_id, vr.visitor_phone]
     );
     if (existing.length > 0) {

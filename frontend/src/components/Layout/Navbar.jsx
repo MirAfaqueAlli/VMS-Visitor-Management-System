@@ -352,7 +352,8 @@ export default function Navbar({ onMenuToggle }) {
       {/* Logo + app name + scope */}
       <button type="button" onClick={() => navigate('/dashboard')} className="flex items-center gap-2.5 min-w-0 text-left">
         <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--surface)' }}>
-          <img src="/brand/vms-icon-blue.png" alt="" className="w-6 h-6 object-contain" />
+          <img src="/brand/ohpc-emblem.svg" alt="OHPC" className="brand-on-light h-7 w-auto" />
+          <img src="/brand/ohpc-emblem-white.svg" alt="OHPC" className="brand-on-dark h-7 w-auto" />
         </span>
         <span className="min-w-0">
           <span className="block text-[13.5px] font-semibold leading-tight">OHPC VMS</span>

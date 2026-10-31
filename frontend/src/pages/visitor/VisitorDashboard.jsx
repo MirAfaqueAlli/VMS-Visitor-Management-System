@@ -16,6 +16,8 @@ import {
   Field, Drawer, Note, SectionTitle,
 } from "../../components/ui";
 import useSort from "../../lib/useSort";
+import usePaged from "../../lib/usePaged";
+import Pagination from "../../components/shared/Pagination";
 import useCountdown from "../../hooks/useCountdown";
 import { fmtDate, fmtDateTime, fmtClock, fmtTime, orDash } from "../../lib/format";
 import { validatePassword } from "../../utils/passwordValidator";
@@ -162,12 +164,14 @@ function VisitsTab({ onNew }) {
     });
   }, [visits, search, status]);
 
-  const { rows, sort, onSort } = useSort(filtered, {
+  const { rows: sortedRows, sort, onSort } = useSort(filtered, {
     date: (v) => `${localDay(v.visit_date)} ${v.visit_start_time || ""}`,
     unit: (v) => v.unit_name,
     host: (v) => v.host_name,
     status: (v) => v.status,
   });
+  const paged = usePaged(sortedRows, 15);
+  const rows = paged.rows;
 
   return (
     <>
@@ -267,6 +271,7 @@ function VisitsTab({ onNew }) {
           </tbody>
         </table>
       </div>
+      {!loading && <Pagination page={paged.page} totalPages={paged.totalPages} totalCount={paged.total} onPageChange={paged.setPage} />}
 
       {open && <VisitDrawer visit={open} onClose={() => setOpen(null)} />}
     </>

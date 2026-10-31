@@ -8,8 +8,9 @@
 const UNIT_NAV = [
   { label: 'Dashboard', to: '/dashboard' },
   { group: 'Visits', items: [
-    { label: 'Visit Requests', to: '/requests', roles: ['unit_admin', 'employee', 'receptionist', 'security'] },
-    { label: 'Visitors',       to: '/visitors', roles: ['unit_admin', 'employee', 'receptionist', 'security'] },
+    // Security works from Gate Security (walk-ins are registered there), not these lists
+    { label: 'Visit Requests', to: '/requests', roles: ['unit_admin', 'employee', 'receptionist'] },
+    { label: 'Visitors',       to: '/visitors', roles: ['unit_admin', 'employee', 'receptionist'] },
   ] },
   { group: 'Approval', items: [
     { label: 'Approvals', to: '/approvals', roles: ['unit_admin', 'employee'], countKey: 'approvals' },
@@ -22,8 +23,9 @@ const UNIT_NAV = [
     { label: 'Audit Logs', to: '/audit-logs', roles: ['unit_admin', 'unit_auditor'] },
   ] },
   { group: 'Masters', items: [
-    { label: 'Users',       to: '/admin',             end: true, roles: ['unit_admin'] },
-    { label: 'Departments', to: '/admin/departments', roles: ['unit_admin'] },
+    { label: 'Employees',            to: '/admin/employees',   roles: ['unit_admin'] },
+    { label: 'Security & Reception', to: '/admin/security',    roles: ['unit_admin'] },
+    { label: 'Departments',          to: '/admin/departments', roles: ['unit_admin'] },
   ] },
 ];
 
@@ -47,8 +49,9 @@ const MANAGED_UNIT_NAV = [
     { label: 'Visitors',       to: '/visitors' },
   ] },
   { group: 'Masters', items: [
-    { label: 'Users',       to: '/admin', end: true },
-    { label: 'Departments', to: '/admin/departments' },
+    { label: 'Employees',            to: '/admin/employees' },
+    { label: 'Security & Reception', to: '/admin/security' },
+    { label: 'Departments',          to: '/admin/departments' },
   ] },
 ];
 

@@ -95,7 +95,8 @@ async function addIndexIfMissing(conn, dbName, tableName, indexName, columnsSql)
   );
   if (idx.length > 0) return false;
 
-  await conn.query(`CREATE INDEX \`${indexName}\` ON \`${dbName}\`.\`${tableName}\` ${columnsSql}`);
+  const cols = columnsSql.trim().startsWith('(') ? columnsSql.trim() : `(${columnsSql.trim()})`;
+  await conn.query(`CREATE INDEX \`${indexName}\` ON \`${dbName}\`.\`${tableName}\` ${cols}`);
   return true;
 }
 
@@ -139,6 +140,35 @@ async function ensureCentralDatabase(adminConn) {
   await addColumnIfMissing(adminConn, CENTRAL_DB, 'public_otp_logs', 'attempts', 'INT NOT NULL DEFAULT 0 AFTER is_used');
   // Sessions issued before the last password change/reset are rejected (auth.middleware)
   await addColumnIfMissing(adminConn, CENTRAL_DB, 'users', 'password_changed_at', 'DATETIME NULL AFTER password_hash');
+
+  // Accounts registered on the earlier portal version (public_registered_visitors,
+  // origin/main 1aecbff) become visitor portal accounts — same phone, email and
+  // password, so nobody has to register again. Their mobile and email were
+  // verified by OTP at registration. Numbers or emails already used by a portal
+  // account are skipped (INSERT IGNORE on the unique keys). Safe to run every boot.
+  await adminConn.query(`USE \`${CENTRAL_DB}\``);
+  const [[legacy]] = await adminConn.query(
+    `SELECT COUNT(*) AS n FROM information_schema.tables
+      WHERE table_schema = ? AND table_name = 'public_registered_visitors'`, [CENTRAL_DB]
+  );
+  if (legacy.n) {
+    const [moved] = await adminConn.query(`
+      INSERT IGNORE INTO visitor_accounts
+        (phone, email, full_name, address, password_hash,
+         phone_verified_at, email_verified_at, password_changed_at, created_at)
+      SELECT RIGHT(REGEXP_REPLACE(p.phone, '[^0-9]', ''), 10),
+             NULLIF(LOWER(TRIM(p.email)), ''),
+             LEFT(p.full_name, 100),
+             LEFT(p.address, 255),
+             p.password_hash,
+             p.created_at,
+             IF(NULLIF(TRIM(p.email), '') IS NULL, NULL, p.created_at),
+             IF(p.password_hash IS NULL, NULL, p.created_at),
+             p.created_at
+        FROM public_registered_visitors p
+       WHERE LENGTH(REGEXP_REPLACE(p.phone, '[^0-9]', '')) >= 10`);
+    if (moved.affectedRows) console.log(`[DB Init] Moved ${moved.affectedRows} earlier portal registration(s) into visitor_accounts.`);
+  }
 
   // Guarantee seed data is present in central lookup tables
   await adminConn.query(`USE \`${CENTRAL_DB}\``);
@@ -236,6 +266,13 @@ async function migrateUnitDatabase(conn, dbName) {
   await addColumnIfMissing(conn, dbName, 'gate_passes', 'checkout_method', "ENUM('DIRECT','QR_SCAN') NULL AFTER status");
   await addColumnIfMissing(conn, dbName, 'gate_passes', 'qr_expires_at', 'DATETIME NULL AFTER checkout_method');
   await addColumnIfMissing(conn, dbName, 'gate_passes', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER issued_at');
+  // A direct checkout used to leave the pass USED (valid 24 h after check-in); a
+  // checked-out visit's pass now expires at checkout. Bring older ones in line.
+  await conn.query(
+    `UPDATE \`${dbName}\`.gate_passes
+        SET status = 'EXPIRED', qr_expires_at = LEAST(COALESCE(qr_expires_at, NOW()), NOW())
+      WHERE checkout_method = 'DIRECT' AND status = 'USED'`
+  );
 
   // 4. Ensure host_phone_blacklist table exists
   await conn.query(`

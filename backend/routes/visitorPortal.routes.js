@@ -58,6 +58,7 @@ router.post('/me/phone/verify', otpLimiter, validate(codeOnlySchema), ctrl.verif
 router.post('/me/password',     loginLimiter, validate(passwordSchema), ctrl.setPassword);
 router.get('/me/visits',                    ctrl.myVisits);
 router.get('/me/visits/:unitId/:id/pass',   ctrl.myPass);
+router.post('/me/visits/:unitId/:id/cancel', ctrl.cancelVisit);
 router.post('/me/visitor-token',            ctrl.visitorToken);
 
 module.exports = router;

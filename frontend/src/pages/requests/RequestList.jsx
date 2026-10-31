@@ -39,10 +39,12 @@ const last10 = (p) => String(p || "").replace(/\D/g, "").slice(-10);
 function relationTo(r, user) {
   if (!user) return null;
   const isMe = (id) => id != null && Number(id) === Number(user.id);
-  if (r._cross_unit_id) return "visitor";     // other units' rows come back only when I'm the visitor
-  if (isMe(r.host_user_id)) return "host";
   const emailMatch = user.email && r.visitor_email && r.visitor_email.toLowerCase() === user.email.toLowerCase();
   const phoneMatch = user.phone && r.visitor_phone && last10(r.visitor_phone) === last10(user.phone);
+  // Rows from another unit's database: ids there aren't ours, so only contact details tell.
+  // (A unit admin also gets their unit's employees' cross-unit visits — not "mine".)
+  if (r._cross_unit_id) return emailMatch || phoneMatch ? "visitor" : null;
+  if (isMe(r.host_user_id)) return "host";
   if (emailMatch || phoneMatch || (isMe(r.requester_user_id) && r.visit_category === "EMPLOYEE_VISIT")) return "visitor";
   return null;
 }

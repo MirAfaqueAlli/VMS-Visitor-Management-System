@@ -4,7 +4,7 @@
 const express = require('express');
 const router  = express.Router();
 const ctrl    = require('../controllers/visitor.controller');
-const { protect, optionalProtect } = require('../middlewares/auth.middleware');
+const { protect } = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
 const { z }         = require('zod');
 const { sendError } = require('../utils/response.util');
@@ -28,8 +28,8 @@ const validateVisitor = (req, res, next) => {
   }
 };
 
-// Blacklist check — optionalProtect so it can be called by gate staff or public kiosk
-router.get('/blacklist-check', optionalProtect, ctrl.checkBlacklist);
+// Blacklist check — staff only: it reveals whether a number is debarred, and why
+router.get('/blacklist-check', protect, authorize('unit_admin', 'security', 'receptionist', 'employee'), ctrl.checkBlacklist);
 
 // List visitors — admin, security, receptionist, employee + auditors
 router.get(

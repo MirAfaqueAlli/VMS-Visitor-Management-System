@@ -83,11 +83,11 @@ async function validateOtp(identifier, identifierType, otp) {
   return consumed.affectedRows === 1;
 }
 
-/** True if a code was sent for this identifier in the last 60 seconds. */
+/** True if a code was sent for this identifier in the last 20 seconds. */
 async function sentRecently(identifier, identifierType) {
   const [rows] = await centralPool.query(
     `SELECT id FROM public_otp_logs
-     WHERE identifier = ? AND identifier_type = ? AND created_at > NOW() - INTERVAL 60 SECOND
+     WHERE identifier = ? AND identifier_type = ? AND created_at > NOW() - INTERVAL 20 SECOND
      LIMIT 1`,
     [identifier, identifierType]
   );
@@ -104,7 +104,7 @@ async function sentRecently(identifier, identifierType) {
  *   doesn't block local testing.
  */
 async function sendEmailCode(email, key = email) {
-  // Max 1 code per 60 seconds per address (stops email bombing)
+  // Max 1 code per 20 seconds per address (stops email bombing)
   if (await sentRecently(key, 'email')) return { status: 'cooldown' };
 
   const otp    = await storeOtp(key, 'email', generateOtp());

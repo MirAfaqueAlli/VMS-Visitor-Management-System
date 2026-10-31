@@ -218,7 +218,7 @@ const getInbox = async (req, res) => {
 
 // ── approveRequest ────────────────────────────────────────────────────────────
 const approveRequest = async (req, res) => {
-  const conn = await req.db.getConnection();
+  let conn = await req.db.getConnection();
   try {
     const { id } = req.params; // visit_request_id
     const { remarks, force_approve } = req.body;
@@ -294,6 +294,7 @@ const approveRequest = async (req, res) => {
     );
     await conn.commit();
     conn.release();
+    conn = null;   // released: the catch below must not roll back / release it again (it may be serving another request by then)
 
     // ── Auto-generate gate pass (fast — local DB write + QR) ─────────────────
     let passResult = null;
@@ -427,7 +428,7 @@ const approveRequest = async (req, res) => {
 
 // ── rejectRequest ─────────────────────────────────────────────────────────────
 const rejectRequest = async (req, res) => {
-  const conn = await req.db.getConnection();
+  let conn = await req.db.getConnection();
   try {
     const { id } = req.params;
     const { remarks } = req.body;
@@ -478,6 +479,7 @@ const rejectRequest = async (req, res) => {
     );
     await conn.commit();
     conn.release();
+    conn = null;   // released: the catch below must not roll back / release it again (it may be serving another request by then)
 
     // ── Respond immediately — don't make the client wait for emails/SMS ───────
     sendSuccess(res, null, 'Request rejected successfully.');

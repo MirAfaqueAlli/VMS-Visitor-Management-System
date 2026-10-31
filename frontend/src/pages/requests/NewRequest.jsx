@@ -26,17 +26,35 @@ const ALL_CATEGORIES = [
   { id: "EMPLOYEE_VISIT", label: "Employee Visit", desc: "Visit or invite a fellow employee" },
   { id: "PERSONAL_VISIT", label: "Personal Visit", desc: "Family / friend visiting you" },
   { id: "VENDOR", label: "Vendor / Contractor", desc: "Service and maintenance vendor" },
-  { id: "SPOT", label: "Spot Walk-in", desc: "Urgent unplanned visit" },
+  { id: "SPOT_INDIVIDUAL", label: "Individual walk-in", desc: "Unplanned visit by a person" },
+  { id: "SPOT_BUSINESS", label: "Vendor / business walk-in", desc: "Unplanned visit for a company" },
 ];
 
 const ROLE_CATEGORIES = {
-  security: ["SPOT"],
+  security: ["SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
   employee: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR"],
-  unit_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
-  super_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
-  receptionist: ["EMPLOYEE_VISIT", "VENDOR", "SPOT"],
-  org_admin: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT"],
+  unit_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
+  super_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
+  receptionist: ["EMPLOYEE_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
+  org_admin: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
 };
+
+// ── Time & date helpers (walk-ins default to today, now → +30 min) ─────────────
+const getTodayDateYMD = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
+const getCurrentTimeHHMM = () => {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+};
+const addMinutesToTime = (timeStr, minutes = 30) => {
+  if (!timeStr) return "";
+  const [h, m] = timeStr.split(":").map(Number);
+  const total = h * 60 + m + minutes;
+  return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+};
+const isSpotId = (id) => id === "SPOT" || id === "SPOT_INDIVIDUAL" || id === "SPOT_BUSINESS";
 
 export default function NewRequest() {
   const navigate = useNavigate();
@@ -46,6 +64,9 @@ export default function NewRequest() {
   const [hosts, setHosts] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [selectedDeptId, setSelectedDeptId] = useState("");
+  // Walk-ins (visit_category SPOT) are either a person or a company representative
+  const [spotVisitorType, setSpotVisitorType] = useState(() =>
+    searchParams.get("type")?.toLowerCase() === "business" ? "business" : "individual");
 
   // ── Conflict confirmation modal state ─────────────────────────────────────────
   const [conflictModal, setConflictModal] = useState(null); // null | { types, host_conflict, visitor_conflict, pendingPayload }
@@ -109,23 +130,33 @@ export default function NewRequest() {
 
   const getInitialCategory = () => {
     const param = searchParams.get("category")?.toUpperCase();
+    if (param === "SPOT") {
+      const type = searchParams.get("type")?.toUpperCase();
+      if (type === "BUSINESS" && allowedIds.includes("SPOT_BUSINESS")) return "SPOT_BUSINESS";
+      if (allowedIds.includes("SPOT_INDIVIDUAL")) return "SPOT_INDIVIDUAL";
+    }
     if (allowedIds.includes(param)) return param;
-    return allowedIds[0];
+    return allowedIds[0] || "SPOT_INDIVIDUAL";
   };
+
+  // The card picked in the UI (SPOT_INDIVIDUAL / SPOT_BUSINESS both send visit_category SPOT)
+  const initialCat = getInitialCategory();
+  const [selectedCategory, setSelectedCategory] = useState(initialCat);
+  const initialStart = isSpotId(initialCat) ? getCurrentTimeHHMM() : "";
 
   const isAdminOrStaff = ["super_admin", "admin", "receptionist", "security", "org_admin", "unit_admin"].includes(
     user?.role_type || user?.role
   );
 
   const [formData, setFormData] = useState({
-    visit_category: getInitialCategory(),
+    visit_category: isSpotId(initialCat) ? "SPOT" : initialCat,
     host_user_id: isAdminOrStaff ? "" : user?.id || "",
     department_id: user?.department_id || "",
     organization_id: user?.organization_id || "",
     purpose: "",
-    visit_date: "",
-    visit_start_time: "",
-    visit_end_time: "",
+    visit_date: getTodayDateYMD(),   // most visits are for today; easy to change
+    visit_start_time: initialStart,
+    visit_end_time: initialStart ? addMinutesToTime(initialStart, 30) : "",
     accompanying_count: 0,
     visitor_id: "",
     visitor_phone: "",
@@ -189,8 +220,9 @@ export default function NewRequest() {
   }, [user?.role_type, activeUnit?.id, formData.visit_category]);
 
   // ── Visitor phone lookup ───────────────────────────────────────────────────────
-  const handleVisitorLookup = async () => {
-    const phone = formData.visitor_phone.trim().replace(/\D/g, "");
+  // phoneArg: the number just typed (auto-lookup on the 10th digit); a button click passes an event
+  const handleVisitorLookup = async (phoneArg) => {
+    const phone = String(typeof phoneArg === "string" ? phoneArg : formData.visitor_phone).trim().replace(/\D/g, "");
     if (phone.length !== 10) {
       toast.error("Please enter a valid 10-digit mobile number to look up.");
       return;
@@ -214,7 +246,14 @@ export default function NewRequest() {
           visitor_id: visitor.id || "",
           visitor_name: visitor.full_name || "",
           visitor_email: visitor.email || "",
+          company_name: visitor.company_name || p.company_name,
         }));
+        // A returning business visitor at the gate → business walk-in
+        if (formData.visit_category === "SPOT") {
+          const biz = visitor.visitor_type === "business" || !!visitor.company_name;
+          setSelectedCategory(biz ? "SPOT_BUSINESS" : "SPOT_INDIVIDUAL");
+          setSpotVisitorType(biz ? "business" : "individual");
+        }
         toast.success(`Returning visitor found: ${visitor.full_name}`);
       } else {
         setVisitorLookupState("not_found");
@@ -227,8 +266,8 @@ export default function NewRequest() {
   };
 
   // ── Vendor phone lookup ───────────────────────────────────────────────────────
-  const handleVendorLookup = async () => {
-    const phone = formData.visitor_phone.trim().replace(/\D/g, "");
+  const handleVendorLookup = async (phoneArg) => {
+    const phone = String(typeof phoneArg === "string" ? phoneArg : formData.visitor_phone).trim().replace(/\D/g, "");
     if (phone.length !== 10) {
       toast.error("Please enter a valid 10-digit contact number to look up.");
       return;
@@ -268,18 +307,6 @@ export default function NewRequest() {
   }, []);
 
   // ── Time helper: add minutes to "HH:MM" string ────────────────────────────────
-  const addMinutesToTime = (timeStr, minutes) => {
-    const [h, m] = timeStr.split(':').map(Number);
-    const total = h * 60 + m + minutes;
-    const hh = String(Math.floor(total / 60) % 24).padStart(2, '0');
-    const mm = String(total % 60).padStart(2, '0');
-    return `${hh}:${mm}`;
-  };
-
-  const getCurrentTimeHHMM = () => {
-    const now = new Date();
-    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  };
 
   // ── Standard handlers ─────────────────────────────────────────────────────────
   const handleInputChange = (e) => {
@@ -493,25 +520,40 @@ export default function NewRequest() {
   };
 
   // ── Category change ────────────────────────────────────────────────────────────
-  const handleCategoryChange = (category) => {
-    const isSpot = category === 'SPOT';
-    const isSecurity = ['security', 'receptionist', 'unit_admin'].includes(role);
-    const now = isSpot && isSecurity ? getCurrentTimeHHMM() : '';
-    const end = now ? addMinutesToTime(now, 30) : '';
+  const handleCategoryChange = (categoryId) => {
+    setSelectedCategory(categoryId);
+    const isSpot = isSpotId(categoryId);
+    const resolvedCategory = isSpot ? "SPOT" : categoryId;
+    setSpotVisitorType(categoryId === "SPOT_BUSINESS" ? "business" : "individual");
 
-    setFormData((prev) => ({
-      ...prev,
-      visit_category: category,
-      host_user_id: isAdminOrStaff ? "" : user?.id || "",
-      department_id: isAdminOrStaff ? "" : (category === "EMPLOYEE_VISIT" ? "" : user?.department_id || ""),
-      target_unit_id: "",
-      visitor_phone: "",
-      visitor_name: "",
-      visitor_email: "",
-      visitor_id: "",
-      visit_start_time: now,
-      visit_end_time: end,
-    }));
+    // Walk-ins happen now: today, from now for 30 minutes (kept when switching between the two walk-in types)
+    const nowTime = isSpot ? getCurrentTimeHHMM() : "";
+    const endTime = isSpot ? addMinutesToTime(nowTime, 30) : "";
+    const nowDate = isSpot ? getTodayDateYMD() : "";
+
+    setFormData((prev) => {
+      const wasSpot = prev.visit_category === "SPOT";
+      return {
+        ...prev,
+        visit_category: resolvedCategory,
+        host_user_id: isAdminOrStaff ? "" : user?.id || "",
+        department_id: isAdminOrStaff ? "" : (resolvedCategory === "EMPLOYEE_VISIT" ? "" : user?.department_id || ""),
+        target_unit_id: "",
+        visitor_phone: "",
+        visitor_name: "",
+        visitor_email: "",
+        company_name: "",
+        vendor_email: "",
+        contact_person: "",
+        service_type: "",
+        work_order_ref: "",
+        visitor_id: "",
+        visit_date: isSpot ? (wasSpot && prev.visit_date ? prev.visit_date : nowDate) : (prev.visit_date || getTodayDateYMD()),
+        visit_start_time: isSpot ? (wasSpot && prev.visit_start_time ? prev.visit_start_time : nowTime) : "",
+        visit_end_time: isSpot ? (wasSpot && prev.visit_end_time ? prev.visit_end_time : endTime) : "",
+      };
+    });
+    resetVendorLookup();
     resetVisitorLookup();
     setSelectedDeptId("");
     setHosts([]);
@@ -560,7 +602,7 @@ export default function NewRequest() {
     const payload = { ...formData };
     const cat = payload.visit_category;
 
-    if (cat !== "VENDOR") {
+    if (cat !== "VENDOR" && !(cat === "SPOT" && spotVisitorType === "business")) {
       delete payload.company_name;
       delete payload.vendor_email;
       delete payload.contact_person;
@@ -666,6 +708,34 @@ export default function NewRequest() {
       }
     }
 
+    if (formData.visit_category === "SPOT" && spotVisitorType === "business" && !formData.company_name?.trim()) {
+      toast.error("Company / organisation name is required for a business walk-in.");
+      return;
+    }
+
+    // The visitor's name: walk-ins and personal visits show name + email only after the
+    // number is looked up — never submit a visitor without a name
+    const catNow = formData.visit_category;
+    const companyCard = catNow === "VENDOR" || (catNow === "SPOT" && spotVisitorType === "business");
+    const visitorCard = ["SPOT", "PERSONAL_VISIT"].includes(catNow) && !companyCard && formData.visitor_phone;
+    if (visitorCard) {
+      if (visitorLookupState !== "found" && visitorLookupState !== "not_found") {
+        toast.error("Look up the visitor's number first, then check their name.");
+        handleVisitorLookup(formData.visitor_phone);
+        return;
+      }
+      if (!formData.visitor_name?.trim()) {
+        toast.error("Enter the visitor's full name.");
+        document.getElementById("visitor_name")?.focus();
+        return;
+      }
+    }
+    if (companyCard && !formData.contact_person?.trim()) {
+      toast.error("Enter the contact person's name.");
+      document.getElementById("contact_person")?.focus();
+      return;
+    }
+
     setLoading(true);
     try {
       const payload = buildPayload();
@@ -717,11 +787,14 @@ export default function NewRequest() {
   const isAdminEmpVisit = (isUnitAdmin || (isSuperAdminUser && !!activeUnit));
   const cat = formData.visit_category;
   const isVendor = cat === "VENDOR";
+  const isSpotBusiness = cat === "SPOT" && spotVisitorType === "business";
+  // Vendors and business walk-ins share the company card (contact by phone lookup)
+  const isVendorBusiness = isVendor || isSpotBusiness;
   const isEmpVisit = cat === "EMPLOYEE_VISIT";
   const isSelfHosting = !isAdminOrStaff && !isEmpVisit && !isUnitAdmin;
 
   // Hide the standard visitor phone fields and host picker for EMPLOYEE_VISIT
-  const showVisitorFields = !isVendor && !isEmpVisit;
+  const showVisitorFields = !isVendorBusiness && !isEmpVisit;
   const showHostPicker = (!isSelfHosting || isUnitAdmin) && !isEmpVisit;
 
   // Read-only look for fields filled from a lookup
@@ -791,13 +864,17 @@ export default function NewRequest() {
     <div className="animate-fade-in">
       <PageHeader title="New visit request" />
 
-      <form onSubmit={handleSubmit} className="max-w-[960px]">
+      {/* Wide screens: who on the left; when / why / submit in a sticky panel on the right,
+          so the whole request fits on one screen without scrolling */}
+      <form onSubmit={handleSubmit}
+        className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-x-8 gap-y-6 items-start max-w-[1440px]">
+        <div className="min-w-0">
         {/* ── Visit type ── */}
         <section>
           <SectionTitle icon={Users} title="Visit type" />
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label="Visit type">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label="Visit type">
             {availableCategories.map((c) => {
-              const on = formData.visit_category === c.id;
+              const on = selectedCategory === c.id;
               return (
                 <button
                   key={c.id}
@@ -815,30 +892,13 @@ export default function NewRequest() {
           </div>
         </section>
 
-        {/* ── Visit details ── */}
+        {/* ── Visitor and host ── */}
         <section className="section">
-          <SectionTitle icon={Calendar} title="Visit details" />
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-3">
-            <Field label="Visit date" htmlFor="visit_date" required>
-              <input id="visit_date" type="date" name="visit_date" required value={formData.visit_date}
-                onChange={handleInputChange} className="control tabular" />
-            </Field>
-            <Field label="Start time" htmlFor="visit_start_time">
-              <input id="visit_start_time" type="time" name="visit_start_time" value={formData.visit_start_time}
-                onChange={handleInputChange} className="control tabular" />
-            </Field>
-            <Field label="End time" htmlFor="visit_end_time"
-              error={endBeforeStart ? `End time must be after ${formData.visit_start_time}.` : ""}>
-              <input id="visit_end_time" type="time" name="visit_end_time" min={formData.visit_start_time || undefined}
-                value={formData.visit_end_time} onChange={handleInputChange}
-                className={`control tabular${endBeforeStart ? " is-invalid" : ""}`} />
-            </Field>
-          </div>
+          <SectionTitle icon={Users} title="Visitor and host" />
 
           {/* Employee visit — mode + cascading employee picker */}
           {isEmpVisit && !isAdminEmpVisit && (
-            <div className="mt-5 space-y-4">
+            <div className="space-y-4">
               <div>
                 <p className="field-label">What are you doing?</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Visit mode">
@@ -868,7 +928,7 @@ export default function NewRequest() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
                 <Field label={visitMode === "visiting" ? "Unit to visit" : "Visitor's unit"} required>
-                  <Select value={selectedUnitId} onChange={handleEmpUnitChange} required aria-label="Unit">
+                  <Select searchable value={selectedUnitId} onChange={handleEmpUnitChange} required aria-label="Unit">
                     <option value="">
                       {units.length > 0 && otherUnits.length === 0 ? "No other units available" : "Select unit"}
                     </option>
@@ -878,7 +938,7 @@ export default function NewRequest() {
 
                 {selectedUnitId && empDepartments.length > 0 && (
                   <Field label="Department" required>
-                    <Select value={empDeptId} onChange={handleEmpDeptChange} required aria-label="Department">
+                    <Select searchable value={empDeptId} onChange={handleEmpDeptChange} required aria-label="Department">
                       <option value="">Select department</option>
                       {empDepartments.map(d => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
                     </Select>
@@ -899,7 +959,7 @@ export default function NewRequest() {
                       : "The selected person must approve your visit."}
                     className="sm:col-span-2"
                   >
-                    <Select
+                    <Select searchable
                       value={selectedEmpId}
                       onChange={e => setSelectedEmpId(e.target.value)}
                       required
@@ -923,7 +983,7 @@ export default function NewRequest() {
 
           {/* Employee visit arranged by a unit admin (or a super admin managing a unit) */}
           {isEmpVisit && isAdminEmpVisit && (
-            <div className="mt-5 space-y-4">
+            <div className="space-y-3">
               <Note tone="info" icon={AlertCircle}>
                 <b>Arrange an employee visit.</b>{" "}
                 {isSuperAdminUser
@@ -938,13 +998,13 @@ export default function NewRequest() {
                   </p>
                   <div className="space-y-3">
                     <Field label="Department">
-                      <Select value={adminVisitorDeptId} onChange={handleAdminVisitorDeptChange} aria-label="Visitor department">
+                      <Select searchable value={adminVisitorDeptId} onChange={handleAdminVisitorDeptChange} aria-label="Visitor department">
                         <option value="">All departments</option>
                         {departments.map(d => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
                       </Select>
                     </Field>
                     <Field label="Employee" required>
-                      <Select
+                      <Select searchable
                         value={adminVisitorEmpId}
                         onChange={e => setAdminVisitorEmpId(e.target.value)}
                         required
@@ -962,7 +1022,7 @@ export default function NewRequest() {
                   <p className="group-heading mb-3">Host · any unit</p>
                   <div className="space-y-3">
                     <Field label="Host's unit" required>
-                      <Select value={adminHostUnitId} onChange={handleAdminHostUnitChange} required aria-label="Host unit">
+                      <Select searchable value={adminHostUnitId} onChange={handleAdminHostUnitChange} required aria-label="Host unit">
                         <option value="">
                           {units.length > 0 && otherUnits.length === 0 ? "No other units available" : "Select unit"}
                         </option>
@@ -971,7 +1031,7 @@ export default function NewRequest() {
                     </Field>
                     {adminHostUnitId && adminHostDepts.length > 0 && (
                       <Field label="Department">
-                        <Select value={adminHostDeptId} onChange={handleAdminHostDeptChange} aria-label="Host department">
+                        <Select searchable value={adminHostDeptId} onChange={handleAdminHostDeptChange} aria-label="Host department">
                           <option value="">All departments</option>
                           {adminHostDepts.map(d => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
                         </Select>
@@ -979,7 +1039,7 @@ export default function NewRequest() {
                     )}
                     {adminHostUnitId && (
                       <Field label="Host" required>
-                        <Select
+                        <Select searchable
                           value={adminHostEmpId}
                           onChange={e => setAdminHostEmpId(e.target.value)}
                           required
@@ -999,7 +1059,7 @@ export default function NewRequest() {
 
           {/* Visitor (non employee-visit, non vendor) */}
           {showVisitorFields && (
-            <div className="mt-5">
+            <div>
               <Field label="Visitor mobile number" required>
                 {lookupRow({
                   state: visitorLookupState,
@@ -1009,6 +1069,7 @@ export default function NewRequest() {
                     const val = e.target.value.replace(/\D/g, "").slice(0, 10);
                     setFormData(p => ({ ...p, visitor_phone: val, visitor_name: "", visitor_email: "", visitor_id: "" }));
                     resetVisitorLookup();
+                    if (val.length === 10) handleVisitorLookup(val);   // details appear as soon as the number is complete
                   },
                 })}
                 {lookupStatus(visitorLookupState, "visitor")}
@@ -1037,15 +1098,15 @@ export default function NewRequest() {
 
           {/* Host */}
           {showHostPicker ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 mt-5">
+            <div className={`grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3${showVisitorFields ? " mt-4" : ""}`}>
               <Field label="Department" required>
-                <Select name="selected_department_id" required value={selectedDeptId} onChange={handleDeptChange} aria-label="Department">
+                <Select searchable name="selected_department_id" required value={selectedDeptId} onChange={handleDeptChange} aria-label="Department">
                   <option value="">Select department</option>
                   {departments.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
                 </Select>
               </Field>
               <Field label="Host employee" required>
-                <Select name="host_user_id" required value={formData.host_user_id} onChange={handleHostChange}
+                <Select searchable name="host_user_id" required value={formData.host_user_id} onChange={handleHostChange}
                   disabled={!selectedDeptId} aria-label="Host employee">
                   <option value="">{!selectedDeptId ? "Select a department first" : "Select host"}</option>
                   {hosts.map((h) => (
@@ -1055,25 +1116,20 @@ export default function NewRequest() {
               </Field>
             </div>
           ) : !isEmpVisit ? (
-            <div className="inset-cell mt-5">
+            <div className={`inset-cell${showVisitorFields ? " mt-4" : ""}`}>
               <p className="group-heading mb-1">Host (you)</p>
               <p className="text-ink">{user?.full_name} <span className="text-muted">· {user?.designation || user?.role}</span></p>
               <input type="hidden" name="host_user_id" value={user?.id || ""} />
             </div>
           ) : null}
 
-          <Field label="Purpose of visit" htmlFor="purpose" required hint="At least 10 characters." className="mt-5">
-            <textarea id="purpose" name="purpose" required minLength={10} rows={2} value={formData.purpose}
-              onChange={handleInputChange} className="control resize-none"
-              placeholder="e.g. Quarterly maintenance review of the turbine hall" />
-          </Field>
         </section>
 
         {/* ── Vendor details ── */}
-        {isVendor && (
+        {isVendorBusiness && (
           <section className="section animate-fade-in">
-            <SectionTitle icon={Building} title="Vendor details" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+            <SectionTitle icon={Building} title={isSpotBusiness ? "Company details" : "Vendor details"} />
+            <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-x-4 gap-y-3">
               <Field label="Company name" htmlFor="company_name" required>
                 <input id="company_name" type="text" name="company_name" required value={formData.company_name}
                   onChange={handleInputChange} className="control" />
@@ -1084,7 +1140,7 @@ export default function NewRequest() {
                   className={`control${lockedCls(vendorLookupState)}`} placeholder="name@company.com" />
               </Field>
 
-              <Field label="Contact mobile number" required className="sm:col-span-2">
+              <Field label="Contact mobile number" required className="sm:col-span-2 2xl:col-span-1">
                 {lookupRow({
                   state: vendorLookupState,
                   onLookup: handleVendorLookup,
@@ -1094,14 +1150,15 @@ export default function NewRequest() {
                     const val = e.target.value.replace(/\D/g, "").slice(0, 10);
                     setFormData(p => ({ ...p, visitor_phone: val, contact_person: "" }));
                     resetVendorLookup();
+                    if (val.length === 10) handleVendorLookup(val);
                   },
                 })}
                 {lookupStatus(vendorLookupState, "vendor")}
               </Field>
 
-              <Field label="Contact person" htmlFor="contact_person" required className="sm:col-span-2">
+              <Field label="Contact person" htmlFor="contact_person" required className="sm:col-span-2 2xl:col-span-1">
                 <input id="contact_person" type="text" name="contact_person" required value={formData.contact_person}
-                  onChange={e => setFormData(p => ({ ...p, contact_person: e.target.value }))}
+                  onChange={e => setFormData(p => ({ ...p, contact_person: e.target.value, visitor_name: e.target.value }))}
                   readOnly={vendorLookupState === "found"} placeholder="Representative's full name"
                   className={`control${lockedCls(vendorLookupState)}`} />
               </Field>
@@ -1172,14 +1229,40 @@ export default function NewRequest() {
           )}
         </section>
 
-        {/* ── Actions ── */}
-        <div className="mt-6 pt-4 border-t border-line flex flex-wrap gap-2">
-          <button type="submit" disabled={loading} className="btn-primary">
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-            {loading ? "Submitting…" : "Submit request"}
-          </button>
-          <button type="button" onClick={() => navigate("/requests")} className="btn-outline">Cancel</button>
         </div>
+
+        {/* ── When and why + submit (sticky on wide screens) ── */}
+        <aside className="tile xl:sticky xl:top-4 space-y-3">
+          <SectionTitle icon={Calendar} title="When and why" />
+          <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+            <Field label="Visit date" htmlFor="visit_date" required className="col-span-2">
+              <input id="visit_date" type="date" name="visit_date" required value={formData.visit_date}
+                onChange={handleInputChange} className="control tabular" />
+            </Field>
+            <Field label="Start time" htmlFor="visit_start_time">
+              <input id="visit_start_time" type="time" name="visit_start_time" value={formData.visit_start_time}
+                onChange={handleInputChange} className="control tabular" />
+            </Field>
+            <Field label="End time" htmlFor="visit_end_time"
+              error={endBeforeStart ? `End time must be after ${formData.visit_start_time}.` : ""}>
+              <input id="visit_end_time" type="time" name="visit_end_time" min={formData.visit_start_time || undefined}
+                value={formData.visit_end_time} onChange={handleInputChange}
+                className={`control tabular${endBeforeStart ? " is-invalid" : ""}`} />
+            </Field>
+          </div>
+          <Field label="Purpose of visit" htmlFor="purpose" required hint="At least 10 characters.">
+            <textarea id="purpose" name="purpose" required minLength={10} rows={3} value={formData.purpose}
+              onChange={handleInputChange} className="control resize-none"
+              placeholder="e.g. Quarterly maintenance review of the turbine hall" />
+          </Field>
+          <div className="pt-3 border-t border-line flex flex-wrap gap-2">
+            <button type="submit" disabled={loading} className="btn-primary flex-1">
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              {loading ? "Submitting…" : "Submit request"}
+            </button>
+            <button type="button" onClick={() => navigate("/requests")} className="btn-outline">Cancel</button>
+          </div>
+        </aside>
       </form>
 
       {/* ── Schedule conflict ── */}

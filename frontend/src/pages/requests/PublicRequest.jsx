@@ -210,14 +210,14 @@ export default function PublicRequest() {
               <SectionTitle icon={Building2} title="Where and whom" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
                 <Field label="Unit / office" required className="sm:col-span-2">
-                  <Select name="unit_id" required value={formData.unit_id}
+                  <Select searchable name="unit_id" required value={formData.unit_id}
                     onChange={(e) => setFormData((p) => ({ ...p, unit_id: e.target.value }))} aria-label="Unit">
                     <option value="">Select the unit you are visiting</option>
                     {units.map((u) => <option key={u.id} value={u.id}>{u.name}{u.city ? ` (${u.city})` : ""}</option>)}
                   </Select>
                 </Field>
                 <Field label="Department" required>
-                  <Select name="department_id" required value={formData.department_id}
+                  <Select searchable name="department_id" required value={formData.department_id}
                     onChange={(e) => setFormData((p) => ({ ...p, department_id: e.target.value }))}
                     disabled={!formData.unit_id || loadingDepts} aria-label="Department">
                     <option value="">
@@ -227,7 +227,7 @@ export default function PublicRequest() {
                   </Select>
                 </Field>
                 <Field label="Host officer" required>
-                  <Select name="host_user_id" required value={formData.host_user_id}
+                  <Select searchable name="host_user_id" required value={formData.host_user_id}
                     onChange={(e) => setFormData((p) => ({ ...p, host_user_id: e.target.value }))}
                     disabled={!formData.department_id || loadingHosts} aria-label="Host officer">
                     <option value="">

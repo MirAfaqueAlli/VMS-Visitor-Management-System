@@ -5,15 +5,18 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Clock, UserCheck, AlertCircle, Calendar, Check, X, Plus, ClipboardList, Building2, ChevronRight,
+  Clock, UserCheck, AlertCircle, Calendar, Check, X, Plus, ClipboardList, Building2, ChevronRight, LogOut, Loader2,
 } from "../../components/icons";
 import { toast } from "react-hot-toast";
 import apiClient from "../../api/axios";
 import useAuth from "../../hooks/useAuth";
 import useSocketEvent from "../../hooks/useSocketEvent";
-import { PageHeader, SectionTitle, Status, Tag, State, Empty, Spinner, Modal, Field } from "../../components/ui";
+import { PageHeader, SectionTitle, Status, Tag, State, Empty, Spinner, Modal, Field, KV, SearchInput } from "../../components/ui";
+import Select from "../../components/Select";
 import { fmtDate, fmtTime, fmtClock, fmtNumber, orDash } from "../../lib/format";
 import { describe } from "../../lib/status";
+import usePaged from "../../lib/usePaged";
+import Pagination from "../../components/shared/Pagination";
 
 /* ─── Shared pieces ──────────────────────────────────────────────────────── */
 
@@ -128,12 +131,84 @@ function useApprovalModal(onDone) {
   return { open, modal };
 }
 
+/* ─── Gate: check a visitor out straight from the dashboard ─────────────── */
+function CheckoutModal({ visitor, onConfirm, onCancel, loading }) {
+  const [remarks, setRemarks] = useState("");
+  return (
+    <Modal
+      open
+      onClose={onCancel}
+      busy={loading}
+      width={460}
+      title={`Check out ${visitor.visitor_name ?? "the visitor"}?`}
+      footer={(
+        <>
+          <button type="button" className="btn-outline" onClick={onCancel} disabled={loading}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={() => onConfirm(remarks.trim())} disabled={loading}>
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
+            {loading ? "Checking out…" : "Check out"}
+          </button>
+        </>
+      )}
+    >
+      <div className="tile mb-3">
+        <KV items={[
+          ["Pass", <span key="p" className="mono">{orDash(visitor.pass_number)}</span>],
+          ["Host", orDash(visitor.host_name)],
+          ["Checked in", <span key="t" className="tabular">{fmtClock(visitor.check_in_at ?? visitor.check_in_time ?? visitor.checked_in_at)}</span>],
+        ]} className="!grid-cols-[90px_minmax(0,1fr)]" />
+      </div>
+      <Field label="Remarks" htmlFor="co-remarks">
+        <textarea id="co-remarks" rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)}
+          className="control resize-none" placeholder="Optional: anything noted at departure" />
+      </Field>
+    </Modal>
+  );
+}
+
+/** Visit-type + search filter shown at the top-right of a gate table. */
+const VISIT_TYPE_FILTERS = [
+  { value: "", label: "All types" },
+  { value: "SPOT", label: "Walk-in" },
+  { value: "VENDOR", label: "Vendor" },
+  { value: "PERSONAL_VISIT", label: "Personal visit" },
+  { value: "EMPLOYEE_VISIT", label: "Employee visit" },
+];
+function GateFilter({ filter, onChange, total, shown }) {
+  const active = !!(filter.category || filter.search.trim());
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {active && <span className="text-[11.5px] text-muted tabular">{shown} of {total}</span>}
+      <Select value={filter.category} onChange={(e) => onChange({ ...filter, category: e.target.value })} aria-label="Visit type" style={{ width: 140 }}>
+        {VISIT_TYPE_FILTERS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+      </Select>
+      <SearchInput value={filter.search} onChange={(v) => onChange({ ...filter, search: v })} placeholder="Name, phone, host, pass" width={200} />
+      {active && <button type="button" className="btn-ghost btn-sm" onClick={() => onChange({ category: "", search: "" })}>Clear</button>}
+    </div>
+  );
+}
+const applyGateFilter = (list, filter) => {
+  let result = list ?? [];
+  if (filter.category) result = result.filter((v) => v.visit_category === filter.category);
+  const q = filter.search.trim().toLowerCase();
+  if (q) {
+    result = result.filter((v) =>
+      [v.visitor_name, v.company_name, v.host_name, v.pass_number].some((x) => String(x || "").toLowerCase().includes(q)) ||
+      String(v.visitor_phone || "").includes(q));
+  }
+  return result;
+};
+
 /* ─── A: Security / Receptionist ─────────────────────────────────────────── */
 function SecurityDashboard() {
   const navigate = useNavigate();
   const { hasRole, user } = useAuth();
   const [dashData, setDashData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [checkoutVisitor, setCheckoutVisitor] = useState(null);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [expectedFilter, setExpectedFilter] = useState({ category: "", search: "" });
+  const [insideFilter, setInsideFilter] = useState({ category: "", search: "" });
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -148,6 +223,35 @@ function SecurityDashboard() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const confirmCheckout = async (remarks) => {
+    const v = checkoutVisitor;
+    if (!v) return;
+    setCheckoutBusy(true);
+    try {
+      const logId = v.visit_log_id;
+      await apiClient.post(logId ? `/gate/checkout/${logId}` : "/gate/checkout", {
+        visit_log_id: logId, pass_number: v.pass_number, remarks: remarks || undefined,
+      });
+      toast.success(`${v.visitor_name ?? "Visitor"} checked out.`);
+      setDashData((prev) => {
+        if (!prev) return prev;
+        const updatedActive = (prev.active ?? []).filter(
+          (a) => a.visit_log_id !== logId && a.visit_request_id !== v.visit_request_id,
+        );
+        return {
+          ...prev, active: updatedActive,
+          summary: { ...prev.summary, active_count: updatedActive.length, completed_today_count: (prev.summary?.completed_today_count ?? 0) + 1 },
+        };
+      });
+      setCheckoutVisitor(null);
+      fetchData();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Could not check the visitor out.");
+    } finally {
+      setCheckoutBusy(false);
+    }
+  };
 
   // Socket: a visit for today was approved → add it to Expected today
   useSocketEvent("visit:approved:today", useCallback((data) => {
@@ -200,15 +304,22 @@ function SecurityDashboard() {
     toast(`${data.visitor_name ?? "A visitor"} checked out.`, { duration: 3000 });
   }, []), []);
 
+  // Filtered + paged before the loading return (hooks always run in the same order)
+  const yetToCome = dashData?.yet_to_come ?? [];
+  const active = dashData?.active ?? [];
+  const pagedExpected = usePaged(applyGateFilter(yetToCome, expectedFilter), 15);
+  const pagedInside = usePaged(applyGateFilter(active, insideFilter), 15);
+
   if (loading) return <><PageHeader title="Dashboard" /><Spinner label="Loading today’s gate activity…" /></>;
 
   const summary = dashData?.summary ?? {};
-  const yetToCome = dashData?.yet_to_come ?? [];
-  const active = dashData?.active ?? [];
   const expected = summary.yet_to_come_count ?? yetToCome.length;
   const inside = summary.active_count ?? active.length;
   const completed = summary.completed_today_count ?? 0;
   const canCheckIn = hasRole("security", "receptionist");
+  const canCheckOut = hasRole("security", "receptionist", "unit_admin");
+  const shownExpected = { length: pagedExpected.total };
+  const shownInside = { length: pagedInside.total };
 
   return (
     <div className="animate-fade-in">
@@ -231,19 +342,28 @@ function SecurityDashboard() {
       </div>
 
       <section className="section !mt-0">
-        <SectionTitle icon={Clock} title="Expected today" meta={`${yetToCome.length} visitor${yetToCome.length !== 1 ? "s" : ""}`} />
+        <SectionTitle icon={Clock} title="Expected today" meta={`${yetToCome.length} visitor${yetToCome.length !== 1 ? "s" : ""}`}
+          actions={yetToCome.length > 0 && <GateFilter filter={expectedFilter} onChange={setExpectedFilter} total={yetToCome.length} shown={shownExpected.length} />} />
         {yetToCome.length === 0 ? (
           <Empty icon={Calendar} title="No visitors expected today" hint="Approved visits for today appear here as soon as they are approved." />
+        ) : shownExpected.length === 0 ? (
+          <Empty icon={Calendar} title="No expected visitors match these filters" hint="Change the type or search, or clear them." />
         ) : (
+          <>
           <div className="table-wrap">
             <table className="data-table">
               <thead>
                 <tr><th>Visitor</th><th>Type</th><th>Host</th><th>Department</th><th>Time</th>{canCheckIn && <th className="num">Action</th>}</tr>
               </thead>
               <tbody>
-                {yetToCome.map((v, i) => (
+                {pagedExpected.rows.map((v, i) => (
                   <tr key={v.id ?? i}>
-                    <td className="font-medium">{orDash(v.visitor_name)}<span className="cell-sub">{v.pass_number ? <span className="mono">{v.pass_number}</span> : v.visitor_phone}</span></td>
+                    <td className="font-medium">
+                      {orDash(v.visitor_name)}
+                      <span className="cell-sub">
+                        {v.company_name ? `${v.company_name} · ` : ""}{v.pass_number ? <span className="mono">{v.pass_number}</span> : v.visitor_phone}
+                      </span>
+                    </td>
                     <td><Status value={v.visit_category || v.visitor_type_code || v.visitor_type} /></td>
                     <td>{orDash(v.host_name)}</td>
                     <td>{orDash(v.department_name ?? v.department ?? v.dept_name)}</td>
@@ -262,31 +382,60 @@ function SecurityDashboard() {
               </tbody>
             </table>
           </div>
+          <Pagination page={pagedExpected.page} totalPages={pagedExpected.totalPages} totalCount={pagedExpected.total} onPageChange={pagedExpected.setPage} />
+          </>
         )}
       </section>
 
       <section className="section">
-        <SectionTitle icon={UserCheck} tone="success" title="On premises" meta={`${active.length} inside`} />
+        <SectionTitle icon={UserCheck} tone="success" title="On premises" meta={`${active.length} inside`}
+          actions={active.length > 0 && <GateFilter filter={insideFilter} onChange={setInsideFilter} total={active.length} shown={shownInside.length} />} />
         {active.length === 0 ? (
           <Empty icon={UserCheck} title="No visitors on the premises" hint="Visitors appear here when security checks them in at the gate." />
+        ) : shownInside.length === 0 ? (
+          <Empty icon={UserCheck} title="No one inside matches these filters" hint="Change the type or search, or clear them." />
         ) : (
+          <>
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr><th>Visitor</th><th>Host</th><th>State</th><th>Checked in</th></tr></thead>
+              <thead>
+                <tr><th>Visitor</th><th>Host</th><th>State</th><th>Checked in</th>{canCheckOut && <th className="num">Action</th>}</tr>
+              </thead>
               <tbody>
-                {active.map((v, i) => (
+                {pagedInside.rows.map((v, i) => (
                   <tr key={v.visit_log_id ?? v.id ?? i}>
                     <td className="font-medium">{orDash(v.visitor_name)}<span className="cell-sub mono">{v.pass_number}</span></td>
-                    <td>{orDash(v.host_name)}</td>
-                    <td><State tone="info">On premises</State></td>
+                    <td>
+                      {orDash(v.host_name)}
+                      {v.department_name && <span className="cell-sub">{v.department_name}</span>}
+                    </td>
+                    <td><State tone="info">Inside premises</State></td>
                     <td className="tabular">{fmtClock(v.check_in_at ?? v.check_in_time ?? v.checked_in_at)}</td>
+                    {canCheckOut && (
+                      <td className="num">
+                        <button type="button" onClick={() => setCheckoutVisitor(v)} className="btn-outline btn-sm">
+                          <LogOut size={13} /> Check out
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <Pagination page={pagedInside.page} totalPages={pagedInside.totalPages} totalCount={pagedInside.total} onPageChange={pagedInside.setPage} />
+          </>
         )}
       </section>
+
+      {checkoutVisitor && (
+        <CheckoutModal
+          visitor={checkoutVisitor}
+          loading={checkoutBusy}
+          onConfirm={confirmCheckout}
+          onCancel={() => setCheckoutVisitor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -513,7 +662,7 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
         </section>
 
         <section className="section xl:!mt-0">
-          <SectionTitle icon={AlertCircle} tone="warning" title="Needs your attention" meta={inbox.length ? `${inbox.length} open` : undefined}
+          <SectionTitle icon={AlertCircle}  title="Needs your attention" meta={inbox.length ? `${inbox.length} open` : undefined}
             actions={canApprove && inbox.length > 5 && <button type="button" className="btn-link text-[12px]" onClick={() => navigate("/approvals")}>View all {inbox.length}</button>} />
           {inbox.length === 0 ? (
             <Empty icon={Check} title="Nothing is waiting" hint="Requests that need a decision appear here." />

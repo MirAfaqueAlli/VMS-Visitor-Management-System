@@ -10,6 +10,8 @@ const { centralPool, getPool }      = require('../services/dbManager');
 /** Last 10 digits, for comparing mobile numbers. */
 const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
 const { getSignedFileUrl, withSignedUrls } = require('../utils/s3.util');
+const { qrImageForPass } = require('../services/qrcode.service');
+const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
 
 // ── Helper: fetch a full gate pass row with joins ─────────────────────────────
 // qr_code_path is returned as a short-lived signed link (the S3 bucket is private)
@@ -19,6 +21,7 @@ async function fetchFullPass(db, passId) {
             vr.visit_date, vr.visit_start_time, vr.visit_end_time,
             vr.purpose, vr.status AS request_status, vr.visit_category,
             vr.visitor_name, vr.visitor_phone, vr.company_name,
+            vr.unit_id,
             COALESCE(v.full_name, vr.visitor_name) AS resolved_visitor_name,
             h.full_name  AS host_name,
             d.name       AS department_name
@@ -31,7 +34,37 @@ async function fetchFullPass(db, passId) {
     [passId]
   );
   if (!rows[0]) return null;
-  return { ...rows[0], qr_code_path: await getSignedFileUrl(rows[0].qr_code_path) };
+  const row = rows[0];
+
+  // Fetch unit name from central DB (units table lives in central, not unit DBs)
+  let unit_name = null;
+  let unit_code = null;
+  if (row.unit_id) {
+    try {
+      const [unitRows] = await centralPool.query(
+        'SELECT name, code FROM units WHERE id = ? LIMIT 1', [row.unit_id]
+      );
+      if (unitRows[0]) { unit_name = unitRows[0].name; unit_code = unitRows[0].code; }
+    } catch (_) { /* non-fatal */ }
+  }
+
+  // Fallback: extract unit code from pass_number (e.g., VMS-U1-20261022-97667)
+  if (!unit_name && row.pass_number) {
+    const match = row.pass_number.match(/^VMS-([A-Za-z0-9_]+)-/);
+    if (match) {
+      try {
+        const [unitRows] = await centralPool.query(
+          'SELECT name, code FROM units WHERE code = ? LIMIT 1', [match[1]]
+        );
+        if (unitRows[0]) {
+          unit_name = unitRows[0].name;
+          unit_code = unitRows[0].code;
+        }
+      } catch (_) {}
+    }
+  }
+
+  return { ...row, unit_name, unit_code, qr_code_path: await qrImageForPass(row) };
 }
 
 // ── generatePass ──────────────────────────────────────────────────────────────
@@ -85,11 +118,14 @@ const getPass = async (req, res) => {
   try {
     const { passNumber } = req.params;
     const employee = isEmployee(req.user);
+    const unitAdmin = isUnitLevelAdmin(req);
+    const myUnitId = await ownUnitId(req);
 
-    // An employee hosted in another unit opens that unit's pass with ?unit_id=
+    // A cross-unit EMPLOYEE_VISIT's pass lives in the host unit's DB; ?unit_id= opens it
+    // there — for the employee involved, or the admin of the unit that raised it
     let db = req.db;
-    const crossUnitId = employee && req.query.unit_id && Number(req.query.unit_id) !== Number(req.user.unit_id)
-      ? parseInt(req.query.unit_id, 10) : null;
+    const askedUnit = parseInt(req.query.unit_id, 10);
+    const crossUnitId = (employee || unitAdmin) && askedUnit && askedUnit !== myUnitId ? askedUnit : null;
     if (crossUnitId) {
       const [units] = await centralPool.query(
         "SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = 'ACTIVE' LIMIT 1", [crossUnitId]
@@ -100,7 +136,7 @@ const getPass = async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT gp.id, vr.host_user_id, vr.requester_user_id, vr.cross_unit_requester_id, vr.requester_unit_id,
-              vr.visitor_email, vr.visitor_phone
+              vr.visitor_email, vr.visitor_phone, vr.visit_category
        FROM gate_passes gp JOIN visit_requests vr ON vr.id = gp.visit_request_id
        WHERE gp.pass_number = ? LIMIT 1`,
       [passNumber]
@@ -120,6 +156,11 @@ const getPass = async (req, res) => {
         (u.email && pass.visitor_email && pass.visitor_email.toLowerCase() === u.email.toLowerCase()) ||
         (u.phone && pass.visitor_phone && last10(pass.visitor_phone) === last10(u.phone));
       if (!linked) return sendError(res, 'Gate pass not found.', 404);
+    } else if (crossUnitId) {
+      // Another unit's pass: only for visits raised from the admin's own unit
+      if (!(pass.visit_category === 'EMPLOYEE_VISIT' && Number(pass.requester_unit_id) === myUnitId)) {
+        return sendError(res, 'Gate pass not found.', 404);
+      }
     } else {
       // Gate staff open a pass to print it; an employee viewing theirs doesn't count
       await db.query('UPDATE gate_passes SET is_printed = TRUE WHERE id = ?', [passId]);

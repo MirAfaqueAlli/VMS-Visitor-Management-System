@@ -198,8 +198,8 @@ export default function RequestDetail() {
   const timeline   = buildTimeline(request);
   const conflictFlag = request.force_created === 1 || request.force_created === true;
 
-  // qr_code_path is a short-lived signed S3 link from the API (null for older passes)
-  const qrSrc = /^https?:\/\//.test(request.qr_code_path ?? '') ? request.qr_code_path : null;
+  // qr_code_path: a short-lived signed S3 link, or a data: image the API drew from the pass data
+  const qrSrc = /^(https?:\/\/|data:image\/)/.test(request.qr_code_path ?? '') ? request.qr_code_path : null;
   const passLink = `/passes/pass/${request.pass_number}${crossUnitId ? `?unit_id=${crossUnitId}` : ''}`;
 
   const vendorDetails = (request.visit_category === 'VENDOR' || request.company_name || request.work_order_ref || request.service_type || request.vendor_email);

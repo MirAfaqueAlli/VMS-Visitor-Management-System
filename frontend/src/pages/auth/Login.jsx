@@ -127,7 +127,7 @@ export default function Login() {
           <span className="mono text-[11px] text-ink-2">{unitCode?.toUpperCase()}</span>
         </div>
       ) : (
-        <Select
+        <Select searchable
           value={unitId}
           onChange={(e) => { setUnitId(e.target.value); setError(''); }}
           disabled={unitsLoading}

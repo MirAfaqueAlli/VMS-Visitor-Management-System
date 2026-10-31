@@ -112,7 +112,7 @@ export default function AuditLog() {
           {MODULES.map(m => <option key={m} value={m}>{moduleLabel(m)}</option>)}
         </Select>
         {isCentral && units.length > 0 && (
-          <Select value={unitDb} onChange={e => onUnit(e.target.value)} aria-label="Unit" style={{ width: 190 }}>
+          <Select searchable value={unitDb} onChange={e => onUnit(e.target.value)} aria-label="Unit" style={{ width: 190 }}>
             <option value="">All units</option>
             <option value="central">Central admin</option>
             {units.map(u => <option key={u.db_name} value={u.db_name}>{u.unit_name}</option>)}

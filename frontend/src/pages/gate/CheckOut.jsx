@@ -16,6 +16,8 @@ import {
   ChoiceCards, ScanOverlay,
 } from "../../components/ui";
 import useSort from "../../lib/useSort";
+import usePaged from "../../lib/usePaged";
+import Pagination from "../../components/shared/Pagination";
 import { fmtClock, relTime, orDash } from "../../lib/format";
 
 // ── QR scan modes (same as CheckIn) ──────────────────────────────────────────
@@ -436,11 +438,13 @@ export default function CheckOut() {
   /* ── QR checkout handler ────────────────────────────────────────────── */
   const initiateQRCheckout = (visitor) => setQrModal(visitor);
 
-  const { rows, sort, onSort } = useSort(activeVisitors, {
+  const { rows: sortedRows, sort, onSort } = useSort(activeVisitors, {
     visitor: (v) => v.visitor_name,
     host: (v) => v.host_name,
     in: (v) => v.check_in_at,
   });
+  const paged = usePaged(sortedRows, 20);
+  const rows = paged.rows;
 
   return (
     <div className="animate-fade-in">
@@ -499,7 +503,7 @@ export default function CheckOut() {
                       type="button"
                       onClick={() => initiateDirectCheckout(visitor.visit_log_id)}
                       className="btn-outline btn-sm"
-                      title="Check out now; the QR stays valid for 24 h after check-in"
+                      title="Check out without scanning; the pass and its QR stop working at once"
                     >
                       <LogOut size={13} /> Direct
                     </button>
@@ -518,6 +522,7 @@ export default function CheckOut() {
           </tbody>
         </table>
       </div>
+      {!loading && <Pagination page={paged.page} totalPages={paged.totalPages} totalCount={paged.total} onPageChange={paged.setPage} />}
 
       {/* ── Direct check-out ── */}
       <Modal
@@ -537,7 +542,7 @@ export default function CheckOut() {
         )}
       >
         <p className="text-[12.5px] text-ink-2 mb-3">
-          The pass QR stays valid until 24 hours after check-in.
+          The gate pass and its QR code expire as soon as the visitor is checked out.
         </p>
         <Field label="Remarks" htmlFor="co-remarks">
           <textarea
