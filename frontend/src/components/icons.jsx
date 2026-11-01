@@ -20,7 +20,7 @@ import {
   ArrowCounterClockwise, Scan as PScan, MagnifyingGlass, Gear, Shield as PShield, ShieldWarning,
   ShieldCheck as PShieldCheck, ShieldSlash, DeviceMobile, Sun as PSun, Tag as PTag, Trash, TrendUp,
   TrendDown as PTrendDown, UploadSimple, User as PUser, UserCheck as PUserCheck, UserCircle as PUserCircle,
-  UserGear, UserPlus as PUserPlus, UserMinus, Users as PUsers, X as PX, MagnifyingGlassPlus, Lightning,
+  UserGear, UserPlus as PUserPlus, UserMinus, Users as PUsers, X as PX, MagnifyingGlassPlus, Cube,
   SidebarSimple, CaretUp, Info as PInfo, Tray, DotsThree, Paperclip as PPaperclip, ArrowSquareOut,
   Circle as PCircle,
 } from '@phosphor-icons/react';
@@ -130,4 +130,4 @@ export const X                 = wrap(PX, 'X');
 export const ZoomIn            = wrap(MagnifyingGlassPlus, 'ZoomIn');
 
 /** The one shared navigation icon (DESIGN_RULES §5 — the label carries the meaning). */
-export const NavIcon           = wrap(Lightning, 'NavIcon');
+export const NavIcon           = wrap(Cube, 'NavIcon');
