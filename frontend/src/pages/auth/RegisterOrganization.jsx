@@ -1,3 +1,4 @@
+import useDocumentTitle from "../../lib/useDocumentTitle";
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Building2, User, ChevronRight, ChevronLeft, CheckCircle2, Loader2 } from "../../components/icons";
@@ -19,6 +20,7 @@ const STEPS = [
 const ORG_TYPES = ["Government", "Industrial", "Corporate", "Educational", "Healthcare", "Other"];
 
 export default function RegisterOrganization() {
+  useDocumentTitle("Register organisation");
   const navigate = useNavigate();
   const { login } = useAuth();
   const [step, setStep] = useState(1);

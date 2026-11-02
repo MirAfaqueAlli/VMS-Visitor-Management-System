@@ -2,6 +2,7 @@
 // /public-request/new — a signed-in visitor asks to visit a unit. The visitor's
 // identity comes from their portal account (verified mobile + email); this page
 // only collects where, whom, when and why. Signed-out visitors go to the portal.
+import useDocumentTitle from "../../lib/useDocumentTitle";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
@@ -30,6 +31,7 @@ const EMPTY_FORM = {
 };
 
 export default function PublicRequest() {
+  useDocumentTitle("Request a visit");
   const navigate = useNavigate();
   const [account, setAccount] = useState(null);
   const [formData, setFormData] = useState(EMPTY_FORM);

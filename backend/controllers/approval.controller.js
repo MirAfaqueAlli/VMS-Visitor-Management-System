@@ -10,7 +10,17 @@ const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
 const { getSignedFileUrl } = require('../utils/s3.util');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
-const { gatePassMediaUrl } = require('../services/whatsapp.service');
+const { withPortalLink } = require('../services/whatsapp.service');
+const { gatePassWhatsAppMedia } = require('../services/gatePassImage.service');
+
+/** Visit date for SMS / WhatsApp / dashboard text: "31 Oct 2026" (mysql2 returns a Date). */
+const textDate = (d) => {
+  const m = typeof d === 'string' && d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const date = m ? new Date(+m[1], +m[2] - 1, +m[3]) : d;
+  return date instanceof Date && !Number.isNaN(date.getTime())
+    ? date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+    : String(d ?? '');
+};
 // ── Inline schedule conflict check for the approval flow ─────────────────────
 // Checks if the host already has another APPROVED visit overlapping the given time.
 const checkApprovalConflict = async (db, hostUserId, visitDate, startTime, endTime, excludeRequestId) => {
@@ -73,7 +83,7 @@ async function notifyStaffOfApproval(db, request, { approver, passResult, visito
   const who      = visitorName || 'Visitor';
   const timeStr  = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
   const passText = passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : '';
-  const sms      = `VMS: Visit of ${who} on ${request.visit_date}${timeStr} has been APPROVED by ${approver.full_name}.${passText}`;
+  const sms      = `VMS: Visit of ${who} on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${approver.full_name}.${passText}`;
 
   await Promise.allSettled(staff.flatMap((s) => {
     const sends = [];
@@ -109,8 +119,8 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
 
     const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
     const message = approved
-      ? `Your visit request on ${request.visit_date}${timeStr} has been APPROVED by ${actorName}.${passResult?.pass_number ? ` Gate pass: ${passResult.pass_number}` : ''}`
-      : `Your visit request on ${request.visit_date}${timeStr} has been REJECTED by ${actorName}. Reason: ${remarks}`;
+      ? `Your visit request on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${actorName}.${passResult?.pass_number ? ` Gate pass: ${passResult.pass_number}` : ''}`
+      : `Your visit request on ${textDate(request.visit_date)}${timeStr} has been REJECTED by ${actorName}. Reason: ${remarks}`;
 
     // visit_request_id stays NULL: the request lives in the other unit's DB
     await sendNotification({ db: requesterDb, recipientUserId: requester.id, type: 'DASHBOARD', message });
@@ -398,16 +408,19 @@ const approveRequest = async (req, res) => {
           return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
         })()]
         : []),
-      // SMS visitor (+ WhatsApp copy with the gate-pass QR image)
-      ...(visitorPhone ? [gatePassMediaUrl(passResult?.qr_code_path).then((whatsappMedia) => notify({
-        visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS', whatsappMedia,
-        message: passResult?.pass_number
-          ? `VMS: Your visit on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}. Gate Pass: ${passResult.pass_number}`
-          : `VMS: Your visit on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}.`,
-      }))] : []),
+      // SMS visitor (+ WhatsApp copy with the gate-pass picture and the portal link)
+      ...(visitorPhone ? [gatePassWhatsAppMedia(req.db, passResult).then((whatsappMedia) => {
+        const message = passResult?.pass_number
+          ? `VMS: Your visit on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}. Gate Pass: ${passResult.pass_number}`
+          : `VMS: Your visit on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}.`;
+        return notify({
+          visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
+          message, whatsappMedia, whatsappMessage: withPortalLink(message),
+        });
+      })] : []),
       // Dashboard — requester
       ...(request.requester_user_id && request.requester_user_id !== user.id
-        ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${request.visit_date}${timeStr} has been APPROVED by ${user.full_name}.` })]
+        ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}.` })]
         : []),
       // Dashboard — generic
       notify({ visitRequestId: request.id, type: 'DASHBOARD', message: `Visit request #${request.id} has been APPROVED by ${user.full_name}.` }),
@@ -546,12 +559,12 @@ const rejectRequest = async (req, res) => {
       // 4. SMS visitor
       ...(visitorPhone ? [notify({
         visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
-        message: `VMS: Your visit request on ${request.visit_date}${timeStr} has been DECLINED. Reason: ${remarks.trim()}`,
+        message: `VMS: Your visit request on ${textDate(request.visit_date)}${timeStr} has been DECLINED. Reason: ${remarks.trim()}`,
       })] : []),
 
       // 5. Dashboard — requester
       ...(request.requester_user_id && request.requester_user_id !== user.id
-        ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${request.visit_date}${timeStr} has been REJECTED. Reason: ${remarks.trim()}` })]
+        ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${textDate(request.visit_date)}${timeStr} has been REJECTED. Reason: ${remarks.trim()}` })]
         : []),
 
       // 6. Dashboard — generic

@@ -1,5 +1,6 @@
 // frontend/src/pages/auth/Login.jsx
 // Sign in / forgot password (DESIGN_RULES auth: flat, split layout, OHPC identity).
+import useDocumentTitle from '../../lib/useDocumentTitle';
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -15,6 +16,7 @@ import { Field, Note } from '../../components/ui';
 
 /* -- Main Login Component -------------------------------------------------- */
 export default function Login() {
+  useDocumentTitle('Sign in');
   const { login } = useAuth();
   const navigate     = useNavigate();
   const { unitCode } = useParams();

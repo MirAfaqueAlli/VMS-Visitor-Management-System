@@ -1,5 +1,6 @@
 // frontend/src/pages/auth/ResetPassword.jsx
 // Landing page for the emailed "reset your password" link (/reset-password?token=...)
+import useDocumentTitle from '../../lib/useDocumentTitle';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Lock, Eye, EyeOff, AlertCircle, CheckCircle2, KeyRound, Loader2 } from '../../components/icons';
@@ -11,6 +12,7 @@ import AuthLayout from '../../components/AuthLayout';
 import { Field, Note } from '../../components/ui';
 
 export default function ResetPassword() {
+  useDocumentTitle('Reset password');
   const [searchParams] = useSearchParams();
   const token     = searchParams.get('token') || '';
   const validLink = /^[a-f0-9]{64}$/.test(token);

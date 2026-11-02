@@ -14,7 +14,8 @@ const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
 const { emitToUser, emitToUnitSecurity } = require('../socket/socketManager');
 const { encryptField, decryptRows } = require('../utils/crypto.util');
 const { getSignedFileUrl }          = require('../utils/s3.util');
-const { gatePassMediaUrl }          = require('../services/whatsapp.service');
+const { withPortalLink }            = require('../services/whatsapp.service');
+const { gatePassWhatsAppMedia }     = require('../services/gatePassImage.service');
 const { qrImageForPass }            = require('../services/qrcode.service');
 
 // IST date helper (mirrors the one in approval.controller.js)
@@ -695,14 +696,16 @@ const createRequest = async (req, res) => {
         // Send SMS to visitor
         if (effectiveVisitorPhone) {
           try {
+            const message = `VMS: ${hostName} has hosted you as a visitor on ${visit_date}${timeStr}.${passNum ? ` Gate Pass: ${passNum}` : ''}`;
             await sendNotification({
               db: visitorDb || db,
               visitRequestId: (visitorDb === db) ? visitRequestId : null,
               recipientUserId: visitorUser?.id || null,
               recipientPhone: effectiveVisitorPhone,
               type: 'SMS',
-              whatsappMedia: await gatePassMediaUrl(passResult?.qr_code_path),
-              message: `VMS: ${hostName} has hosted you as a visitor on ${visit_date}${timeStr}.${passNum ? ` Gate Pass: ${passNum}` : ''}`,
+              message,
+              whatsappMedia: await gatePassWhatsAppMedia(db, passResult),   // the pass lives in the host unit's DB
+              whatsappMessage: withPortalLink(message),
             });
           } catch (smsErr) {
             console.error('[VisitRequestController] Failed to send SMS to hosted visitor:', smsErr.message);
@@ -753,9 +756,9 @@ const createRequest = async (req, res) => {
         await notify({ visitRequestId, recipientEmail: vendor_email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
       }
       if (resolvedVisitorPhone) {
-        await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS',
-          whatsappMedia: await gatePassMediaUrl(passResult?.qr_code_path),
-          message: `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}` });
+        const message = `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}`;
+        await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS', message,
+          whatsappMedia: await gatePassWhatsAppMedia(db, passResult), whatsappMessage: withPortalLink(message) });
       }
       await notify({ visitRequestId, type: 'DASHBOARD', message: `Vendor visit scheduled: ${company_name || 'Unknown'} on ${visit_date}${timeStr}.` });
     } else if (typeCode === 'SPOT') {
@@ -781,9 +784,9 @@ const createRequest = async (req, res) => {
         await notify({ visitRequestId, recipientEmail: resolvedVisitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
       }
       if (resolvedVisitorPhone) {
-        await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS',
-          whatsappMedia: await gatePassMediaUrl(passResult?.qr_code_path),
-          message: `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} has been APPROVED.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}` });
+        const message = `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} has been APPROVED.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}`;
+        await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS', message,
+          whatsappMedia: await gatePassWhatsAppMedia(db, passResult), whatsappMessage: withPortalLink(message) });
       }
       await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Your personal visit request for ${resolvedVisitorName || 'Guest'} on ${visit_date}${timeStr} is auto-approved. Gate pass generated.` });
     }

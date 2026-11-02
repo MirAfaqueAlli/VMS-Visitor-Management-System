@@ -125,6 +125,13 @@ export default function NewRequest() {
   const [adminHostEmployees, setAdminHostEmployees] = useState([]);
 
   const role = user?.role_type || user?.role || "employee";
+  // Security and reception can't open Visit Requests: send them back to where they
+  // started (dashboard or gate), or to the dashboard on a fresh tab
+  const leave = () => {
+    if (!["security", "receptionist"].includes(role)) navigate("/requests");
+    else if (window.history.state?.idx > 0) navigate(-1);
+    else navigate("/dashboard");
+  };
   const allowedIds = ROLE_CATEGORIES[role] ?? ["EMPLOYEE_VISIT", "VENDOR"];
   const availableCategories = ALL_CATEGORIES.filter((c) => allowedIds.includes(c.id));
 
@@ -741,7 +748,7 @@ export default function NewRequest() {
       const payload = buildPayload();
       await apiClient.post("/visit-requests", payload);
       toast.success("Visit request created successfully");
-      navigate("/requests");
+      leave();
     } catch (error) {
       const data = error.response?.data;
       // ── Conflict detected → show confirmation modal instead of toast ──
@@ -772,7 +779,7 @@ export default function NewRequest() {
       const payload = { ...conflictModal.pendingPayload, force_create: true };
       await apiClient.post("/visit-requests", payload);
       toast.success("Visit request created (conflict overridden).");
-      navigate("/requests");
+      leave();
     } catch (error) {
       toast.error(getApiErrorMessage(error, "Failed to create request."));
     } finally {
@@ -1260,7 +1267,7 @@ export default function NewRequest() {
               {loading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
               {loading ? "Submitting…" : "Submit request"}
             </button>
-            <button type="button" onClick={() => navigate("/requests")} className="btn-outline">Cancel</button>
+            <button type="button" onClick={leave} className="btn-outline">Cancel</button>
           </div>
         </aside>
       </form>

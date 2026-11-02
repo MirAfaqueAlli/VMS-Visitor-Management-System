@@ -4,6 +4,7 @@
 //   account with a password → password (or a mobile OTP instead)
 //   account without one, or a visitor staff registered → mobile OTP
 //   nobody yet → registration (name, email, address, password; mobile + email codes)
+import useDocumentTitle from "../../lib/useDocumentTitle";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import {
@@ -40,6 +41,7 @@ function PasswordInput({ id, value, onChange, autoFocus, autoComplete = "current
 }
 
 export default function VisitorSignIn({ onSignedIn }) {
+  useDocumentTitle("Visitor sign in");
   const otp = usePhoneOtp();
   const emailTimer = useCountdown();
 

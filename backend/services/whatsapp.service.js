@@ -79,4 +79,11 @@ async function gatePassMediaUrl(qrCodePath) {
   }
 }
 
-module.exports = { sendWhatsApp, gatePassMediaUrl, isWhatsAppConfigured, toRecipient };
+/** The visitor portal, where visitors sign in to see their passes and track visits. */
+const visitorPortalUrl = () => `${(process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/+$/, '')}/public-request`;
+
+/** A visitor's WhatsApp text with the portal link added at the end. */
+const withPortalLink = (text) =>
+  `${text}\n\nYou can check your gate pass and track your visit status here: ${visitorPortalUrl()}`;
+
+module.exports = { sendWhatsApp, gatePassMediaUrl, isWhatsAppConfigured, toRecipient, visitorPortalUrl, withPortalLink };

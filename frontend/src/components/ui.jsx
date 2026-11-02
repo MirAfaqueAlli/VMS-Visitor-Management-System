@@ -8,6 +8,7 @@ import useAuth from '../hooks/useAuth';
 import { navSections, crumbsFor } from '../lib/nav';
 import { describe } from '../lib/status';
 import { drawerOpened, drawerClosed } from '../lib/drawerBus';
+import useDocumentTitle from '../lib/useDocumentTitle';
 import { ChevronRight as CaretRightIcon, Search as SearchIcon, X as XIcon, ChevronUp, ChevronDown, Loader2, Inbox } from './icons';
 
 /* ── Page header ─────────────────────────────────────────────────────────────── */
@@ -34,6 +35,7 @@ export function Breadcrumb({ crumbs }) {
 
 /** Breadcrumb + title (title only — no description) + the page's main action on the right. */
 export function PageHeader({ title, crumbs, actions, meta }) {
+  useDocumentTitle(typeof title === 'string' ? title : undefined);   // tab: "<title> | OHPC VMS"
   return (
     <header>
       <Breadcrumb crumbs={crumbs} />

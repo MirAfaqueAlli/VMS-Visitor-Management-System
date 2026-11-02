@@ -2,6 +2,7 @@
 // Shown after sign-in while the account isn't complete: the mobile must be
 // verified and an email linked + verified (walk-ins added by staff often have
 // neither). Then, for accounts without a password, an optional "set a password".
+import useDocumentTitle from "../../lib/useDocumentTitle";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { AlertCircle, Check, CheckCircle2, Circle, Loader2, Lock, Mail, Phone } from "../../components/icons";
@@ -27,6 +28,7 @@ function StepRow({ done, current, icon: Icon, title, detail }) {
 }
 
 export default function VisitorComplete({ account, pending, onUpdated, onSession, onDone }) {
+  useDocumentTitle("Complete your details");
   const otp = usePhoneOtp();
   const emailTimer = useCountdown();
   const [busy, setBusy] = useState(false);

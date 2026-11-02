@@ -2,6 +2,7 @@
 // First-time setup: registers the organisation and its super administrator.
 // One-time only — once the organisation exists this page redirects to sign-in
 // (and the API refuses a second setup regardless).
+import useDocumentTitle from "../../lib/useDocumentTitle";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -152,6 +153,7 @@ const SETUP_PANEL = {
 };
 
 export default function Setup() {
+  useDocumentTitle("Set up");
   const navigate = useNavigate();
   const { loginDirect } = useAuth();
 
