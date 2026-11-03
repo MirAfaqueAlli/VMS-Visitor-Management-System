@@ -14,6 +14,7 @@ const identifyLimiter = authLimiter(30, 'Too many account checks from this netwo
 const loginLimiter    = authLimiter(20, 'Too many failed sign-in attempts from this network. Please try again in 15 minutes.');
 const otpLimiter      = authLimiter(30, 'Too many incorrect codes from this network. Please try again in 15 minutes.');
 const sendLimiter     = authLimiter(10, 'Too many codes requested. Please try again in 15 minutes.', true);
+const checkLimiter    = authLimiter(60, 'Too many account checks from this network. Please try again in 15 minutes.', true);
 
 const phoneOtpSchema = z.object({
   phone:   z.string().min(10, 'A valid phone number is required.'),
@@ -27,6 +28,7 @@ const codeOnlySchema = z.object({
 }).refine((d) => d.idToken || d.otp, { message: 'The OTP is required.' });
 
 const identifySchema = z.object({ identifier: z.string().trim().min(3, 'Enter your mobile number or email.').max(120) });
+const checkSchema    = z.object({ phone: z.string().max(20).optional(), email: z.string().trim().max(100).optional() });
 const loginSchema    = z.object({ identifier: z.string().trim().min(3).max(120), password: z.string().min(1).max(200) });
 const registerSchema = z.object({
   full_name:   z.string().trim().min(2).max(100),
@@ -46,6 +48,7 @@ const passwordSchema = z.object({ current_password: z.string().max(200).optional
 router.post('/identify',  identifyLimiter, validate(identifySchema), ctrl.identify);
 router.post('/login',     loginLimiter,    validate(loginSchema),    ctrl.login);
 router.post('/login/otp', otpLimiter,      validate(phoneOtpSchema), ctrl.loginWithOtp);
+router.post('/register/check', checkLimiter, validate(checkSchema), ctrl.checkRegistration);
 router.post('/register',  otpLimiter,      validate(registerSchema), ctrl.register);
 
 // ── Signed-in visitor (X-Visitor-Session) ────────────────────────────────────

@@ -10,7 +10,8 @@
  *   2b. POST /login/otp        { phone, idToken | otp }  → session   (mobile OTP; also creates the
  *                                 account for a visitor staff added, from their unit records)
  *                                                       → { status: 'new', phone_token } otherwise
- *   3. POST /register          { full_name, phone, email, address, password,
+ *   3. POST /register/check    { phone?, email? }        → already used? (before any code is sent)
+ *      POST /register          { full_name, phone, email, address, password,
  *                                phone_token, email_otp } → session
  *
  * Session (header X-Visitor-Session, JWT purpose VISITOR_SESSION):
@@ -261,6 +262,32 @@ const loginWithOtp = async (req, res) => {
 };
 
 // ── 3. Register ───────────────────────────────────────────────────────────────
+/**
+ * POST /register/check { phone?, email? }
+ * → { phone_account, known_visitor, email_account }
+ * The registration form checks the mobile and email as they're typed, so a visitor
+ * who already has an account is sent to sign in before any code is sent. A number
+ * staff registered at the gate (known_visitor) may still register — visits are
+ * matched by mobile, so the earlier ones show in the new account.
+ * Says no more than /identify does; rate limited per IP.
+ */
+const checkRegistration = async (req, res) => {
+  try {
+    const phone = normalisePhone(req.body.phone);
+    const email = cleanEmail(req.body.email);
+    const out = { phone_account: false, known_visitor: false, email_account: false };
+    if (phone.length === 10) {
+      out.phone_account = !!(await accountBy('phone', phone));
+      out.known_visitor = !out.phone_account && !!(await findExistingVisitorByPhone(phone));
+    }
+    if (isEmail(email)) out.email_account = await emailTaken(email);
+    return sendSuccess(res, out, 'Checked.');
+  } catch (err) {
+    console.error('[VisitorPortal] checkRegistration error:', err.message);
+    return sendError(res, 'Could not check these details. Please try again.', 500);
+  }
+};
+
 const register = async (req, res) => {
   try {
     const { full_name, address, password, phone_token, email_otp } = req.body;
@@ -281,7 +308,7 @@ const register = async (req, res) => {
     }
 
     if (await accountBy('phone', phone)) return sendError(res, 'An account already exists for this mobile number. Please sign in.', 409);
-    if (await emailTaken(email)) return sendError(res, 'This email is already linked to another visitor account.', 409);
+    if (await emailTaken(email)) return sendError(res, 'An account already exists for this email. Please sign in, or use a different email.', 409);
 
     // Registration email codes are sent by /public-auth/send-email-otp (keyed by the address)
     if (!(await checkEmailCode(email, email_otp))) return sendError(res, 'Invalid or expired email code. Please try again.', 400);
@@ -609,7 +636,7 @@ const visitorToken = async (req, res) => {
 
 module.exports = {
   requireVisitorSession,
-  identify, login, loginWithOtp, register,
+  identify, login, loginWithOtp, checkRegistration, register,
   me, updateMe, sendEmailVerification, verifyEmail, verifyPhone, setPassword,
   myVisits, myPass, cancelVisit, visitorToken,
 };

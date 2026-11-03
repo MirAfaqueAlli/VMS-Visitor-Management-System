@@ -1,5 +1,5 @@
 // frontend/src/pages/visitor/VisitorPortal.jsx
-// /public-request — the visitor portal. Signed out: sign in / register.
+// /public-request — the visitor portal. Signed out: sign in / register (AuthLayout).
 // Signed in: finish the account if needed (verify mobile, link + verify email,
 // optional password), then the visitor's dashboard.
 import { useCallback, useEffect, useState } from "react";
@@ -72,10 +72,12 @@ export default function VisitorPortal() {
 
   const needsSetup = account && (pending.length > 0 || (!account.has_password && !prompted));
 
+  // Signed out: the sign-in / registration screens use the staff sign-in layout
+  if (phase === "signin") return <VisitorSignIn onSignedIn={onSignedIn} />;
+
   return (
     <PublicShell account={phase === "ready" ? account : null} onSignOut={signOut}>
       {phase === "loading" && <Spinner label="Opening your account…" />}
-      {phase === "signin" && <VisitorSignIn onSignedIn={onSignedIn} />}
       {phase === "ready" && account && (needsSetup ? (
         <VisitorComplete account={account} pending={pending} onUpdated={applyProfile} onSession={onSession} onDone={finishSetup} />
       ) : (

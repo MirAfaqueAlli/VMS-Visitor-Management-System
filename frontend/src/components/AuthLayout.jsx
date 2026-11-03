@@ -23,6 +23,7 @@ export function TricolourStrip({ height = 4 }) {
 }
 
 const DEFAULT_DESCRIPTION = 'Secure, pre-approved and fully audited visitor access for offices, power houses and secured premises.';
+const DEFAULT_NOTICE = 'This is a restricted government system for authorised users only. All activity is logged and monitored.';
 const DEFAULT_FEATURES = [
   [ShieldCheck,    'Secure, role-based sign-in'],
   [QrCode,         'QR-coded gate passes'],
@@ -30,7 +31,7 @@ const DEFAULT_FEATURES = [
 ];
 
 /* -- Left half (large screens only) ------------------------------------------ */
-function BrandPanel({ eyebrow, title, description, features }) {
+function BrandPanel({ eyebrow, title, description, features, notice }) {
   return (
     <aside className="hidden lg:flex flex-col relative overflow-hidden shrink-0"
       style={{ width: '46%', maxWidth: 640, background: NAVY }}>
@@ -76,7 +77,7 @@ function BrandPanel({ eyebrow, title, description, features }) {
         <p className="flex items-start gap-2 pt-4 text-[11.5px] leading-relaxed border-t"
           style={{ borderColor: 'rgba(255,255,255,0.12)', color: '#9db0cb' }}>
           <Lock size={12} className="shrink-0 mt-[3px]" />
-          This is a restricted government system for authorised users only. All activity is logged and monitored.
+          {notice}
         </p>
       </div>
     </aside>
@@ -87,6 +88,8 @@ function BrandPanel({ eyebrow, title, description, features }) {
  * Page shell for the auth pages.
  * @param {string}  [eyebrow, title, description] — left-panel text
  * @param {Array}   [features]  — [[Icon, text], …] for the left panel
+ * @param {string}  [notice]    — the line at the foot of the left panel
+ * @param {string}  [product]   — product name in the small-screen header
  * @param {number}  [maxWidth]  — width of the right-hand form column (px)
  * @param {string}  [helpText]  — footer help line
  */
@@ -96,6 +99,8 @@ export default function AuthLayout({
   title       = 'Visitor Management System',
   description = DEFAULT_DESCRIPTION,
   features    = DEFAULT_FEATURES,
+  notice      = DEFAULT_NOTICE,
+  product     = 'Visitor Management System',
   maxWidth    = 400,
   helpText    = 'Need help signing in? Contact your unit administrator.',
 }) {
@@ -103,7 +108,7 @@ export default function AuthLayout({
     // Fixed to the viewport height so only the right-hand panel scrolls
     // Controls are a touch taller here (36px) — a sign-in form, not a dense table page
     <div data-theme="light" className="h-dvh flex overflow-hidden bg-surface text-ink" style={{ '--control-h': '36px' }}>
-      <BrandPanel eyebrow={eyebrow} title={title} description={description} features={features} />
+      <BrandPanel eyebrow={eyebrow} title={title} description={description} features={features} notice={notice} />
 
       {/* Right: full-height form panel (the scroll container) */}
       <main className="flex-1 min-w-0 overflow-y-auto flex flex-col bg-surface">
@@ -113,7 +118,7 @@ export default function AuthLayout({
           <div className="flex items-center gap-2.5 px-4 py-3.5">
             <img src="/brand/ohpc-emblem-white.svg" alt="OHPC" className="h-9 w-auto" />
             <div>
-              <p className="text-white font-semibold text-[13.5px] leading-tight">Visitor Management System</p>
+              <p className="text-white font-semibold text-[13.5px] leading-tight">{product}</p>
               <p className="text-[11px] mt-0.5" style={{ color: '#a9bad3' }}>{ORG_NAME}</p>
             </div>
           </div>
