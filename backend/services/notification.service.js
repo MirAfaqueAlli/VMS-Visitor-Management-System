@@ -25,8 +25,9 @@ const whatsapp     = require('./whatsapp.service');
  * @param {string}       opts.message
  * @param {object[]|null} opts.attachments    — EMAIL only: nodemailer attachments (e.g. inline QR image)
  * @param {string|null}  opts.whatsappMedia   — image / PDF link sent with the WhatsApp copy (e.g. gate-pass picture)
- * @param {string|null}  opts.whatsappMessage — text for the WhatsApp copy when it differs from the SMS
- *                                              (SMS text is fixed by DLT templates; WhatsApp can say more)
+ * @param {string|null}  opts.whatsappMessage — text for the WhatsApp copy (whatsapp.whatsappText); without
+ *                                              it the SMS text is put in the standard layout. (SMS text is
+ *                                              fixed by DLT templates; WhatsApp can say more.)
  * @returns {Promise<{ success: boolean }>}
  *
  * Every SMS is also sent on WhatsApp (as its own WHATSAPP notification row) when
@@ -144,7 +145,7 @@ const sendNotification = async ({
   if (type === 'SMS' && recipientPhone && whatsapp.isWhatsAppConfigured()) {
     await sendNotification({
       db: unitDb, visitRequestId, recipientUserId, recipientPhone,
-      type: 'WHATSAPP', subject, message: whatsappMessage || message, whatsappMedia,
+      type: 'WHATSAPP', subject, message: whatsappMessage || whatsapp.whatsappFromSms(message), whatsappMedia,
     });
   }
 

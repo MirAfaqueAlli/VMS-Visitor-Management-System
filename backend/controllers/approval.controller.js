@@ -10,7 +10,8 @@ const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
 const { getSignedFileUrl } = require('../utils/s3.util');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
-const { withPortalLink } = require('../services/whatsapp.service');
+const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
+const { formatDate, formatTime } = require('../utils/displayFormat.util');
 const { gatePassWhatsAppMedia } = require('../services/gatePassImage.service');
 
 /** Visit date for SMS / WhatsApp / dashboard text: "31 Oct 2026" (mysql2 returns a Date). */
@@ -95,7 +96,16 @@ async function notifyStaffOfApproval(db, request, { approver, passResult, visito
       sends.push(sendNotification({ db, visitRequestId: request.id, recipientUserId: s.id, recipientEmail: s.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html }));
     }
     if (s.phone && last10(s.phone) !== last10(visitorPhone)) {
-      sends.push(sendNotification({ db, visitRequestId: request.id, recipientUserId: s.id, recipientPhone: s.phone, type: 'SMS', message: sms }));
+      sends.push(sendNotification({
+        db, visitRequestId: request.id, recipientUserId: s.id, recipientPhone: s.phone, type: 'SMS', message: sms,
+        whatsappMessage: whatsappText({
+          title: 'Visit approved', name: s.full_name,
+          intro: `The visit of ${who} has been approved by ${approver.full_name}.`,
+          details: [['Visitor', who], ['Date', formatDate(request.visit_date)], ['Time', formatTime(request.visit_start_time)],
+            ['Purpose', request.purpose], ['Gate pass', passResult?.pass_number]],
+          link: appUrl('/requests'), linkLabel: 'View in VMS',
+        }),
+      }));
     }
     return sends;
   }));
@@ -125,7 +135,17 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
     // visit_request_id stays NULL: the request lives in the other unit's DB
     await sendNotification({ db: requesterDb, recipientUserId: requester.id, type: 'DASHBOARD', message });
     if (requester.phone) {
-      await sendNotification({ db: requesterDb, recipientUserId: requester.id, recipientPhone: requester.phone, type: 'SMS', message: `VMS: ${message}` });
+      const when = [['Date', formatDate(request.visit_date)], ['Time', formatTime(request.visit_start_time)]];
+      await sendNotification({
+        db: requesterDb, recipientUserId: requester.id, recipientPhone: requester.phone, type: 'SMS', message: `VMS: ${message}`,
+        whatsappMessage: whatsappText(approved
+          ? { title: 'Visit approved', name: requester.full_name, intro: `Your visit request has been approved by ${actorName}.`,
+              details: [...when, ['Gate pass', passResult?.pass_number]],
+              notes: passResult?.pass_number ? ['Show your gate pass at the security gate.', 'Carry your employee ID card.'] : [],
+              link: appUrl('/requests'), linkLabel: 'View in VMS' }
+          : { title: 'Visit request declined', name: requester.full_name, intro: `Your visit request has been declined by ${actorName}.`,
+              details: [...when, ['Reason', remarks]], link: appUrl('/requests'), linkLabel: 'View in VMS' }),
+      });
     }
     emitToUser(requester.id, requesterDbName, approved ? 'visit:approved' : 'visit:rejected', {
       visit_request_id: request.id,
@@ -415,7 +435,15 @@ const approveRequest = async (req, res) => {
           : `VMS: Your visit on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}.`;
         return notify({
           visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
-          message, whatsappMedia, whatsappMessage: withPortalLink(message),
+          message, whatsappMedia,
+          whatsappMessage: whatsappText({
+            title: 'Visit approved', name: visitorName,
+            intro: `Your visit request has been approved by ${user.full_name}.${whatsappMedia ? ' Your gate pass is attached.' : ''}`,
+            details: [['Gate pass', passResult?.pass_number], ['Date', formatDate(request.visit_date)],
+              ['Time', formatTime(request.visit_start_time)], ['To meet', hostFullName], ['Purpose', request.purpose]],
+            notes: passResult?.pass_number ? VISITOR_NOTES : ['Carry a valid government photo ID.'],
+            link: visitorPortalUrl(),
+          }),
         });
       })] : []),
       // Dashboard — requester
@@ -560,6 +588,14 @@ const rejectRequest = async (req, res) => {
       ...(visitorPhone ? [notify({
         visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
         message: `VMS: Your visit request on ${textDate(request.visit_date)}${timeStr} has been DECLINED. Reason: ${remarks.trim()}`,
+        whatsappMessage: whatsappText({
+          title: 'Visit request declined', name: visitorName,
+          intro: 'We regret to inform you that your visit request has been declined.',
+          details: [['Date', formatDate(request.visit_date)], ['Time', formatTime(request.visit_start_time)],
+            ['To meet', hostInfo.full_name], ['Reason', remarks.trim()]],
+          notes: ['You may submit a fresh request on the visitor portal.'],
+          link: visitorPortalUrl(), linkLabel: 'Visitor portal',
+        }),
       })] : []),
 
       // 5. Dashboard — requester

@@ -22,6 +22,8 @@
 const { centralPool, getPool } = require('./dbManager');
 const { sendNotification }     = require('./notification.service');
 const emailService             = require('./email.service');
+const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('./whatsapp.service');
+const { formatTime }           = require('../utils/displayFormat.util');
 
 const JOB_NAME       = 'daily_reminders';
 const REMINDER_HOUR  = parseInt(process.env.REMINDER_HOUR || '7', 10);
@@ -86,7 +88,17 @@ async function remindStaffOfTodaysVisits(db, unit) {
         : `VMS reminder: You have ${list.length} visits today: ${list.slice(0, 3).map(v => v.visitor).join(', ')}${list.length > 3 ? ' and more' : ''}. See VMS for details.`;
 
     if (s.phone) {
-      await sendNotification({ db, recipientUserId: s.id, recipientPhone: s.phone, type: 'SMS', message: sms });
+      await sendNotification({
+        db, recipientUserId: s.id, recipientPhone: s.phone, type: 'SMS', message: sms,
+        whatsappMessage: whatsappText({
+          title: 'Visits today', name: s.full_name,
+          intro: list.length === 1 ? 'You have an approved visit today.'
+            : `${list.length} approved visits are scheduled today${isAdmin ? ` at ${unit.name}` : ''}.`,
+          notes: list.slice(0, 8).map((v) => `${v.time ? `${formatTime(v.time)} — ` : ''}${v.visitor}${v.pass ? ` (${v.pass})` : ''}`)
+            .concat(list.length > 8 ? [`and ${list.length - 8} more`] : []),
+          link: appUrl('/requests'), linkLabel: 'View in VMS',
+        }),
+      });
     }
     if (s.email) {
       const tmpl = emailService.staffVisitsTodayTemplate(s.full_name, unit.name, list, isAdmin);
@@ -132,6 +144,13 @@ async function runDailyReminders() {
           await sendNotification({
             db, visitRequestId: v.id, recipientPhone: v.visitor_phone, type: 'SMS',
             message: `VMS reminder: your visit to ${unit.name} is today${time} (host: ${v.host_name}).${pass} Please carry a photo ID.`,
+            whatsappMessage: whatsappText({
+              title: 'Reminder: your visit today', name,
+              intro: 'This is a reminder of your visit scheduled for today.',
+              details: [['Office', unit.name], ['To meet', v.host_name], ['Time', formatTime(v.visit_start_time)], ['Gate pass', v.pass_number]],
+              notes: VISITOR_NOTES,
+              link: visitorPortalUrl(),
+            }),
           });
         }
         const email = v.visitor_email || v.vendor_email;
@@ -164,7 +183,12 @@ async function runDailyReminders() {
         }
         if (p.phone) {
           await sendNotification({ db, recipientUserId: p.host_user_id, recipientPhone: p.phone, type: 'SMS',
-            message: `VMS reminder: ${count} visit request(s) for today/tomorrow are awaiting your approval. Please approve or reject in VMS.` });
+            message: `VMS reminder: ${count} visit request(s) for today/tomorrow are awaiting your approval. Please approve or reject in VMS.`,
+            whatsappMessage: whatsappText({
+              title: 'Visit requests awaiting your approval', name: p.full_name,
+              intro: `${count} visit request${count === 1 ? '' : 's'} for today or tomorrow ${count === 1 ? 'is' : 'are'} still awaiting your approval.`,
+              link: appUrl('/approvals'), linkLabel: 'Approve or decline',
+            }) });
         }
         hostReminders++;
       }

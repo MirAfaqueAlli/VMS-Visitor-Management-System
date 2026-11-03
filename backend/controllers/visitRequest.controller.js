@@ -14,7 +14,8 @@ const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
 const { emitToUser, emitToUnitSecurity } = require('../socket/socketManager');
 const { encryptField, decryptRows } = require('../utils/crypto.util');
 const { getSignedFileUrl }          = require('../utils/s3.util');
-const { withPortalLink }            = require('../services/whatsapp.service');
+const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
+const { formatDate, formatTime, formatDateTime } = require('../utils/displayFormat.util');
 const { gatePassWhatsAppMedia }     = require('../services/gatePassImage.service');
 const { qrImageForPass }            = require('../services/qrcode.service');
 
@@ -575,7 +576,13 @@ const createRequest = async (req, res) => {
         }
         if (host.phone) {
           await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientPhone: host.phone, type: 'SMS',
-            message: `VMS: ${myName} wants to visit you on ${visit_date}${timeStr}. Please approve or reject in VMS.` });
+            message: `VMS: ${myName} wants to visit you on ${visit_date}${timeStr}. Please approve or reject in VMS.`,
+            whatsappMessage: whatsappText({
+              title: 'Visit request awaiting your approval', name: host.full_name,
+              intro: `${myName} wants to visit you. Please approve or decline the request.`,
+              details: [['Visitor', myName], ['Date', formatDate(visit_date)], ['Time', formatTime(visit_start_time)], ['Purpose', purpose]],
+              link: appUrl('/approvals'), linkLabel: 'Approve or decline',
+            }) });
         }
         await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `${myName} wants to visit you on ${visit_date}${timeStr}. Please approve or reject.` });
       } else {
@@ -705,7 +712,14 @@ const createRequest = async (req, res) => {
               type: 'SMS',
               message,
               whatsappMedia: await gatePassWhatsAppMedia(db, passResult),   // the pass lives in the host unit's DB
-              whatsappMessage: withPortalLink(message),
+              whatsappMessage: whatsappText({
+                title: 'You are invited for a visit', name: effectiveVisitorName,
+                intro: `${hostName} has invited you for a visit.${passNum ? ' Your gate pass is attached.' : ''}`,
+                details: [['Gate pass', passNum], ['Date', formatDate(visit_date)], ['Time', formatTime(visit_start_time)],
+                  ['Invited by', hostName], ['Unit', hostUnitName]],
+                notes: passNum ? VISITOR_NOTES : [],
+                link: visitorPortalUrl(),
+              }),
             });
           } catch (smsErr) {
             console.error('[VisitRequestController] Failed to send SMS to hosted visitor:', smsErr.message);
@@ -758,7 +772,15 @@ const createRequest = async (req, res) => {
       if (resolvedVisitorPhone) {
         const message = `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}`;
         await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS', message,
-          whatsappMedia: await gatePassWhatsAppMedia(db, passResult), whatsappMessage: withPortalLink(message) });
+          whatsappMedia: await gatePassWhatsAppMedia(db, passResult),
+          whatsappMessage: whatsappText({
+            title: 'Visit scheduled', name: contact_person || company_name,
+            intro: `Your visit to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ' Your gate pass is attached.' : ''}`,
+            details: [['Gate pass', passResult?.pass_number], ['Company', company_name], ['Date', formatDate(visit_date)],
+              ['Time', formatTime(visit_start_time)], ['To meet', host.full_name], ['Purpose', purpose]],
+            notes: passResult?.pass_number ? VISITOR_NOTES : ['Carry a valid government photo ID.'],
+            link: visitorPortalUrl(),
+          }) });
       }
       await notify({ visitRequestId, type: 'DASHBOARD', message: `Vendor visit scheduled: ${company_name || 'Unknown'} on ${visit_date}${timeStr}.` });
     } else if (typeCode === 'SPOT') {
@@ -768,7 +790,14 @@ const createRequest = async (req, res) => {
       await notify({ visitRequestId, recipientUserId: effectiveHostId, type: 'DASHBOARD', message: `URGENT: ${typeLabel} waiting at reception for you. Purpose: ${purpose}` });
       if (host.phone) {
         await notify({ visitRequestId, recipientUserId: effectiveHostId, recipientPhone: host.phone, type: 'SMS',
-          message: `VMS: ${typeLabel} ${resolvedVisitorName || ''} is waiting at reception to meet you. Please approve or reject in VMS.` });
+          message: `VMS: ${typeLabel} ${resolvedVisitorName || ''} is waiting at reception to meet you. Please approve or reject in VMS.`,
+          whatsappMessage: whatsappText({
+            title: 'Visitor waiting at reception', name: host.full_name,
+            intro: `${resolvedVisitorName || 'A walk-in visitor'} is waiting at reception to meet you.`,
+            details: [['Visitor', resolvedVisitorName], ['Company', company_name], ['Type', typeLabel], ['Purpose', purpose]],
+            notes: ['Approve or decline now so security can issue the gate pass.'],
+            link: appUrl('/approvals'), linkLabel: 'Approve or decline',
+          }) });
       }
       if (host.email) {
         const displayName = resolvedVisitorName ? (company_name ? `${resolvedVisitorName} (${company_name})` : resolvedVisitorName) : (company_name || 'Walk-in visitor');
@@ -786,7 +815,15 @@ const createRequest = async (req, res) => {
       if (resolvedVisitorPhone) {
         const message = `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} has been APPROVED.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}`;
         await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS', message,
-          whatsappMedia: await gatePassWhatsAppMedia(db, passResult), whatsappMessage: withPortalLink(message) });
+          whatsappMedia: await gatePassWhatsAppMedia(db, passResult),
+          whatsappMessage: whatsappText({
+            title: 'Visit approved', name: resolvedVisitorName,
+            intro: `Your visit to meet ${host.full_name} has been approved.${passResult?.pass_number ? ' Your gate pass is attached.' : ''}`,
+            details: [['Gate pass', passResult?.pass_number], ['Date', formatDate(visit_date)],
+              ['Time', formatTime(visit_start_time)], ['To meet', host.full_name], ['Purpose', purpose]],
+            notes: passResult?.pass_number ? VISITOR_NOTES : ['Carry a valid government photo ID.'],
+            link: visitorPortalUrl(),
+          }) });
       }
       await notify({ visitRequestId, recipientUserId: requester_user_id, type: 'DASHBOARD', message: `Your personal visit request for ${resolvedVisitorName || 'Guest'} on ${visit_date}${timeStr} is auto-approved. Gate pass generated.` });
     }
@@ -1256,11 +1293,13 @@ const cancelRequest = async (req, res) => {
           await sendNotification({
             db: targetDb, visitRequestId: parseInt(id),
             recipientEmail: d.visitor_email, type: 'EMAIL',
-            subject: `Your Visit Has Been Cancelled – OHPC VMS`,
-            message: `<p>Hi ${esc(d.visitor_name || 'Visitor')},</p>
-<p>Your visit request to <strong>${esc(d.host_name || 'your host')}</strong> scheduled for <strong>${esc(d.visit_date + timeStr)}</strong> has been <strong>cancelled</strong> by ${esc(canceller)}.</p>
-<p>If you believe this is an error, please contact the OHPC VMS administration.</p>
-<p>Thank you,<br/>OHPC VMS Team</p>`,
+            ...emailService.noticeMessage({
+              title: 'Visit cancelled', name: d.visitor_name,
+              subject: 'Your visit has been cancelled',
+              paragraphs: [`Your visit request has been <strong>cancelled</strong> by ${esc(canceller)}. If you believe this is an error, please contact the unit administration.`],
+              rows: [['To meet', d.host_name], ['Date and time', [d.visit_date, formatTime(d.visit_start_time)].filter(Boolean).join(', ')]],
+              status: { label: 'CANCELLED', tone: 'neutral' },
+            }),
           });
         }
         if (d.visitor_phone) {
@@ -1268,6 +1307,13 @@ const cancelRequest = async (req, res) => {
             db: targetDb, visitRequestId: parseInt(id),
             recipientPhone: d.visitor_phone, type: 'SMS',
             message: `OHPC VMS: Your visit to ${d.host_name || 'your host'} on ${d.visit_date}${timeStr} has been cancelled by ${canceller}. Contact administration if this is an error.`,
+            whatsappMessage: whatsappText({
+              title: 'Visit cancelled', name: d.visitor_name,
+              intro: `Your visit request has been cancelled by ${canceller}.`,
+              details: [['To meet', d.host_name], ['Date', d.visit_date], ['Time', formatTime(d.visit_start_time)]],
+              notes: ['If you believe this is an error, please contact the unit administration.'],
+              link: visitorPortalUrl(), linkLabel: 'Visitor portal',
+            }),
           });
         }
 
@@ -1277,10 +1323,13 @@ const cancelRequest = async (req, res) => {
             await sendNotification({
               db: targetDb, visitRequestId: parseInt(id),
               recipientUserId: d.host_id, recipientEmail: d.host_email, type: 'EMAIL',
-              subject: `Visit Cancelled – OHPC VMS`,
-              message: `<p>Hi ${esc(d.host_name || 'there')},</p>
-<p>The visit from <strong>${esc(d.visitor_name || 'your visitor')}</strong> scheduled for <strong>${esc(d.visit_date + timeStr)}</strong> (Purpose: ${esc(d.purpose || 'N/A')}) has been <strong>cancelled</strong> by ${esc(canceller)}.</p>
-<p>No further action is required from your side.</p>`,
+              ...emailService.noticeMessage({
+                title: 'Visit cancelled', name: d.host_name,
+                paragraphs: [`The visit from <strong>${esc(d.visitor_name || 'your visitor')}</strong> has been cancelled by ${esc(canceller)}. No action is needed from your side.`],
+                rows: [['Visitor', d.visitor_name], ['Date and time', [d.visit_date, formatTime(d.visit_start_time)].filter(Boolean).join(', ')],
+                  ['Purpose of visit', d.purpose]],
+                status: { label: 'CANCELLED', tone: 'neutral' },
+              }),
             });
           }
           if (d.host_phone) {
@@ -1288,6 +1337,11 @@ const cancelRequest = async (req, res) => {
               db: targetDb, visitRequestId: parseInt(id),
               recipientUserId: d.host_id, recipientPhone: d.host_phone, type: 'SMS',
               message: `OHPC VMS: Visit from ${d.visitor_name || 'your visitor'} on ${d.visit_date}${timeStr} has been cancelled by ${canceller}.`,
+              whatsappMessage: whatsappText({
+                title: 'Visit cancelled', name: d.host_name,
+                intro: `The visit from ${d.visitor_name || 'your visitor'} has been cancelled by ${canceller}. No action is needed.`,
+                details: [['Visitor', d.visitor_name], ['Date', d.visit_date], ['Time', formatTime(d.visit_start_time)], ['Purpose', d.purpose]],
+              }),
             });
           }
           await sendNotification({
@@ -1564,7 +1618,16 @@ const createPublicRequest = async (req, res) => {
       await sendNotification({ db: unitDb, visitRequestId, recipientUserId: host.id, recipientEmail: host.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
     }
     if (host.phone) {
-      await sendNotification({ db: unitDb, visitRequestId, recipientUserId: host.id, recipientPhone: host.phone, type: 'SMS', message: `VMS: ${visitor_full_name} requested to visit you on ${visit_date}${timeStr}. Please approve/reject.` });
+      await sendNotification({
+        db: unitDb, visitRequestId, recipientUserId: host.id, recipientPhone: host.phone, type: 'SMS',
+        message: `VMS: ${visitor_full_name} requested to visit you on ${visit_date}${timeStr}. Please approve/reject.`,
+        whatsappMessage: whatsappText({
+          title: 'Visit request awaiting your approval', name: host.full_name,
+          intro: `${visitor_full_name} has requested to visit you. Please approve or decline the request.`,
+          details: [['Visitor', visitor_full_name], ['Date', formatDate(visit_date)], ['Time', formatTime(visit_start_time)], ['Purpose', purpose]],
+          link: appUrl('/approvals'), linkLabel: 'Approve or decline',
+        }),
+      });
     }
     await sendNotification({ db: unitDb, visitRequestId, recipientUserId: host.id, type: 'DASHBOARD', message: `New prior-approved request from ${visitor_full_name} on ${visit_date}${timeStr} awaiting approval.` });
 
@@ -1576,13 +1639,13 @@ const createPublicRequest = async (req, res) => {
             db: unitDb, visitRequestId,
             recipientEmail: visitor_email,
             type: 'EMAIL',
-            subject: `Visit Request Submitted – OHPC VMS`,
-            message: `<p>Hi ${esc(visitor_full_name)},</p>
-<p>Your visit request to <strong>${esc(host.full_name)}</strong> (${esc(unit.name)}) has been submitted successfully and is <strong>pending approval</strong>.</p>
-<p><strong>Date:</strong> ${esc(visit_date + timeStr)}<br/>
-<strong>Purpose:</strong> ${esc(purpose || 'N/A')}</p>
-<p>You will receive an email and SMS once your request is reviewed. You can also track its status by logging in to the Visitor Portal.</p>
-<p>Thank you,<br/>OHPC VMS Team</p>`,
+            ...emailService.noticeMessage({
+              title: 'Visit request submitted', name: visitor_full_name,
+              paragraphs: ['Your visit request has been submitted and is <strong>awaiting approval</strong>. You will receive an email and SMS once it is reviewed.'],
+              rows: [['To meet', host.full_name], ['Unit', unit.name], ['Date and time', formatDateTime(visit_date, visit_start_time)], ['Purpose of visit', purpose]],
+              status: { label: 'PENDING APPROVAL', tone: 'warning' },
+              cta: { href: visitorPortalUrl(), label: 'Track your request' },
+            }),
           });
         }
         if (visitor_phone) {
@@ -1591,6 +1654,13 @@ const createPublicRequest = async (req, res) => {
             recipientPhone: visitor_phone,
             type: 'SMS',
             message: `OHPC VMS: Your visit request to ${host.full_name} on ${visit_date}${timeStr} has been submitted and is pending approval. You will be notified once reviewed.`,
+            whatsappMessage: whatsappText({
+              title: 'Visit request submitted', name: visitor_full_name,
+              intro: 'Your visit request has been submitted and is pending approval. You will be informed once it is reviewed.',
+              details: [['To meet', host.full_name], ['Unit', unit.name], ['Date', formatDate(visit_date)],
+                ['Time', formatTime(visit_start_time)], ['Purpose', purpose]],
+              link: visitorPortalUrl(),
+            }),
           });
         }
       } catch (visitorNotifyErr) {

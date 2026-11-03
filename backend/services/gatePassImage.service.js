@@ -17,6 +17,7 @@ const sharp  = require('sharp');
 const QRCode = require('qrcode');
 const { centralPool } = require('./dbManager');
 const { signQRPayload } = require('../utils/qrToken.util');
+const { formatDate, formatTime } = require('../utils/displayFormat.util');
 const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
 const { gatePassMediaUrl, isWhatsAppConfigured, visitorPortalUrl } = require('./whatsapp.service');
 
@@ -26,28 +27,9 @@ const WIDTH = 1080;
 const NAVY = '#13315c';
 const FONT = 'Arial, Helvetica, DejaVu Sans, Liberation Sans, sans-serif';
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
 const xml = (s) => String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const clip = (s, n) => { const t = String(s ?? '').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
-
-/** 2026-11-02 / Date → "02 Nov 2026" */
-const formatDate = (d) => {
-  if (!d) return '';
-  const ymd = d instanceof Date
-    ? [d.getFullYear(), d.getMonth() + 1, d.getDate()]
-    : String(d).slice(0, 10).split('-').map(Number);
-  if (ymd.length !== 3 || ymd.some(Number.isNaN)) return String(d);
-  return `${String(ymd[2]).padStart(2, '0')} ${MONTHS[ymd[1] - 1]} ${ymd[0]}`;
-};
-/** "14:30:00" → "2:30 PM" */
-const formatTime = (t) => {
-  const m = String(t || '').match(/^(\d{1,2}):(\d{2})/);
-  if (!m) return '';
-  const h = Number(m[1]);
-  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
-};
 
 /** Everything printed on the pass, from the unit DB the pass lives in. */
 async function loadPass(db, gatePassId) {

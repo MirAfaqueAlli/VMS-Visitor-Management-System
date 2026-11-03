@@ -41,7 +41,8 @@ const { validatePassword } = require('../utils/passwordValidator.util');
 const { signQRPayload } = require('../utils/qrToken.util');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { sendNotification } = require('../services/notification.service');
-const { escapeHtml: esc } = require('../services/email.service');
+const { escapeHtml: esc, noticeMessage } = require('../services/email.service');
+const { whatsappText, visitorPortalUrl } = require('../services/whatsapp.service');
 
 const SESSION_EXPIRY       = '12h';
 const VISITOR_TOKEN_EXPIRY = '30m';
@@ -572,31 +573,46 @@ const cancelVisit = async (req, res) => {
         if (a.email) {
           await sendNotification({
             db: pool, visitRequestId: id, recipientEmail: a.email, type: 'EMAIL',
-            subject: 'Visit request cancelled – OHPC VMS',
-            message: `<p>Hi ${esc(a.full_name)},</p>
-<p>Your visit request to <strong>${esc(hostName)}</strong> (${esc(unit.name)}) for <strong>${esc(when)}</strong> has been cancelled as you asked.</p>
-<p>You can request a new visit any time from the visitor portal.</p>
-<p>OHPC VMS</p>`,
+            ...noticeMessage({
+              title: 'Visit request cancelled', name: a.full_name,
+              paragraphs: ['Your visit request has been cancelled as you asked. You can request a new visit any time from the visitor portal.'],
+              rows: [['To meet', hostName], ['Unit', unit.name], ['Date and time', when]],
+              status: { label: 'CANCELLED', tone: 'neutral' },
+              cta: { href: visitorPortalUrl(), label: 'Open the visitor portal' },
+            }),
           });
         }
         await sendNotification({
           db: pool, visitRequestId: id, recipientPhone: a.phone, type: 'SMS',
           message: `OHPC VMS: Your visit to ${hostName} on ${when} has been cancelled as requested.`,
+          whatsappMessage: whatsappText({
+            title: 'Visit cancelled', name: a.full_name,
+            intro: 'Your visit request has been cancelled as you asked.',
+            details: [['To meet', hostName], ['Unit', unit.name], ['Date', when]],
+            link: visitorPortalUrl(), linkLabel: 'Request a new visit',
+          }),
         });
         if (visit.host_id) {
           if (visit.host_email) {
             await sendNotification({
               db: pool, visitRequestId: id, recipientUserId: visit.host_id, recipientEmail: visit.host_email, type: 'EMAIL',
-              subject: 'Visit cancelled by the visitor – OHPC VMS',
-              message: `<p>Hi ${esc(visit.host_name || 'there')},</p>
-<p><strong>${esc(a.full_name)}</strong> has cancelled their visit request for <strong>${esc(when)}</strong>. No action is needed.</p>
-<p>OHPC VMS</p>`,
+              ...noticeMessage({
+                title: 'Visit cancelled by the visitor', name: visit.host_name,
+                paragraphs: [`<strong>${esc(a.full_name)}</strong> has cancelled their visit request. No action is needed from your side.`],
+                rows: [['Visitor', a.full_name], ['Date and time', when]],
+                status: { label: 'CANCELLED', tone: 'neutral' },
+              }),
             });
           }
           if (visit.host_phone) {
             await sendNotification({
               db: pool, visitRequestId: id, recipientUserId: visit.host_id, recipientPhone: visit.host_phone, type: 'SMS',
               message: `OHPC VMS: ${a.full_name} has cancelled their visit to you on ${when}. No action needed.`,
+              whatsappMessage: whatsappText({
+                title: 'Visit cancelled by the visitor', name: visit.host_name,
+                intro: `${a.full_name} has cancelled their visit request. No action is needed.`,
+                details: [['Visitor', a.full_name], ['Date', when]],
+              }),
             });
           }
           await sendNotification({

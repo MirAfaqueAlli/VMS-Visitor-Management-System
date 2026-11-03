@@ -9,7 +9,8 @@ const { verifyQRToken }          = require('../utils/qrToken.util');
 const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
 const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
 const { sendNotification }       = require('../services/notification.service');
-const { escapeHtml: esc }        = require('../services/email.service');
+const { escapeHtml: esc, noticeMessage } = require('../services/email.service');
+const { whatsappText }           = require('../services/whatsapp.service');
 
 // IST calendar date as YYYY-MM-DD (mirrors approval/visitRequest controllers)
 const getISTDateString = (d = new Date()) =>
@@ -400,6 +401,13 @@ const checkIn = async (req, res) => {
               recipientUserId: host.id, recipientPhone: host.phone,
               type: 'SMS',
               message: `OHPC VMS: ${request.visitor_name} has checked in at the gate to meet you. Check-in time: ${checkInAt} IST. Pass: ${request.pass_number || 'N/A'}.`,
+              whatsappMessage: whatsappText({
+                title: 'Visitor at the gate', name: host.full_name,
+                intro: `${request.visitor_name} has checked in at the gate to meet you.`,
+                details: [['Visitor', request.visitor_name], ['Mobile', request.visitor_phone],
+                  ['Checked in', `${checkInAt} IST`], ['Gate pass', request.pass_number]],
+                notes: ['Please receive your visitor at the reception.'],
+              }),
             });
           }
           if (host.email) {
@@ -407,14 +415,16 @@ const checkIn = async (req, res) => {
               db: req.db, visitRequestId: requestId,
               recipientUserId: host.id, recipientEmail: host.email,
               type: 'EMAIL',
-              subject: `Visitor Arrived – ${request.visitor_name}`,
-              message: `<p>Hi ${esc(host.full_name || 'there')},</p>
-<p><strong>${esc(request.visitor_name)}</strong> has checked in at the gate to visit you.</p>
-<p><strong>Check-in Time:</strong> ${esc(checkInAt)} IST<br/>
-<strong>Pass Number:</strong> ${esc(request.pass_number || 'N/A')}<br/>
-<strong>Phone:</strong> ${esc(request.visitor_phone || 'N/A')}</p>
-<p>Please proceed to receive your visitor.</p>
-<p>OHPC VMS Team</p>`,
+              ...noticeMessage({
+                title: 'Visitor at the gate', name: host.full_name,
+                subject: `Visitor arrived: ${request.visitor_name}`,
+                preheader: `${request.visitor_name} has checked in at the gate to meet you.`,
+                paragraphs: [`<strong>${esc(request.visitor_name)}</strong> has checked in at the gate to meet you. Please receive your visitor at the reception.`],
+                rows: [['Visitor', request.visitor_name], ['Mobile', request.visitor_phone],
+                  ['Checked in at', `${checkInAt} IST`], ['Gate pass number', request.pass_number, { mono: true }]],
+                status: { label: 'CHECKED IN', tone: 'success' },
+                ref: request.pass_number,
+              }),
             });
           }
           await sendNotification({
