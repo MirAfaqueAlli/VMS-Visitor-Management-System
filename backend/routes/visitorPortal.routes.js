@@ -6,6 +6,8 @@ const router  = express.Router();
 const ctrl    = require('../controllers/visitorPortal.controller');
 const { validate } = require('../middlewares/validate.middleware');
 const { authLimiter } = require('../middlewares/rateLimit.middleware');
+const { uploadVisitorPhoto } = require('../middlewares/upload.middleware');
+const { sendError } = require('../utils/response.util');
 const { z } = require('zod');
 
 // Per-IP limits. /identify counts every request: it tells whether a number or
@@ -59,6 +61,9 @@ router.post('/me/email/send',  sendLimiter, validate(emailSchema),    ctrl.sendE
 router.post('/me/email/verify', otpLimiter, validate(emailOtpSchema), ctrl.verifyEmail);
 router.post('/me/phone/verify', otpLimiter, validate(codeOnlySchema), ctrl.verifyPhone);
 router.post('/me/password',     loginLimiter, validate(passwordSchema), ctrl.setPassword);
+router.put('/me/id-proof',                 ctrl.setIdProof);
+router.post('/me/photo', (req, res, next) => uploadVisitorPhoto(req, res, (err) => (err ? sendError(res, err.message, 400) : next())), ctrl.setPhoto);
+router.delete('/me/photo',                 ctrl.removePhoto);
 router.get('/me/visits',                    ctrl.myVisits);
 router.get('/me/visits/:unitId/:id/pass',   ctrl.myPass);
 router.post('/me/visits/:unitId/:id/cancel', ctrl.cancelVisit);

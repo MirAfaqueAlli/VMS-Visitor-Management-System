@@ -50,6 +50,11 @@ export function PageHeader({ title, crumbs, actions, meta }) {
   );
 }
 
+/** Live state — a pulsing green dot: on the premises right now. */
+export function Live({ children = 'Inside now', title = 'Checked in and not yet out' }) {
+  return <span className="live-state" title={title}><span className="live-dot" aria-hidden="true" />{children}</span>;
+}
+
 /** Section title (14px/650) with an optional Settings-style head-icon chip and muted meta. */
 export function SectionTitle({ icon: Icon, tone = 'brand', title, meta, actions }) {
   return (

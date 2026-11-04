@@ -12,10 +12,14 @@ const { generateGatePass }       = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin, isEmployee, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
 const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
 const { emitToUser, emitToUnitSecurity } = require('../socket/socketManager');
-const { encryptField, decryptRows } = require('../utils/crypto.util');
-const { getSignedFileUrl }          = require('../utils/s3.util');
+const { encryptField, decryptRows, maskIdNumber } = require('../utils/crypto.util');
+const { visitorOnRecord } = require('../services/visitorRecord.service');
+const { getSignedFileUrl, uploadToS3 } = require('../utils/s3.util');
+const { cleanIdNumber } = require('../utils/idProof.util');
+const { squarePhoto } = require('../utils/photo.util');
 const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
 const { formatDate, formatTime, formatDateTime } = require('../utils/displayFormat.util');
+const { expireForRequest, visitDay } = require('../services/visitExpiry.service');
 const { gatePassWhatsAppMedia }     = require('../services/gatePassImage.service');
 const { qrImageForPass }            = require('../services/qrcode.service');
 
@@ -189,6 +193,8 @@ const createRequest = async (req, res) => {
       service_type,
       work_order_ref,
       contact_person,
+      id_proof_type,
+      id_proof_number,
       force_create = false,
     } = req.body;
 
@@ -430,6 +436,7 @@ const createRequest = async (req, res) => {
          host_user_id, department_id, unit_id, target_unit_id,
          visit_category, request_source,
          purpose, visit_date, visit_start_time, visit_end_time, accompanying_count,
+         id_proof_type, id_proof_number,
          status, company_name, vendor_email, service_type, work_order_ref, force_created,
          created_at, updated_at
        ) VALUES (
@@ -438,6 +445,7 @@ const createRequest = async (req, res) => {
          ?, ?, ?, ?,
          ?, ?,
          ?, ?, ?, ?, ?,
+         ?, ?,
          ?, ?, ?, ?, ?, ?,
          NOW(), NOW()
        )`,
@@ -463,6 +471,8 @@ const createRequest = async (req, res) => {
         visit_start_time || null,
         visit_end_time   || null,
         accompanying_count,
+        id_proof_type || null,
+        id_proof_type ? encryptField(cleanIdNumber(id_proof_type, id_proof_number)) : null,   // encrypted at rest
         status,
         (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (company_name || null) : null,
         (typeCode === 'VENDOR' || typeCode === 'SPOT') ? (vendor_email || null) : null,
@@ -883,7 +893,7 @@ const createRequest = async (req, res) => {
 
     // Private bucket — hand the browser a short-lived signed link for the QR
     const gatePass = passResult && { ...passResult, qr_code_path: await getSignedFileUrl(passResult.qr_code_path) };
-    return sendSuccess(res, { ...fullRequest[0], gate_pass: gatePass }, 'Visit request created successfully.', 201);
+    return sendSuccess(res, { ...fullRequest[0], id_proof_number: undefined, gate_pass: gatePass }, 'Visit request created successfully.', 201);
   } catch (err) {
     if (conn) {
       try { await conn.rollback(); } catch (_) {}
@@ -895,8 +905,42 @@ const createRequest = async (req, res) => {
 };
 
 // ── getRequest ────────────────────────────────────────────────────────────────
+// ── uploadRequestPhoto ────────────────────────────────────────────────────────
+/**
+ * POST /api/visit-requests/:id/photo — the visitor's photo, taken with the request
+ * (optional). Stored in S3 and shown to security at check-in.
+ */
+const uploadRequestPhoto = async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id || !req.file) return sendError(res, 'Attach the visitor photo.', 400);
+    const [rows] = await req.db.query(
+      'SELECT id, status, requester_user_id, host_user_id FROM visit_requests WHERE id = ? LIMIT 1', [id]
+    );
+    if (!rows.length) return sendError(res, 'Visit request not found.', 404);
+    const r = rows[0];
+    if (!isUnitAdmin(req.user) && ![r.requester_user_id, r.host_user_id].includes(req.user.id)
+        && !['security', 'receptionist'].includes(req.user.role_type)) {
+      return sendError(res, 'You can add a photo only to a request you raised or host.', 403);
+    }
+    if (['COMPLETED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(r.status)) {
+      return sendError(res, 'This visit is closed — its photo can no longer be changed.', 400);
+    }
+    const photo = await squarePhoto(req.file.buffer);   // 800 × 800, centre-cropped
+    const stored = await uploadToS3({
+      buffer: photo.buffer, mimeType: photo.mimeType, folder: 'visitor-photos', filename: `request-${id}-${Date.now()}.${photo.ext}`,
+    });
+    await req.db.query('UPDATE visit_requests SET visitor_photo_path = ?, updated_at = NOW() WHERE id = ?', [stored, id]);
+    return sendSuccess(res, { visitor_photo_path: await getSignedFileUrl(stored) }, 'Photo saved.');
+  } catch (err) {
+    console.error('[VisitRequestController] uploadRequestPhoto error:', err.message);
+    return sendError(res, 'Could not save the photo. The request itself is saved.', 500);
+  }
+};
+
 const getRequest = async (req, res) => {
   try {
+    await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
     const { id } = req.params;
 
     // ?unit_id=<other unit> → an EMPLOYEE_VISIT the caller raised in another unit.
@@ -993,9 +1037,27 @@ const getRequest = async (req, res) => {
       } catch (_) { /* non-fatal — table may not exist on older dbs */ }
     }
 
+    const onRecord = await visitorOnRecord(db, request);
+    // The unit being visited (the host's unit) — named on the request page
+    let hostUnit = null;
+    if (request.unit_id) {
+      const [[u]] = await centralPool.query('SELECT name, city, code FROM units WHERE id = ? LIMIT 1', [request.unit_id]);
+      hostUnit = u || null;
+    }
     return sendSuccess(res, {
       ...request,
       my_role: isHost ? 'HOST' : 'VISITOR',
+      // The visitor's ID proof and photo on record (request → portal profile → last visit):
+      // the ID full for the gate / admins, masked for others
+      id_proof_type:      onRecord.id_proof_type,
+      id_proof_number:    onRecord.id_proof_number && (canViewFullIdNumbers(req.user) ? onRecord.id_proof_number : maskIdNumber(onRecord.id_proof_number)),
+      id_proof_source:    onRecord.id_proof_source,       // 'request' | 'profile' | 'previous_visit'
+      visitor_photo_path: await getSignedFileUrl(onRecord.photo_path),
+      photo_source:       onRecord.photo_source,
+      last_check_in_at:   onRecord.last_check_in_at,
+      host_unit_name: hostUnit?.name || null,
+      host_unit_city: hostUnit?.city || null,
+      visit_day: visitDay(request.visit_date),     // 'past' | 'today' | 'future' (IST) — the gate warns off-day
       qr_code_path: await qrImageForPass(request), // signed S3 link, or drawn from the pass data
       qr_code_data: undefined,
       companions,
@@ -1015,6 +1077,7 @@ const getRequest = async (req, res) => {
 // ── listRequests ──────────────────────────────────────────────────────────────
 const listRequests = async (req, res) => {
   try {
+    await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
     const { status, visit_date, department_id, visitor_phone, search, tab } = req.query;
     const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
@@ -1379,42 +1442,127 @@ const cancelRequest = async (req, res) => {
 const getMyRequests = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { status, upcoming, limit = 10, page = 1 } = req.query;
-    const parsedLimit  = Math.min(50, parseInt(limit, 10) || 10);
-    const parsedOffset = (Math.max(1, parseInt(page, 10) || 1) - 1) * parsedLimit;
+    const { status, upcoming } = req.query;
+    const limit = Math.min(50, parseInt(req.query.limit, 10) || 10);
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const ahead = upcoming === 'true';
 
-    const conditions = ['(vr.host_user_id = ? OR vr.requester_user_id = ?)'];
-    const params     = [userId, userId];
+    // upcoming = approved visits from today (IST) on
+    const filters = [];
+    const fparams = [];
+    if (status) { filters.push('vr.status = ?'); fparams.push(status); }
+    if (ahead)  { filters.push("vr.visit_date >= ? AND vr.status IN ('APPROVED', 'SCHEDULED')"); fparams.push(getISTDateString()); }
+    const extra = filters.length ? ` AND ${filters.join(' AND ')}` : '';
+    const order = ahead ? 'ASC' : 'DESC';
+    const take  = page * limit;   // enough rows from each source to fill this page after merging
 
-    if (status)              { conditions.push('vr.status = ?');             params.push(status); }
-    if (upcoming === 'true') { conditions.push('vr.visit_date >= CURDATE()'); }
-
-    const whereClause = `WHERE ${conditions.join(' AND ')}`;
-    const order       = upcoming === 'true' ? 'ASC' : 'DESC';
-
-    const [rows] = await req.db.query(
-      `SELECT vr.id, vr.visit_date, vr.status, vr.purpose, vr.visit_category,
-              vr.visitor_name, vr.visitor_phone, vr.company_name,
-              d.name AS department_name
+    const SELECT = `SELECT vr.id, vr.visit_date, vr.visit_start_time, vr.visit_end_time, vr.status, vr.purpose,
+              vr.visit_category, vr.visitor_name, vr.visitor_phone, vr.visitor_email, vr.company_name, vr.created_at,
+              d.name AS department_name, h.full_name AS host_name
        FROM visit_requests vr
        LEFT JOIN departments d ON d.id = vr.department_id
-       ${whereClause}
-       ORDER BY vr.visit_date ${order}
-       LIMIT ? OFFSET ?`,
-      [...params, parsedLimit, parsedOffset]
-    );
+       LEFT JOIN users h ON h.id = vr.host_user_id`;
+    const fetch = async (pool, where, params) => {
+      const [rows] = await pool.query(`${SELECT} ${where} ORDER BY vr.visit_date ${order}, vr.id DESC LIMIT ?`, [...params, take]);
+      const [[{ n }]] = await pool.query(`SELECT COUNT(*) AS n FROM visit_requests vr ${where}`, params);
+      return { rows, n: Number(n) };
+    };
 
-    const [[{ total }]] = await req.db.query(
-      `SELECT COUNT(*) AS total FROM visit_requests vr ${whereClause}`, params
-    );
+    // They're the visitor when the visit carries their mobile or email (hosted / invited)
+    const phone = String(req.user.phone || '').replace(/\D/g, '').slice(-10);
+    const email = String(req.user.email || '').trim().toLowerCase();
+    const asVisitor = [];
+    const asVisitorParams = [];
+    if (phone.length === 10) { asVisitor.push("RIGHT(REGEXP_REPLACE(COALESCE(vr.visitor_phone, ''), '[^0-9]', ''), 10) = ?"); asVisitorParams.push(phone); }
+    if (email)               { asVisitor.push('LOWER(vr.visitor_email) = ?'); asVisitorParams.push(email); }
+    const orVisitor = asVisitor.length ? ` OR ${asVisitor.join(' OR ')}` : '';
+
+    // 1. This unit: visits they host, raised, or are the visitor in
+    const own = await fetch(req.db, `WHERE (vr.host_user_id = ? OR vr.requester_user_id = ?${orVisitor})${extra}`,
+      [userId, userId, ...asVisitorParams, ...fparams]);
+    let rows  = own.rows;
+    let total = own.n;
+
+    // 2. Other units: visits they raised there (stored in the host unit's DB) or are the visitor in
+    const myUnit = await ownUnitId(req);
+    if (myUnit) {
+      const [units] = await centralPool.query(
+        "SELECT id, db_name FROM units WHERE is_active = 1 AND db_status = 'ACTIVE' AND id <> ?", [myUnit]
+      );
+      const settled = await Promise.allSettled(units.map(async (u) => {
+        const r = await fetch(getPool(u.db_name),
+          `WHERE ((vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?)${orVisitor})${extra}`,
+          [userId, myUnit, ...asVisitorParams, ...fparams]);
+        return { rows: r.rows.map((x) => ({ ...x, _cross_unit_id: u.id })), n: r.n };
+      }));
+      for (const s of settled) {
+        if (s.status === 'fulfilled') { rows = rows.concat(s.value.rows); total += s.value.n; }
+        else console.warn('[VisitRequestController] getMyRequests unit query failed:', s.reason?.message);
+      }
+    }
+
+    const dir = ahead ? 1 : -1;
+    rows.sort((x, y) => dir * (new Date(x.visit_date) - new Date(y.visit_date)) || (new Date(y.created_at) - new Date(x.created_at)));
+    rows = rows.slice((page - 1) * limit, page * limit);
 
     return sendSuccess(res, {
       requests:   rows,
-      pagination: { page: parseInt(page), limit: parsedLimit, total, pages: Math.ceil(total / parsedLimit) },
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     }, 'Your visit requests fetched successfully.');
   } catch (err) {
     console.error('[VisitRequestController] getMyRequests error:', err.message);
     return sendError(res, 'Failed to fetch your requests.', 500);
+  }
+};
+
+// ── getMyWalkIns ──────────────────────────────────────────────────────────────
+/**
+ * GET /api/visit-requests/my-walkins?page=&limit=&search=
+ * Spot (walk-in) visits this security / reception user registered, for today and
+ * later — expired ones left out. With pass, host and gate status.
+ */
+const getMyWalkIns = async (req, res) => {
+  try {
+    await expireForRequest(req);
+    const limit  = Math.min(100, parseInt(req.query.limit, 10) || 25);
+    const page   = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const search = String(req.query.search || '').trim();
+    const today  = getISTDateString();
+
+    const where = [
+      "vr.requester_user_id = ?", "vr.visit_category = 'SPOT'", 'vr.visit_date >= ?', "vr.status <> 'EXPIRED'",
+    ];
+    const params = [req.user.id, today];
+    if (search) {
+      where.push('(vr.visitor_name LIKE ? OR vr.company_name LIKE ? OR vr.visitor_phone LIKE ? OR h.full_name LIKE ? OR gp.pass_number LIKE ?)');
+      params.push(...Array(5).fill(`%${search}%`));
+    }
+    const from = `FROM visit_requests vr
+       JOIN users h ON h.id = vr.host_user_id
+       LEFT JOIN departments d ON d.id = vr.department_id
+       LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
+       WHERE ${where.join(' AND ')}`;
+
+    const [rows] = await req.db.query(
+      `SELECT vr.id, vr.visit_date, vr.visit_start_time, vr.visit_end_time, vr.status, vr.purpose,
+              vr.visitor_name, vr.visitor_phone, vr.company_name, vr.created_at,
+              h.full_name AS host_name, d.name AS department_name,
+              gp.pass_number, gp.status AS pass_status,
+              (SELECT vl.status FROM visit_logs vl WHERE vl.visit_request_id = vr.id ORDER BY vl.id DESC LIMIT 1) AS gate_status,
+              (SELECT vl.check_in_at FROM visit_logs vl WHERE vl.visit_request_id = vr.id ORDER BY vl.id DESC LIMIT 1) AS check_in_at
+       ${from}
+       ORDER BY vr.visit_date ASC, vr.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, (page - 1) * limit]
+    );
+    const [[{ total }]] = await req.db.query(`SELECT COUNT(*) AS total ${from}`, params);
+    return sendSuccess(res, {
+      requests: rows.map((r) => ({ ...r, visit_day: visitDay(r.visit_date) })),
+      pagination: { page, limit, total: Number(total), pages: Math.ceil(Number(total) / limit) },
+    }, 'Your walk-in visits.');
+  } catch (err) {
+    console.error('[VisitRequestController] getMyWalkIns error:', err.message);
+    return sendError(res, 'Failed to load your walk-in visits.', 500);
   }
 };
 
@@ -1463,6 +1611,19 @@ const createPublicRequest = async (req, res) => {
     const visitor_phone     = (tokenData.visitor_phone || '').trim();
     const visitor_email     = (tokenData.visitor_email || '').trim();
     const visitor_address   = (tokenData.visitor_address || '').trim();
+
+    // ID proof and photo come from the visitor's portal profile (never the body)
+    const [accRows] = await centralPool.query(
+      'SELECT id_proof_type, id_proof_number, photo_path FROM visitor_accounts WHERE (id = ? OR phone = ?) AND is_active = 1 LIMIT 1',
+      [tokenData.account_id || 0, String(tokenData.visitor_phone || '').replace(/\D/g, '').slice(-10)]
+    );
+    const profile = accRows[0] || {};
+    if (!profile.id_proof_type || !profile.id_proof_number) {
+      return sendError(res, 'Add your ID proof under Profile and security before requesting a visit.', 400);
+    }
+    if (!profile.photo_path) {
+      return sendError(res, 'Add your photo under Profile and security before requesting a visit.', 400);
+    }
 
     // ── Map public-facing visit type to internal category ────────────────────
     // Internal values (PERSONAL_VISIT, VENDOR) are accepted as-is; anything else is rejected
@@ -1576,15 +1737,17 @@ const createPublicRequest = async (req, res) => {
          requester_user_id, host_user_id, department_id, unit_id,
          visit_category, request_source, purpose, visit_date,
          visit_start_time, visit_end_time, accompanying_count,
+         id_proof_type, id_proof_number, visitor_photo_path,
          company_name, status, created_at, updated_at
        ) VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 'PUBLIC', ?, ?,
-                 ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
+                 ?, ?, ?, ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
       [
         visitor_phone, visitor_full_name, visitor_email || null, visitor_address || null,
         host.id, parsedDeptId || null, unit.id,
         visit_category,
         purpose, visit_date,
         visit_start_time || null, visit_end_time || null, accompanying_count,
+        profile.id_proof_type, profile.id_proof_number, profile.photo_path || null,   // number stays encrypted
         (visit_category === 'VENDOR' ? (company_name || null) : null),
       ]
     );
@@ -1845,5 +2008,5 @@ const unblockVisitor = async (req, res) => {
 module.exports = {
   createPublicRequest, createRequest, getRequest, listRequests,
   cancelRequest, getMyRequests, lookupVisitorByPhone, getMyVisitors,
-  blacklistVisitorFromRequest, getHostBlacklist, unblockVisitor,
+  blacklistVisitorFromRequest, getHostBlacklist, unblockVisitor, uploadRequestPhoto, getMyWalkIns,
 };

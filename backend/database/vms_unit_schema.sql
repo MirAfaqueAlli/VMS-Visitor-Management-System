@@ -119,7 +119,10 @@ CREATE TABLE IF NOT EXISTS visit_requests (
     visit_start_time  TIME         NULL,
     visit_end_time    TIME         NULL,
     accompanying_count INT         DEFAULT 0,
-    status            ENUM('PENDING','APPROVED','REJECTED','CANCELLED','SCHEDULED','COMPLETED') DEFAULT 'PENDING',
+    id_proof_type     VARCHAR(50)  NULL,   -- visitor's ID, taken with the request (checked at the gate)
+    id_proof_number   VARCHAR(255) NULL,   -- encrypted (crypto.util)
+    visitor_photo_path VARCHAR(255) NULL,  -- optional photo taken with the request (S3)
+    status            ENUM('PENDING','APPROVED','REJECTED','CANCELLED','SCHEDULED','COMPLETED','EXPIRED') DEFAULT 'PENDING',
     approved_by       INT          NULL,
     approved_at       TIMESTAMP    NULL,
     force_created     BOOLEAN      DEFAULT FALSE,

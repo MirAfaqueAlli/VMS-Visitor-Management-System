@@ -12,6 +12,7 @@ const { getSignedFileUrl } = require('../utils/s3.util');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
 const { formatDate, formatTime } = require('../utils/displayFormat.util');
+const { expireForRequest, visitDay } = require('../services/visitExpiry.service');
 const { gatePassWhatsAppMedia } = require('../services/gatePassImage.service');
 
 /** Visit date for SMS / WhatsApp / dashboard text: "31 Oct 2026" (mysql2 returns a Date). */
@@ -183,6 +184,7 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
  */
 const getInbox = async (req, res) => {
   try {
+    await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
     const user = req.user;
 
     // Super admins / global auditors on the central DB have no personal inbox.
@@ -271,6 +273,10 @@ const approveRequest = async (req, res) => {
     if (!canApprove) {
       conn.release();
       return sendError(res, 'You are not authorized to approve this request.', 403);
+    }
+    if (request.status === 'PENDING' && visitDay(request.visit_date) === 'past') {
+      conn.release();
+      return sendError(res, `The visit date (${formatDate(request.visit_date)}) has passed — this request can no longer be approved.`, 400);
     }
     if (request.status !== 'PENDING') {
       conn.release();

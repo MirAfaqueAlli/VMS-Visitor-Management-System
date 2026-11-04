@@ -2,9 +2,9 @@
 // Gate check-in (DESIGN_RULES §11/§12): visit details tile on the left; on the
 // right three steps — verify the pass, photo (optional), ID — then Check in.
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
-  Check, AlertCircle, Scan, Camera, Upload, X, RotateCcw, QrCode, Keyboard,
+  Check, AlertCircle, AlertTriangle, Scan, Camera, Upload, X, RotateCcw, QrCode, Keyboard,
   CheckCircle2, ZoomIn, CreditCard, ArrowLeft, Loader2,
 } from "../../components/icons";
 import jsQR from "jsqr";
@@ -13,9 +13,10 @@ import toast from "react-hot-toast";
 import { getApiErrorMessage } from "../../utils/apiError";
 import Select from "../../components/Select";
 import {
-  PageHeader, SectionTitle, KV, Status, Field, Empty, Spinner, ChoiceCards, ScanOverlay,
+  PageHeader, SectionTitle, KV, Status, Field, Empty, Spinner, ChoiceCards, ScanOverlay, Note,
 } from "../../components/ui";
 import { fmtDate, fmtTime } from "../../lib/format";
+import { idProofLabel } from "../../lib/idProof";
 
 // ── QR scan modes for Step 1 ──────────────────────────────────────────────────
 const VERIFY_MODES = [
@@ -24,9 +25,33 @@ const VERIFY_MODES = [
   { id: 'manual', label: 'Type the number',  icon: Keyboard, desc: 'Enter the pass number by hand' },
 ];
 
+/**
+ * Why this visit can't be checked in today (the server refuses it too), or null.
+ * visit_day comes from the API: 'past' | 'today' | 'future', in IST.
+ */
+/** Where the visitor's ID proof / photo on record came from, in words. */
+const SOURCE_TEXT = {
+  request:        "the visit request",
+  profile:        "the visitor's portal profile",
+  previous_visit: "their last visit",
+};
+
+function offDay(request) {
+  if (!request) return null;
+  const date = fmtDate(request.visit_date);
+  if (request.status === "EXPIRED" || (request.visit_day === "past" && ["APPROVED", "SCHEDULED"].includes(request.status))) {
+    return { tone: "danger", title: "Gate pass expired", text: `This visit was booked for ${date} — the pass can't be used today.` };
+  }
+  if (request.visit_day === "future") {
+    return { tone: "warning", title: "Not today", text: `This visit is booked for ${date}. Check-in is allowed only on the visit date.` };
+  }
+  return null;
+}
+
 export default function CheckIn() {
   const { requestId } = useParams();
   const navigate      = useNavigate();
+  const handedPass    = useLocation().state?.verifiedPass;   // already checked by "Check in by pass"
 
   const [request,      setRequest]      = useState(null);
   const [loading,      setLoading]      = useState(true);
@@ -63,12 +88,26 @@ export default function CheckIn() {
     setLoading(true);
     try {
       const res = await apiClient.get(`/visit-requests/${requestId}`);
-      setRequest(res.data?.data ?? res.data);
+      const data = res.data?.data ?? res.data;
+      setRequest(data);
+      // The ID taken with the request — security checks the card against it
+      // (masked numbers aren't pre-filled; the API sends full ones to the gate)
+      if (data?.id_proof_type) {
+        setFormData((p) => ({
+          ...p,
+          id_verified_type: data.id_proof_type,
+          id_verified_number: data.id_proof_number && !/X{4}/.test(data.id_proof_number) ? data.id_proof_number : p.id_verified_number,
+        }));
+      }
+      if (handedPass && data?.pass_number === handedPass && !offDay(data)) {
+        setPassVerified(true);
+        setFormData((p) => ({ ...p, pass_number: data.pass_number }));
+      }
     } catch {
       toast.error("Failed to load visit request.");
       navigate("/requests");
     } finally { setLoading(false); }
-  }, [requestId, navigate]);
+  }, [requestId, navigate, handedPass]);
 
   useEffect(() => { fetchRequest(); }, [fetchRequest]);
 
@@ -147,6 +186,11 @@ export default function CheckIn() {
     const expected = (request?.pass_number || "").trim().toUpperCase();
 
     setFormData(p => ({ ...p, pass_number: entered }));
+    const block = offDay(request);
+    if (entered === expected && block) {
+      toast.error(`${block.title}. ${block.text}`, { duration: 6000 });
+      return;
+    }
     if (entered === expected) {
       setPassVerified(true);
       setQrDetected(true);
@@ -241,6 +285,11 @@ export default function CheckIn() {
     const entered  = formData.pass_number.trim().toUpperCase();
     const expected = request?.pass_number;
     if (!entered) { toast.error("Please enter the gate pass number."); return; }
+    const block = offDay(request);
+    if (entered === expected && block) {
+      toast.error(`${block.title}. ${block.text}`, { duration: 6000 });
+      return;
+    }
     if (entered === expected) {
       setPassVerified(true);
       toast.success("Gate pass verified.");
@@ -317,11 +366,16 @@ export default function CheckIn() {
     if (fileRef.current) fileRef.current.value = "";
   };
 
+  // An employee visiting carries the staff ID card — the ID check is optional for them
+  const idOptional = request?.visit_category === "EMPLOYEE_VISIT";
+  // An ID already on record is shown, not edited — the server checks the card against it
+  const idLocked = !!request?.id_proof_type;
+
   // ── Submit check-in ────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!passVerified)                       { toast.error("Please verify the gate pass first."); return; }
-    if (!formData.id_verified_number.trim()) { toast.error("ID number is required.");             return; }
+    if (!idOptional && !idLocked && !formData.id_verified_number.trim()) { toast.error("ID number is required."); return; }
 
     setSubmitting(true);
     try {
@@ -376,18 +430,24 @@ export default function CheckIn() {
     if (id === 'upload') setTimeout(() => qrFileRef.current?.click(), 50);
   };
   const stepCls = passVerified ? "" : " opacity-50 pointer-events-none";
+  const dayBlock = offDay(request);
   const visitorName = request.visitor_name || request.company_name || "visitor";
 
   return (
     <div className="animate-fade-in">
       <PageHeader title={`Check in ${visitorName}`} meta={<span className="mono">{request.pass_number}</span>} />
+      {dayBlock && (
+        <Note tone={dayBlock.tone} icon={dayBlock.tone === "danger" ? AlertCircle : AlertTriangle} className="mb-5">
+          <b>{dayBlock.title}.</b> {dayBlock.text}
+        </Note>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-x-8 gap-y-6 items-start">
 
         {/* ── Visit details ── */}
         <aside className="tile space-y-4 lg:sticky lg:top-4">
-          {photoDataUrl && (
-            <img src={photoDataUrl} alt="Visitor" className="w-20 h-20 rounded-lg object-cover" />
+          {(photoDataUrl || request.visitor_photo_path) && (
+            <img src={photoDataUrl || request.visitor_photo_path} alt="Visitor" className="w-20 h-20 rounded-lg object-cover" />
           )}
           <div>
             <p className="text-[14px] font-semibold text-ink">{request.visitor_name || request.company_name || "—"}</p>
@@ -406,6 +466,9 @@ export default function CheckIn() {
               {fmtTime(request.visit_start_time)}{request.visit_end_time ? ` – ${fmtTime(request.visit_end_time)}` : ""}
             </span>],
             ["Purpose", request.purpose],
+            request.id_proof_type && ["ID on record", <span key="id">{idProofLabel(request.id_proof_type)}{" "}
+              <span className="mono text-ink-2">{request.id_proof_number}</span></span>],
+            request.last_check_in_at && ["Last visit", <span key="lv" className="tabular">{fmtDate(request.last_check_in_at)}</span>],
           ]} className="!grid-cols-[84px_minmax(0,1fr)]" />
         </aside>
 
@@ -499,6 +562,12 @@ export default function CheckIn() {
           {/* ══ Step 2: Photo ══ */}
           <section className={`section${stepCls}`} aria-disabled={!passVerified}>
             <SectionTitle icon={Camera} title="2 · Visitor photo" meta="Optional" />
+            {request.visitor_photo_path && !photoDataUrl && (
+              <p className="text-[12.5px] text-ink-2 mb-3">
+                Photo on record from {SOURCE_TEXT[request.photo_source] || "an earlier record"} (shown on the left) — it&apos;s saved with this check-in.
+                Take a new one only if it doesn&apos;t match the visitor.
+              </p>
+            )}
             <canvas ref={canvasRef} className="hidden" />
 
             {!photoDataUrl && captureMode !== "camera" && (
@@ -539,10 +608,17 @@ export default function CheckIn() {
 
           {/* ══ Step 3: ID ══ */}
           <section className={`section${stepCls}`} aria-disabled={!passVerified}>
-            <SectionTitle icon={CreditCard} title="3 · ID check" />
+            <SectionTitle icon={CreditCard} title="3 · ID check" meta={idOptional ? "Optional for employees" : undefined} />
+            {request.id_proof_type && (
+              <p className="text-[12.5px] text-ink-2 mb-3 max-w-[640px]">
+                ID on record from {SOURCE_TEXT[request.id_proof_source] || "an earlier record"} — it can&apos;t be changed at the gate.
+                Check that the visitor&apos;s card shows this number before checking in.
+              </p>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 max-w-[640px]">
-              <Field label="ID type" required>
-                <Select name="id_verified_type" required value={formData.id_verified_type} onChange={handleChange} aria-label="ID type">
+              <Field label="ID type" required={!idOptional && !idLocked}>
+                <Select name="id_verified_type" required value={formData.id_verified_type} onChange={handleChange} aria-label="ID type"
+                  disabled={idLocked}>
                   <option value="AADHAAR">Aadhaar</option>
                   <option value="PAN">PAN</option>
                   <option value="DRIVING_LICENSE">Driving licence</option>
@@ -551,8 +627,10 @@ export default function CheckIn() {
                   <option value="OTHER">Other</option>
                 </Select>
               </Field>
-              <Field label="ID number" htmlFor="ci-id" required>
-                <input id="ci-id" type="text" name="id_verified_number" required value={formData.id_verified_number}
+              <Field label="ID number" htmlFor="ci-id" required={!idOptional && !idLocked}
+                hint={idLocked ? undefined : idOptional ? "Optional — the visitor is an OHPC employee." : undefined}>
+                <input id="ci-id" type="text" name="id_verified_number" required={!idOptional && !idLocked} value={formData.id_verified_number}
+                  disabled={idLocked}
                   onChange={handleChange} placeholder="As printed on the ID" className="control mono" />
               </Field>
               <Field label="Remarks" htmlFor="ci-remarks" className="sm:col-span-2">
@@ -566,7 +644,7 @@ export default function CheckIn() {
           <div className="mt-6 pt-4 border-t border-line flex flex-wrap gap-2">
             <button
               type="submit"
-              disabled={submitting || !passVerified || !formData.id_verified_number}
+              disabled={submitting || !passVerified || (!idOptional && !idLocked && !formData.id_verified_number)}
               className="btn-primary"
             >
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}

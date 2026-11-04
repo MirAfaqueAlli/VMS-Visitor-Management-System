@@ -13,6 +13,7 @@ import Select from "../../components/Select";
 import PublicShell from "../../components/PublicShell";
 import { Field, KV, State, SectionTitle, ChoiceCards, Spinner } from "../../components/ui";
 import { fmtDate } from "../../lib/format";
+import IdProofPanel from "../../components/visitor/IdProofPanel";
 import {
   portalApi, publicApi, portalError, getVisitorSession, clearVisitorSession,
 } from "../../lib/visitorPortal";
@@ -102,6 +103,15 @@ export default function PublicRequest() {
     if (formData.visit_type === "BUSINESS" && !formData.company_name.trim()) {
       toast.error("Company name is required for business visits."); return;
     }
+    if (!account.has_id_proof) {
+      toast.error("Add your ID proof first (on the left) — security checks it at the gate.");
+      document.getElementById("idp-number")?.focus();
+      return;
+    }
+    if (!account.photo_url) {
+      toast.error("Add your photo first (on the left) — security matches it at the gate.");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -189,9 +199,12 @@ export default function PublicRequest() {
               ["Email", account.email],
               account.address && ["Address", account.address],
             ]} className="!grid-cols-[64px_minmax(0,1fr)] mt-3" />
+            <div className="mt-4 pt-4 border-t border-line">
+              <IdProofPanel account={account} onAccount={(d) => setAccount(d.account)} compact />
+            </div>
             <p className="mt-4 pt-3 border-t border-line text-[11.5px] text-muted flex items-start gap-1.5">
               <Lock size={12} className="shrink-0 mt-0.5" />
-              These come from your account; the gate checks them. Change them under Profile and security.
+              These are saved to your profile and sent with every request; the gate checks them.
             </p>
           </aside>
 

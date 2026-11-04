@@ -16,7 +16,8 @@ const UNIT_NAV = [
     { label: 'Approvals', to: '/approvals', roles: ['unit_admin', 'employee'], countKey: 'approvals' },
   ] },
   { group: 'Gate', items: [
-    { label: 'Gate Security', to: '/gate', roles: ['security', 'receptionist', 'unit_admin'] },
+    { label: 'Gate Security', to: '/gate', end: true, roles: ['security', 'receptionist', 'unit_admin'] },
+    { label: 'Spot Visits',   to: '/gate/walk-ins', roles: ['security', 'receptionist'] },
   ] },
   { group: 'Report', items: [
     { label: 'Reports',    to: '/reports',    roles: ['unit_admin', 'unit_auditor'] },
@@ -102,7 +103,9 @@ export function crumbsFor(pathname, sections) {
     for (const entry of section.entries) {
       const links = entry.group ? entry.items.map((l) => ({ ...l, group: entry.group })) : [entry];
       for (const l of links) {
-        if (isCurrent(l, pathname) && (!best || l.to.length > best.to.length)) best = l;
+        // `end` links highlight only on their own page, but still head their sub-pages' breadcrumbs
+        const under = isCurrent(l, pathname) || (l.end && pathname.startsWith(`${l.to}/`));
+        if (under && (!best || l.to.length > best.to.length)) best = l;
       }
     }
   }

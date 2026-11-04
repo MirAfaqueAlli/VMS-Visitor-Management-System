@@ -59,6 +59,7 @@ const VISIT_STATUSES = [
   { value: 'REJECTED',    label: 'Rejected' },
   { value: 'COMPLETED',   label: 'Completed' },
   { value: 'CANCELLED',   label: 'Cancelled' },
+  { value: 'EXPIRED',     label: 'Expired' },
   { value: 'NOT_ALLOWED', label: 'Not allowed' },
 ];
 

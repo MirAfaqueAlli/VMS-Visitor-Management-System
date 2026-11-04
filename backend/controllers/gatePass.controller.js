@@ -11,6 +11,8 @@ const { centralPool, getPool }      = require('../services/dbManager');
 const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
 const { getSignedFileUrl, withSignedUrls } = require('../utils/s3.util');
 const { qrImageForPass } = require('../services/qrcode.service');
+const { expireForRequest } = require('../services/visitExpiry.service');
+const { visitorOnRecord } = require('../services/visitorRecord.service');
 const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
 
 // ── Helper: fetch a full gate pass row with joins ─────────────────────────────
@@ -21,7 +23,7 @@ async function fetchFullPass(db, passId) {
             vr.visit_date, vr.visit_start_time, vr.visit_end_time,
             vr.purpose, vr.status AS request_status, vr.visit_category,
             vr.visitor_name, vr.visitor_phone, vr.company_name,
-            vr.unit_id,
+            vr.unit_id, vr.visitor_id, vr.id_proof_type, vr.id_proof_number, vr.visitor_photo_path AS request_photo_path,
             COALESCE(v.full_name, vr.visitor_name) AS resolved_visitor_name,
             h.full_name  AS host_name,
             d.name       AS department_name
@@ -64,7 +66,22 @@ async function fetchFullPass(db, passId) {
     }
   }
 
-  return { ...row, unit_name, unit_code, qr_code_path: await qrImageForPass(row) };
+  // The visitor's photo: the one taken at this visit's check-in, else the one on record
+  const [[thisVisit]] = await db.query(
+    'SELECT visitor_photo_path FROM visit_logs WHERE visit_request_id = ? AND visitor_photo_path IS NOT NULL ORDER BY id DESC LIMIT 1',
+    [row.visit_request_id]
+  );
+  const photoPath = thisVisit?.visitor_photo_path || (await visitorOnRecord(db, {
+    id: row.visit_request_id, visitor_id: row.visitor_id, visitor_phone: row.visitor_phone,
+    id_proof_type: row.id_proof_type, id_proof_number: row.id_proof_number, visitor_photo_path: row.request_photo_path,
+  })).photo_path;
+
+  return {
+    ...row, unit_name, unit_code,
+    id_proof_number: undefined, request_photo_path: undefined,   // not needed on the pass
+    visitor_photo_url: await getSignedFileUrl(photoPath),
+    qr_code_path: await qrImageForPass(row),
+  };
 }
 
 // ── generatePass ──────────────────────────────────────────────────────────────
@@ -116,6 +133,7 @@ const generatePass = async (req, res) => {
  */
 const getPass = async (req, res) => {
   try {
+    await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
     const { passNumber } = req.params;
     const employee = isEmployee(req.user);
     const unitAdmin = isUnitLevelAdmin(req);
@@ -180,6 +198,7 @@ const getPass = async (req, res) => {
  */
 const listPasses = async (req, res) => {
   try {
+    await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
     const { status, date } = req.query;
     const page   = Math.max(1, parseInt(req.query.page,  10) || 1);
     const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));

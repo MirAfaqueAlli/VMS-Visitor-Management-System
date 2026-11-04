@@ -54,10 +54,13 @@ const todayIso = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+const TAB_IDS = ["as_host", "as_visitor", "all"];
+const tabKey = (userId) => `vms_requests_tab:${userId || "anon"}`;
+
 export default function RequestList() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -67,7 +70,16 @@ export default function RequestList() {
   const canCreate   = ["unit_admin", "employee", "security", "receptionist"].includes(user?.role_type);
 
   // Tabs: 'as_host' (visitors to me), 'as_visitor' (my visits), 'all'
-  const [activeTab, setActiveTab] = useState(user?.role_type === "employee" ? "as_host" : "all");
+  // The chosen tab survives leaving the page: ?tab= in the address, else the last one used here
+  const [activeTab, setActiveTab] = useState(() => {
+    const fromUrl = searchParams.get("tab");
+    if (TAB_IDS.includes(fromUrl)) return fromUrl;
+    try {
+      const saved = localStorage.getItem(tabKey(user?.id));
+      if (TAB_IDS.includes(saved)) return saved;
+    } catch { /* storage blocked */ }
+    return user?.role_type === "employee" ? "as_host" : "all";
+  });
 
   // Filters (the top bar's quick search opens this page with ?search=)
   const [statusFilter, setStatusFilter] = useState("");
@@ -172,7 +184,12 @@ export default function RequestList() {
     }
   };
 
-  const switchTab = (id) => { setActiveTab(id); setPage(1); };
+  const switchTab = (id) => {
+    setActiveTab(id);
+    setPage(1);
+    try { localStorage.setItem(tabKey(user?.id), id); } catch { /* storage blocked */ }
+    setSearchParams((p) => { const next = new URLSearchParams(p); next.set("tab", id); return next; }, { replace: true });
+  };
   const hasFilters = !!(statusFilter || dateFilter || search);
 
   return (
@@ -184,16 +201,8 @@ export default function RequestList() {
         )}
       />
 
-      <StatStrip cols={4}>
-        <Stat label="Requests" value={stats.total ?? "—"} loading={stats.total === null} hint="In this view" />
-        <Stat label="Waiting for approval" value={stats.pending ?? "—"} loading={stats.pending === null}
-          tone={stats.pending > 0 ? "warning" : undefined} hint="Pending a host's decision" />
-        <Stat label="Visiting today" value={stats.today ?? "—"} loading={stats.today === null} hint={fmtDate(new Date())} />
-        <Stat label="Approved" value={stats.approved ?? "—"} loading={stats.approved === null} hint="Gate pass issued" />
-      </StatStrip>
-
       <Tabs
-        className="mb-3"
+        className="mb-5"
         value={activeTab}
         onChange={switchTab}
         tabs={[
@@ -202,6 +211,14 @@ export default function RequestList() {
           { id: "all", label: "All requests" },
         ]}
       />
+
+      <StatStrip cols={4}>
+        <Stat label="Requests" value={stats.total ?? "—"} loading={stats.total === null} hint="In this view" />
+        <Stat label="Waiting for approval" value={stats.pending ?? "—"} loading={stats.pending === null}
+          tone={stats.pending > 0 ? "warning" : undefined} hint="Pending a host's decision" />
+        <Stat label="Visiting today" value={stats.today ?? "—"} loading={stats.today === null} hint={fmtDate(new Date())} />
+        <Stat label="Approved" value={stats.approved ?? "—"} loading={stats.approved === null} hint="Gate pass issued" />
+      </StatStrip>
 
       <Toolbar count={loading ? null : totalCount} noun={totalCount === 1 ? "request" : "requests"}>
         <SearchInput
@@ -218,6 +235,7 @@ export default function RequestList() {
           <option value="REJECTED">Rejected</option>
           <option value="COMPLETED">Completed</option>
           <option value="CANCELLED">Cancelled</option>
+          <option value="EXPIRED">Expired</option>
         </Select>
         <input
           type="date"

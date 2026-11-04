@@ -120,6 +120,9 @@ CREATE TABLE IF NOT EXISTS visitor_accounts (
     email               VARCHAR(100)  NULL UNIQUE,
     full_name           VARCHAR(100)  NOT NULL,
     address             VARCHAR(255)  NULL,
+    id_proof_type       VARCHAR(50)   NULL,   -- copied onto every visit request (checked at the gate)
+    id_proof_number     VARCHAR(255)  NULL,   -- encrypted (crypto.util)
+    photo_path          VARCHAR(255)  NULL,   -- the visitor's face photo (S3), optional
     password_hash       VARCHAR(255)  NULL,
     phone_verified_at   DATETIME      NULL,
     email_verified_at   DATETIME      NULL,

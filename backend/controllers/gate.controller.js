@@ -11,13 +11,10 @@ const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
 const { sendNotification }       = require('../services/notification.service');
 const { escapeHtml: esc, noticeMessage } = require('../services/email.service');
 const { whatsappText }           = require('../services/whatsapp.service');
-
-// IST calendar date as YYYY-MM-DD (mirrors approval/visitRequest controllers)
-const getISTDateString = (d = new Date()) =>
-  new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(d);
+const { visitDay }               = require('../services/visitExpiry.service');
+const { visitorOnRecord }        = require('../services/visitorRecord.service');
+const { squarePhoto }            = require('../utils/photo.util');
+const { formatDate }             = require('../utils/displayFormat.util');
 
 
 // ── getDashboard ──────────────────────────────────────────────────────────────
@@ -143,19 +140,19 @@ const checkIn = async (req, res) => {
     const requestId = parseInt(req.params.requestId, 10);
     if (isNaN(requestId)) { conn.release(); return sendError(res, 'Invalid request ID.', 400); }
 
-    const { id_verified_type, id_verified_number, remarks, pass_number } = req.body;
+    const { remarks, pass_number } = req.body;
+    let { id_verified_type, id_verified_number } = req.body;
 
     // Upload visitor photo to S3 if provided; store the returned public URL
     let visitorPhotoPath = null;
     if (req.file) {
       try {
-        const ext      = req.file.mimetype.split('/')[1] || 'jpg';
-        const s3Key    = `photo-${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        const photo = await squarePhoto(req.file.buffer);   // 800 × 800, centre-cropped
         visitorPhotoPath = await uploadToS3({
-          buffer:   req.file.buffer,
-          mimeType: req.file.mimetype,
+          buffer:   photo.buffer,
+          mimeType: photo.mimeType,
           folder:   'visitor-photos',
-          filename: s3Key,
+          filename: `photo-${Date.now()}-${requestId}.${photo.ext}`,
         });
       } catch (s3Err) {
         console.error('[Gate] Failed to upload visitor photo to S3:', s3Err.message);
@@ -163,10 +160,6 @@ const checkIn = async (req, res) => {
       }
     }
 
-    if (!id_verified_type || !id_verified_number) {
-      conn.release();
-      return sendError(res, 'id_verified_type and id_verified_number are required.', 400);
-    }
     if (!pass_number) {
       conn.release();
       return sendError(res, 'Gate pass number is required for verification.', 400);
@@ -185,6 +178,21 @@ const checkIn = async (req, res) => {
 
     const request = vrRows[0];
 
+    // An ID already on record (request, portal profile or an earlier visit) is what the
+    // card is checked against — the gate can't replace it, only enter one when there is none
+    const onRecord = await visitorOnRecord(req.db, request);
+    if (onRecord.id_proof_type) {
+      id_verified_type   = onRecord.id_proof_type;
+      id_verified_number = onRecord.id_proof_number;
+    }
+
+    // ID check: required for visitors; optional for an employee visiting (they carry the staff ID card)
+    const hasId = !!(id_verified_type && String(id_verified_number || '').trim());
+    if (!hasId && request.visit_category !== 'EMPLOYEE_VISIT') {
+      conn.release();
+      return sendError(res, "Enter the visitor's ID type and number.", 400);
+    }
+
     if (!request.gate_pass_id) {
       conn.release();
       return sendError(res, 'Gate pass not generated yet. Generate a pass first.', 400);
@@ -194,6 +202,10 @@ const checkIn = async (req, res) => {
       return sendError(res, 'Gate pass has already been used or cancelled.', 400);
     }
     // The visit itself must still be on (a cancelled / rejected visit can't enter)
+    if (request.status === 'EXPIRED' || (['APPROVED', 'SCHEDULED'].includes(request.status) && visitDay(request.visit_date) === 'past')) {
+      conn.release();
+      return sendError(res, `This gate pass has expired — the visit date (${formatDate(request.visit_date)}) has passed.`, 403);
+    }
     if (!['APPROVED', 'SCHEDULED'].includes(request.status)) {
       conn.release();
       return sendError(res, `This visit is ${String(request.status).toLowerCase()} — the visitor can't be checked in.`, 403);
@@ -205,14 +217,9 @@ const checkIn = async (req, res) => {
 
     // Verify visit date is strictly today — compared as IST calendar dates, so it
     // doesn't depend on the server's timezone (EC2 defaults to UTC)
-    if (request.visit_date) {
-      const visitDateStr = getISTDateString(new Date(request.visit_date));
-      const todayStr     = getISTDateString();
-
-      if (visitDateStr !== todayStr) {
-        conn.release();
-        return sendError(res, `Check-in is only allowed on the scheduled date: ${visitDateStr}. Today is ${todayStr}.`, 403);
-      }
+    if (visitDay(request.visit_date) === 'future') {
+      conn.release();
+      return sendError(res, `Not today: this visit is booked for ${formatDate(request.visit_date)}. Check-in is allowed only on the visit date.`, 403);
     }
 
     // Department isolation — non-admin security/receptionist sees only their dept
@@ -284,7 +291,7 @@ const checkIn = async (req, res) => {
     }
 
     // ── 4. ID proof check — if visitor already has a registered ID of this type, verify it
-    if (visitorId) {
+    if (visitorId && hasId) {
       const [idProofRows] = await req.db.query(
         `SELECT id_number FROM visitor_documents WHERE visitor_id = ? AND id_type = ? LIMIT 1`,
         [visitorId, id_verified_type]
@@ -329,6 +336,9 @@ const checkIn = async (req, res) => {
       );
     }
 
+    // No photo at the gate → keep the one on record (request, portal profile or last visit)
+    if (!visitorPhotoPath) visitorPhotoPath = onRecord.photo_path;
+
     const [logInsert] = await conn.query(
       `INSERT INTO visit_logs
          (gate_pass_id, visit_request_id, checked_in_by,
@@ -340,8 +350,8 @@ const checkIn = async (req, res) => {
         requestId,
         req.user.id,
         visitorPhotoPath,
-        id_verified_type,
-        encryptField(id_verified_number),   // encrypt before persisting
+        hasId ? id_verified_type : null,
+        hasId ? encryptField(String(id_verified_number).trim()) : null,   // encrypt before persisting
         remarks || null,
       ]
     );
@@ -911,4 +921,75 @@ const checkOutByQR = async (req, res) => {
   }
 };
 
-module.exports = { getDashboard, checkIn, checkOut, checkOutByQR, rejectAtGate, getActiveVisitors };
+// ── lookupPass ────────────────────────────────────────────────────────────────
+/**
+ * POST /api/gate/lookup { code }  — a scanned QR (signed token) or a typed pass number.
+ * Says whether the visitor can be checked in now, and why not:
+ *   verdict: 'ok' | 'future' | 'expired' | 'inside' | 'used' | 'cancelled' | 'not_approved'
+ * A visitor who comes on another day than the one booked is caught here, before check-in.
+ */
+const lookupPass = async (req, res) => {
+  try {
+    const code = String(req.body.code || '').trim();
+    if (!code) return sendError(res, 'Scan the QR code or enter the gate pass number.', 400);
+
+    let passNumber = code.toUpperCase();
+    if (code.includes('.')) {
+      const check = verifyQRToken(code);
+      if (!check.valid) return sendError(res, 'This QR code is not a valid OHPC gate pass.', 400);
+      passNumber = String(check.payload.pass_number || '').toUpperCase();
+    }
+
+    const [rows] = await req.db.query(
+      `SELECT vr.id, vr.status, vr.visit_date, vr.visit_start_time, vr.visit_category,
+              COALESCE(vr.visitor_name, vr.company_name) AS visitor_name, vr.company_name,
+              gp.pass_number, gp.status AS pass_status, h.full_name AS host_name,
+              (SELECT vl.status FROM visit_logs vl WHERE vl.visit_request_id = vr.id ORDER BY vl.id DESC LIMIT 1) AS log_status,
+              (SELECT vl.check_in_at FROM visit_logs vl WHERE vl.visit_request_id = vr.id ORDER BY vl.id DESC LIMIT 1) AS check_in_at
+         FROM gate_passes gp
+         JOIN visit_requests vr ON vr.id = gp.visit_request_id
+         LEFT JOIN users h ON h.id = vr.host_user_id
+        WHERE gp.pass_number = ? LIMIT 1`,
+      [passNumber]
+    );
+    if (!rows.length) return sendError(res, `No gate pass ${passNumber} was issued in this unit.`, 404);
+
+    const v = rows[0];
+    const date = formatDate(v.visit_date);
+    const day = visitDay(v.visit_date);
+    let verdict = 'ok';
+    let message = `Valid for today. ${v.visitor_name || 'The visitor'} can be checked in.`;
+
+    if (v.log_status === 'ACTIVE') {
+      verdict = 'inside';
+      message = `${v.visitor_name || 'This visitor'} is already inside — checked in at ${new Date(v.check_in_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}.`;
+    } else if (v.log_status || v.status === 'COMPLETED') {
+      verdict = 'used';
+      message = 'This gate pass has already been used — the visit is over. A new visit needs a new pass.';
+    } else if (['CANCELLED', 'REJECTED'].includes(v.status) || v.pass_status === 'CANCELLED') {
+      verdict = 'cancelled';
+      message = `This visit was ${v.status === 'REJECTED' ? 'declined' : 'cancelled'} — the visitor can't be let in on this pass.`;
+    } else if (v.status === 'EXPIRED' || v.pass_status === 'EXPIRED' || day === 'past') {
+      verdict = 'expired';
+      message = `This gate pass has expired. The visit was booked for ${date} — it can't be used today.`;
+    } else if (day === 'future') {
+      verdict = 'future';
+      message = `Not today. This visit is booked for ${date}. Check-in is allowed only on the visit date.`;
+    } else if (!['APPROVED', 'SCHEDULED'].includes(v.status)) {
+      verdict = 'not_approved';
+      message = 'This visit has not been approved yet — the visitor can\'t be checked in.';
+    }
+
+    return sendSuccess(res, {
+      verdict, message,
+      request_id: v.id, pass_number: v.pass_number, visitor_name: v.visitor_name, company_name: v.company_name,
+      host_name: v.host_name, visit_date: v.visit_date, visit_start_time: v.visit_start_time,
+      visit_day: day, status: v.status, pass_status: v.pass_status,
+    }, message);
+  } catch (err) {
+    console.error('[GateController] lookupPass error:', err.message);
+    return sendError(res, 'Could not check this gate pass. Please try again.', 500);
+  }
+};
+
+module.exports = { getDashboard, checkIn, checkOut, checkOutByQR, rejectAtGate, getActiveVisitors, lookupPass };

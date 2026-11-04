@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import {
-  AlertCircle, Calendar, Check, Loader2, Plus, QrCode, RefreshCw, User, Mail, Lock, Clock,
+  AlertCircle, Calendar, Check, Loader2, Plus, QrCode, RefreshCw, User, Mail, Lock, Clock, Printer, CreditCard,
 } from "../../components/icons";
 import Select from "../../components/Select";
 import PasswordStrength from "../../components/PasswordStrength";
@@ -22,6 +22,9 @@ import useCountdown from "../../hooks/useCountdown";
 import { fmtDate, fmtDateTime, fmtClock, fmtTime, orDash } from "../../lib/format";
 import { validatePassword } from "../../utils/passwordValidator";
 import { portalApi, portalError, isUpcoming, localDay } from "../../lib/visitorPortal";
+import IdProofPanel from "../../components/visitor/IdProofPanel";
+import GatePassCard from "../../components/gate/GatePassCard";
+import { createPortal } from "react-dom";
 
 const STATUS_FILTERS = [
   { value: "", label: "All statuses" },
@@ -30,6 +33,7 @@ const STATUS_FILTERS = [
   { value: "COMPLETED", label: "Completed" },
   { value: "REJECTED", label: "Rejected" },
   { value: "CANCELLED", label: "Cancelled" },
+  { value: "EXPIRED", label: "Expired" },
 ];
 
 const timeRange = (v) =>
@@ -117,10 +121,22 @@ function VisitDrawer({ visit, onClose }) {
               <p className="mono text-[15px] font-semibold text-ink">{pass.pass_number}</p>
               <Status value={pass.pass_status} />
               {pass.qr && <p className="text-[12px] text-muted pt-1">Show this QR code, or tell the pass number, at the gate.</p>}
+              <div className="pt-2">
+                <button type="button" className="btn-outline btn-sm" disabled={!pass.qr} onClick={() => window.print()}
+                  title={pass.qr ? "Print the gate pass" : "Only a valid pass can be printed"}>
+                  <Printer size={13} /> Print pass
+                </button>
+                {!pass.qr && <p className="text-[11.5px] text-muted mt-1">Only a valid pass can be printed.</p>}
+              </div>
             </div>
           </div>
         )}
       </div>
+      {/* The printed pass — the same design staff print (only it shows on paper) */}
+      {pass?.qr && createPortal(
+        <div className="hidden print:block"><GatePassCard pass={pass} /></div>,
+        document.body,
+      )}
     </Drawer>
   );
 }
@@ -360,6 +376,11 @@ function ProfileTab({ account, onAccount, onSession }) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 gap-y-8 max-w-[1000px]">
+      <section className="lg:col-span-2">
+        <SectionTitle icon={CreditCard} title="ID proof and photo" meta="Both are required to request a visit" />
+        <div className="max-w-[640px]"><IdProofPanel account={account} onAccount={onAccount} /></div>
+      </section>
+
       <section>
         <SectionTitle icon={User} title="Your details" />
         <form onSubmit={saveDetails} className="space-y-3">

@@ -20,6 +20,8 @@
  *   POST /me/email/send|verify  link or change the email (OTP)
  *   POST /me/phone/verify       confirm the mobile (OTP) if it isn't yet
  *   POST /me/password           set / change the password
+ *   PUT  /me/id-proof           the visitor's ID proof (needed before a request)
+ *   POST /me/photo · DELETE     the visitor's face photo (optional)
  *   GET  /me/visits             every request in every unit, with pass + gate status
  *   GET  /me/visits/:unitId/:id/pass   the gate pass with a fresh QR
  *   POST /me/visits/:unitId/:id/cancel cancel a request still waiting for approval
@@ -43,6 +45,12 @@ const { sendSuccess, sendError } = require('../utils/response.util');
 const { sendNotification } = require('../services/notification.service');
 const { escapeHtml: esc, noticeMessage } = require('../services/email.service');
 const { whatsappText, visitorPortalUrl } = require('../services/whatsapp.service');
+const { expireIfDue, visitDay } = require('../services/visitExpiry.service');
+const { encryptField, decryptField, maskIdNumber } = require('../utils/crypto.util');
+const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
+const { idProofError, cleanIdNumber } = require('../utils/idProof.util');
+const { visitorOnRecord } = require('../services/visitorRecord.service');
+const { squarePhoto } = require('../utils/photo.util');
 
 const SESSION_EXPIRY       = '12h';
 const VISITOR_TOKEN_EXPIRY = '30m';
@@ -58,7 +66,7 @@ const emailKey = (accountId, email) => `portal:${accountId}:${cleanEmail(email)}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const ACCOUNT_FIELDS = `id, phone, email, full_name, address, password_hash, phone_verified_at,
+const ACCOUNT_FIELDS = `id, phone, email, full_name, address, id_proof_type, id_proof_number, photo_path, password_hash, phone_verified_at,
   email_verified_at, failed_logins, locked_until, password_changed_at, last_login_at, is_active, created_at`;
 
 async function accountBy(field, value) {
@@ -68,9 +76,14 @@ async function accountBy(field, value) {
   return rows[0] || null;
 }
 
-/** What the browser may see about an account (never the hash or lock counters). */
-function publicProfile(a) {
+/** What the browser may see about an account (never the hash or lock counters; the ID number masked). */
+async function publicProfile(a) {
+  const idNumber = a.id_proof_number ? decryptField(a.id_proof_number) : null;
   return {
+    id_proof_type:  a.id_proof_type || null,
+    id_proof_number: idNumber ? maskIdNumber(idNumber) : null,
+    has_id_proof:   !!(a.id_proof_type && idNumber),
+    photo_url:      a.photo_path ? await getSignedFileUrl(a.photo_path) : null,
     id:             a.id,
     full_name:      a.full_name,
     phone:          a.phone,
@@ -107,7 +120,7 @@ async function issueSession(res, account, message) {
   );
   return sendSuccess(res, {
     session_token: token,
-    account:       publicProfile(account),
+    account:       await publicProfile(account),
     pending:       pendingSteps(account),
   }, message, 200);
 }
@@ -330,9 +343,55 @@ const register = async (req, res) => {
   }
 };
 
+// ── Session: ID proof and photo ───────────────────────────────────────────────
+const setIdProof = async (req, res) => {
+  try {
+    const type = String(req.body.id_proof_type || '');
+    const problem = idProofError(type, req.body.id_proof_number);
+    if (problem) return sendError(res, `${problem}.`, 400);
+    await centralPool.query(
+      'UPDATE visitor_accounts SET id_proof_type = ?, id_proof_number = ? WHERE id = ?',
+      [type, encryptField(cleanIdNumber(type, req.body.id_proof_number)), req.visitorAccount.id]
+    );
+    const account = await accountBy('id', req.visitorAccount.id);
+    return sendSuccess(res, { account: await publicProfile(account), pending: pendingSteps(account) }, 'ID proof saved.');
+  } catch (err) {
+    console.error('[VisitorPortal] setIdProof error:', err.message);
+    return sendError(res, 'Could not save your ID proof.', 500);
+  }
+};
+
+const setPhoto = async (req, res) => {
+  try {
+    if (!req.file) return sendError(res, 'Attach your photo.', 400);
+    const photo = await squarePhoto(req.file.buffer);   // 800 × 800, centre-cropped
+    const stored = await uploadToS3({
+      buffer: photo.buffer, mimeType: photo.mimeType, folder: 'visitor-photos',
+      filename: `account-${req.visitorAccount.id}-${Date.now()}.${photo.ext}`,
+    });
+    await centralPool.query('UPDATE visitor_accounts SET photo_path = ? WHERE id = ?', [stored, req.visitorAccount.id]);
+    const account = await accountBy('id', req.visitorAccount.id);
+    return sendSuccess(res, { account: await publicProfile(account), pending: pendingSteps(account) }, 'Photo saved.');
+  } catch (err) {
+    console.error('[VisitorPortal] setPhoto error:', err.message);
+    return sendError(res, 'Could not save your photo. Please try again.', 500);
+  }
+};
+
+const removePhoto = async (req, res) => {
+  try {
+    await centralPool.query('UPDATE visitor_accounts SET photo_path = NULL WHERE id = ?', [req.visitorAccount.id]);
+    const account = await accountBy('id', req.visitorAccount.id);
+    return sendSuccess(res, { account: await publicProfile(account), pending: pendingSteps(account) }, 'Photo removed.');
+  } catch (err) {
+    console.error('[VisitorPortal] removePhoto error:', err.message);
+    return sendError(res, 'Could not remove your photo.', 500);
+  }
+};
+
 // ── Session: profile ──────────────────────────────────────────────────────────
-const me = (req, res) =>
-  sendSuccess(res, { account: publicProfile(req.visitorAccount), pending: pendingSteps(req.visitorAccount) }, 'Profile.');
+const me = async (req, res) =>
+  sendSuccess(res, { account: await publicProfile(req.visitorAccount), pending: pendingSteps(req.visitorAccount) }, 'Profile.');
 
 const updateMe = async (req, res) => {
   try {
@@ -344,7 +403,7 @@ const updateMe = async (req, res) => {
       [full_name.slice(0, 100), address.slice(0, 255) || null, req.visitorAccount.id]
     );
     const account = await accountBy('id', req.visitorAccount.id);
-    return sendSuccess(res, { account: publicProfile(account), pending: pendingSteps(account) }, 'Profile updated.');
+    return sendSuccess(res, { account: await publicProfile(account), pending: pendingSteps(account) }, 'Profile updated.');
   } catch (err) {
     console.error('[VisitorPortal] updateMe error:', err.message);
     return sendError(res, 'Could not update your profile.', 500);
@@ -382,7 +441,7 @@ const verifyEmail = async (req, res) => {
       'UPDATE visitor_accounts SET email = ?, email_verified_at = NOW() WHERE id = ?', [email, req.visitorAccount.id]
     );
     const account = await accountBy('id', req.visitorAccount.id);
-    return sendSuccess(res, { account: publicProfile(account), pending: pendingSteps(account) }, 'Email verified.');
+    return sendSuccess(res, { account: await publicProfile(account), pending: pendingSteps(account) }, 'Email verified.');
   } catch (err) {
     console.error('[VisitorPortal] verifyEmail error:', err.message);
     if (err.code === 'ER_DUP_ENTRY') return sendError(res, 'This email is already linked to another visitor account.', 409);
@@ -396,7 +455,7 @@ const verifyPhone = async (req, res) => {
     if (otpError) return sendError(res, otpError, 400);
     await centralPool.query('UPDATE visitor_accounts SET phone_verified_at = NOW() WHERE id = ?', [req.visitorAccount.id]);
     const account = await accountBy('id', req.visitorAccount.id);
-    return sendSuccess(res, { account: publicProfile(account), pending: pendingSteps(account) }, 'Mobile number verified.');
+    return sendSuccess(res, { account: await publicProfile(account), pending: pendingSteps(account) }, 'Mobile number verified.');
   } catch (err) {
     console.error('[VisitorPortal] verifyPhone error:', err.message);
     return sendError(res, 'Could not verify the mobile number.', 500);
@@ -464,6 +523,7 @@ const myVisits = async (req, res) => {
     const phone = req.visitorAccount.phone;
     const units = await activeUnits();
     const settled = await Promise.allSettled(units.map(async (u) => {
+      await expireIfDue(getPool(u.db_name), u.db_name);   // a visit whose date passed shows as expired
       const [rows] = await getPool(u.db_name).query(VISITS_SQL, [phone]);
       return rows.map((r) => ({ ...r, unit_id: u.id, unit_name: u.name, unit_city: u.city }));
     }));
@@ -491,6 +551,8 @@ const myPass = async (req, res) => {
 
     const [rows] = await getPool(unit.db_name).query(
       `SELECT vr.id, vr.visit_date, vr.visit_start_time, vr.visit_end_time, vr.status, vr.purpose,
+              vr.visit_category, vr.visitor_phone, vr.company_name, vr.visitor_id,
+              vr.id_proof_type, vr.id_proof_number, vr.visitor_photo_path,
               COALESCE(v.full_name, vr.visitor_name) AS visitor_name,
               h.full_name AS host_name, d.name AS department_name,
               gp.pass_number, gp.status AS pass_status, gp.qr_code_data
@@ -508,15 +570,26 @@ const myPass = async (req, res) => {
 
     // The QR is shown only while the pass can still be used at the gate
     let qr = null;
-    if (p.pass_status === 'ISSUED' && p.qr_code_data) {
+    if (p.pass_status === 'ISSUED' && p.qr_code_data && visitDay(p.visit_date) !== 'past') {
       try {
         qr = await QRCode.toDataURL(signQRPayload(JSON.parse(p.qr_code_data)), { width: 280, margin: 1, errorCorrectionLevel: 'H' });
       } catch (qrErr) {
         console.warn('[VisitorPortal] QR render failed:', qrErr.message);
       }
     }
-    const { qr_code_data: _omit, ...pass } = p;
-    return sendSuccess(res, { ...pass, unit_name: unit.name, unit_city: unit.city, qr }, 'Gate pass.');
+    // The visitor's photo for the printed pass: this visit's check-in photo, else the one on record
+    const pool = getPool(unit.db_name);
+    const [[log]] = await pool.query(
+      'SELECT visitor_photo_path FROM visit_logs WHERE visit_request_id = ? AND visitor_photo_path IS NOT NULL ORDER BY id DESC LIMIT 1', [p.id]
+    );
+    const photoPath = log?.visitor_photo_path || (await visitorOnRecord(pool, p)).photo_path;
+    const [[u]] = await centralPool.query('SELECT code FROM units WHERE id = ? LIMIT 1', [unit.id]);
+
+    const { qr_code_data: _omit, id_proof_number: _id, id_proof_type: _type, visitor_photo_path: _photo, visitor_id: _vid, ...pass } = p;
+    return sendSuccess(res, {
+      ...pass, unit_name: unit.name, unit_city: unit.city, unit_code: u?.code || null, qr,
+      visitor_photo_url: await getSignedFileUrl(photoPath),
+    }, 'Gate pass.');
   } catch (err) {
     console.error('[VisitorPortal] myPass error:', err.message);
     return sendError(res, 'Could not load the gate pass.', 500);
@@ -654,5 +727,6 @@ module.exports = {
   requireVisitorSession,
   identify, login, loginWithOtp, checkRegistration, register,
   me, updateMe, sendEmailVerification, verifyEmail, verifyPhone, setPassword,
+  setIdProof, setPhoto, removePhoto,
   myVisits, myPass, cancelVisit, visitorToken,
 };

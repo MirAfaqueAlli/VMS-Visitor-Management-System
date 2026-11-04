@@ -32,6 +32,7 @@ const VisitorForm            = lazy(() => import("./pages/visitors/VisitorForm")
 const NewRequest             = lazy(() => import("./pages/requests/NewRequest"));
 const RequestList            = lazy(() => import("./pages/requests/RequestList"));
 const RequestDetail          = lazy(() => import("./pages/requests/RequestDetail"));
+const MyWalkIns              = lazy(() => import("./pages/gate/MyWalkIns"));
 const CheckIn                = lazy(() => import("./pages/gate/CheckIn"));
 const CheckOut               = lazy(() => import("./pages/gate/CheckOut"));
 const GatePass               = lazy(() => import("./pages/gate/GatePass"));
@@ -135,6 +136,7 @@ const router = createBrowserRouter([
             children: [
               { index: true,                element: <S><CheckOut /></S> },
               { path: "checkin/:requestId", element: <S><CheckIn /></S> },
+              { path: "walk-ins",           element: <S><MyWalkIns /></S> },
               { path: "pass/:passNumber",   element: <S><GatePass /></S> },
             ],
           },

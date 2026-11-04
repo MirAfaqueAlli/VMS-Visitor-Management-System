@@ -4,6 +4,7 @@
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { isSuperAdmin, isUnitAdmin, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
 const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
+const { findExistingVisitorByPhone } = require('../services/visitorDirectory.service');
 
 // ── createVisitor ─────────────────────────────────────────────────────────────
 /**
@@ -316,11 +317,40 @@ const lookupVisitorByPhone = async (req, res) => {
       [phone.trim(), cleaned, cleaned, last10]
     );
 
-    if (rows.length === 0) {
-      return sendSuccess(res, { found: false, visitor: null }, 'No previous visit found for this phone number.');
+    if (rows.length > 0) {
+      return sendSuccess(res, { found: true, visitor: { ...rows[0], source: 'unit' } }, 'Previous visit record found.');
     }
 
-    return sendSuccess(res, { found: true, visitor: rows[0] }, 'Previous visit record found.');
+    // ── Not in this unit: the same person is one visitor everywhere ──────────
+    // 1. Their visitor-portal account (kept up to date by the visitor themselves)
+    const [accounts] = await centralPool.query(
+      'SELECT full_name, phone, email FROM visitor_accounts WHERE phone = ? AND is_active = 1 LIMIT 1', [last10]
+    );
+    if (accounts.length) {
+      const a = accounts[0];
+      return sendSuccess(res, {
+        found: true,
+        visitor: { full_name: a.full_name, phone: a.phone, email: a.email || '', visitor_type: 'individual', source: 'portal' },
+      }, 'Visitor found (visitor portal account).');
+    }
+
+    // 2. Their latest record in any other unit
+    const elsewhere = await findExistingVisitorByPhone(last10);
+    if (elsewhere) {
+      return sendSuccess(res, {
+        found: true,
+        visitor: {
+          full_name:    elsewhere.visitor_name,
+          phone:        elsewhere.visitor_phone,
+          email:        elsewhere.visitor_email || '',
+          company_name: elsewhere.company_name || undefined,
+          visitor_type: elsewhere.company_name ? 'business' : 'individual',
+          source:       'other_unit',
+        },
+      }, 'Visitor found (another unit).');
+    }
+
+    return sendSuccess(res, { found: false, visitor: null }, 'No previous visit found for this phone number.');
   } catch (err) {
     console.error('[VisitorController] lookupVisitorByPhone error:', err.message);
     return sendError(res, 'Failed to lookup visitor.', 500);

@@ -140,6 +140,10 @@ async function ensureCentralDatabase(adminConn) {
   await addColumnIfMissing(adminConn, CENTRAL_DB, 'public_otp_logs', 'attempts', 'INT NOT NULL DEFAULT 0 AFTER is_used');
   // Sessions issued before the last password change/reset are rejected (auth.middleware)
   await addColumnIfMissing(adminConn, CENTRAL_DB, 'users', 'password_changed_at', 'DATETIME NULL AFTER password_hash');
+  // Visitor portal profile: ID proof and face photo, copied onto each public request
+  await addColumnIfMissing(adminConn, CENTRAL_DB, 'visitor_accounts', 'id_proof_type', 'VARCHAR(50) NULL AFTER address');
+  await addColumnIfMissing(adminConn, CENTRAL_DB, 'visitor_accounts', 'id_proof_number', 'VARCHAR(255) NULL AFTER id_proof_type');
+  await addColumnIfMissing(adminConn, CENTRAL_DB, 'visitor_accounts', 'photo_path', 'VARCHAR(255) NULL AFTER id_proof_number');
 
   // Accounts registered on the earlier portal version (public_registered_visitors,
   // origin/main 1aecbff) become visitor portal accounts — same phone, email and
@@ -210,6 +214,10 @@ async function migrateUnitDatabase(conn, dbName) {
   await addColumnIfMissing(conn, dbName, 'visit_requests', 'work_order_ref', 'VARCHAR(100) NULL AFTER service_type');
   // Visitor's address from the public form (tender 1.1.1)
   await addColumnIfMissing(conn, dbName, 'visit_requests', 'visitor_address', 'VARCHAR(255) NULL AFTER visitor_email');
+  // Visitor's ID proof and optional photo, taken with the request and reused at check-in
+  await addColumnIfMissing(conn, dbName, 'visit_requests', 'id_proof_type', 'VARCHAR(50) NULL AFTER accompanying_count');
+  await addColumnIfMissing(conn, dbName, 'visit_requests', 'id_proof_number', 'VARCHAR(255) NULL AFTER id_proof_type');
+  await addColumnIfMissing(conn, dbName, 'visit_requests', 'visitor_photo_path', 'VARCHAR(255) NULL AFTER id_proof_number');
   // Visit-day reminder already sent (services/reminder.service.js)
   await addColumnIfMissing(conn, dbName, 'visit_requests', 'reminder_sent_at', 'DATETIME NULL AFTER force_created');
   // Cross-unit EMPLOYEE_VISIT requester (lives in another unit's DB)
@@ -246,6 +254,23 @@ async function migrateUnitDatabase(conn, dbName) {
       );
     }
   } catch (_) {}
+
+  // 2a. visit_requests.status ENUM: EXPIRED (the visit date passed without a check-in)
+  try {
+    const [cols] = await conn.query(
+      `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'visit_requests' AND COLUMN_NAME = 'status'`,
+      [dbName]
+    );
+    if (cols.length > 0 && !cols[0].COLUMN_TYPE.includes("'EXPIRED'")) {
+      await conn.query(
+        `ALTER TABLE \`${dbName}\`.visit_requests
+         MODIFY COLUMN status ENUM('PENDING','APPROVED','REJECTED','CANCELLED','SCHEDULED','COMPLETED','EXPIRED') DEFAULT 'PENDING'`
+      );
+    }
+  } catch (err) {
+    console.error(`[DBInit] ${dbName}: could not add EXPIRED to visit_requests.status:`, err.message);
+  }
 
   // 2b. notifications.notification_type ENUM update (include 'WHATSAPP')
   try {

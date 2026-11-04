@@ -8,6 +8,7 @@ const { protect } = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
 const { z }         = require('zod');
 const { sendError } = require('../utils/response.util');
+const { uploadVisitorPhoto } = require('../middlewares/upload.middleware');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // Coerce empty string / null / undefined to null; otherwise parse as number.
@@ -18,6 +19,8 @@ const maybeNumber = z.preprocess(
 );
 
 // ── Validation schema ─────────────────────────────────────────────────────────
+
+const { ID_PROOF_TYPES, idProofError } = require('../utils/idProof.util');
 
 const requestSchema = z.object({
   visit_category:   z.enum(['EMPLOYEE_VISIT', 'VENDOR', 'SPOT', 'PERSONAL_VISIT']),
@@ -45,6 +48,9 @@ const requestSchema = z.object({
   gst_number:     z.string().optional().nullable(),
   work_order_ref: z.string().optional().nullable(),
   service_type:   z.string().optional().nullable(),
+  // Visitor's ID proof (required for personal, walk-in and vendor visits — checked at the gate)
+  id_proof_type:   z.enum(ID_PROOF_TYPES).optional().nullable(),
+  id_proof_number: z.string().trim().max(50).optional().nullable(),
   // Conflict override
   force_create:   z.boolean().optional().default(false),
   // Companions
@@ -64,6 +70,12 @@ const requestSchema = z.object({
       }
     }
   })).optional().default([]),
+}).superRefine((data, ctx) => {
+  if (!['PERSONAL_VISIT', 'SPOT', 'VENDOR'].includes(data.visit_category)) return;
+  const message = idProofError(data.id_proof_type, data.id_proof_number);
+  if (message) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [data.id_proof_type ? 'id_proof_number' : 'id_proof_type'], message });
+  }
 });
 
 const validateRequest = (req, res, next) => {
@@ -98,6 +110,9 @@ router.get('/my-visitors', protect, ctrl.getMyVisitors);
 // /my must come BEFORE /:id
 router.get('/my', protect, ctrl.getMyRequests);
 
+// Walk-ins this security / reception user registered (today and later) — before /:id
+router.get('/my-walkins', protect, authorize('security', 'receptionist'), ctrl.getMyWalkIns);
+
 // Create authenticated visit request (unit staff only — super_admin is read-only inside units)
 router.post(
   '/',
@@ -105,6 +120,15 @@ router.post(
   authorize('unit_admin', 'employee', 'security', 'receptionist'),
   validateRequest,
   ctrl.createRequest
+);
+
+// Optional visitor photo for a request just created (multipart field "photo")
+router.post(
+  '/:id/photo',
+  protect,
+  authorize('unit_admin', 'employee', 'security', 'receptionist'),
+  (req, res, next) => uploadVisitorPhoto(req, res, (err) => (err ? sendError(res, err.message, 400) : next())),
+  ctrl.uploadRequestPhoto
 );
 
 // List all requests — admin/security roles + auditors

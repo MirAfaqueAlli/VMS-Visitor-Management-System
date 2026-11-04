@@ -3,15 +3,17 @@
 // number (54px, parts bar + legend) beside smaller metric tiles, then sections
 // with head-icon chips and plain tables. No greetings, no gradients.
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  Clock, UserCheck, AlertCircle, Calendar, Check, X, Plus, ClipboardList, Building2, ChevronRight, LogOut, Loader2,
+  Clock, UserCheck, AlertCircle, Calendar, Check, X, Plus, ClipboardList, Building2, ChevronRight, LogOut, Loader2, QrCode,
 } from "../../components/icons";
+import PassLookupModal from "../../components/gate/PassLookupModal";
+import QRCheckoutModal from "../../components/gate/QRCheckoutModal";
 import { toast } from "react-hot-toast";
 import apiClient from "../../api/axios";
 import useAuth from "../../hooks/useAuth";
 import useSocketEvent from "../../hooks/useSocketEvent";
-import { PageHeader, SectionTitle, Status, Tag, State, Empty, Spinner, Modal, Field, KV, SearchInput } from "../../components/ui";
+import { PageHeader, SectionTitle, Status, Tag, State, Empty, Spinner, Modal, Field, KV, SearchInput, Live } from "../../components/ui";
 import Select from "../../components/Select";
 import { fmtDate, fmtTime, fmtClock, fmtNumber, orDash } from "../../lib/format";
 import { describe } from "../../lib/status";
@@ -153,7 +155,7 @@ function CheckoutModal({ visitor, onConfirm, onCancel, loading }) {
     >
       <div className="tile mb-3">
         <KV items={[
-          ["Pass", <span key="p" className="mono">{orDash(visitor.pass_number)}</span>],
+          ["Pass", visitor.pass_number ? <PassLink key="p" pass={visitor.pass_number} /> : "—"],
           ["Host", orDash(visitor.host_name)],
           ["Checked in", <span key="t" className="tabular">{fmtClock(visitor.check_in_at ?? visitor.check_in_time ?? visitor.checked_in_at)}</span>],
         ]} className="!grid-cols-[90px_minmax(0,1fr)]" />
@@ -200,14 +202,27 @@ const applyGateFilter = (list, filter) => {
 };
 
 /* ─── A: Security / Receptionist ─────────────────────────────────────────── */
+/** Pass number that opens the gate pass (view / print). Doesn't trigger the row's own click. */
+function PassLink({ pass }) {
+  if (!pass) return null;
+  return (
+    <Link to={`/gate/pass/${encodeURIComponent(pass)}`} className="mono text-link" title="Open and print the gate pass"
+      onClick={(e) => e.stopPropagation()}>
+      {pass}
+    </Link>
+  );
+}
+
 function SecurityDashboard() {
   const navigate = useNavigate();
   const { hasRole, user } = useAuth();
   const [dashData, setDashData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [checkoutVisitor, setCheckoutVisitor] = useState(null);
+  const [checkoutVisitor, setCheckoutVisitor] = useState(null);   // direct check-out (confirm)
+  const [qrCheckoutVisitor, setQrCheckoutVisitor] = useState(null); // check-out by scanning the pass
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [expectedFilter, setExpectedFilter] = useState({ category: "", search: "" });
+  const [lookupOpen, setLookupOpen] = useState(false);   // "Check in by pass" (scan / type)
   const [insideFilter, setInsideFilter] = useState({ category: "", search: "" });
 
   const fetchData = useCallback(async () => {
@@ -325,10 +340,18 @@ function SecurityDashboard() {
     <div className="animate-fade-in">
       <PageHeader title="Dashboard" meta={user?.unit_name ? `${user.unit_name} · gate today` : "Gate today"}
         actions={(
-          <button type="button" onClick={() => navigate("/requests/new?category=SPOT")} className="btn-primary">
-            <Plus size={14} /> Register walk-in
-          </button>
+          <>
+            {canCheckIn && (
+              <button type="button" onClick={() => setLookupOpen(true)} className="btn-outline">
+                <QrCode size={14} /> Check in by pass
+              </button>
+            )}
+            <button type="button" onClick={() => navigate("/requests/new?category=SPOT")} className="btn-primary">
+              <Plus size={14} /> Register walk-in
+            </button>
+          </>
         )} />
+      {lookupOpen && <PassLookupModal onClose={() => setLookupOpen(false)} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_1fr] gap-3 mb-7">
         <HeroTile label="On premises now" value={inside} hint="Visitors checked in and not yet out"
@@ -361,7 +384,7 @@ function SecurityDashboard() {
                     <td className="font-medium">
                       {orDash(v.visitor_name)}
                       <span className="cell-sub">
-                        {v.company_name ? `${v.company_name} · ` : ""}{v.pass_number ? <span className="mono">{v.pass_number}</span> : v.visitor_phone}
+                        {v.company_name ? `${v.company_name} · ` : ""}{v.pass_number ? <PassLink pass={v.pass_number} /> : v.visitor_phone}
                       </span>
                     </td>
                     <td><Status value={v.visit_category || v.visitor_type_code || v.visitor_type} /></td>
@@ -388,7 +411,8 @@ function SecurityDashboard() {
       </section>
 
       <section className="section">
-        <SectionTitle icon={UserCheck} tone="success" title="On premises" meta={`${active.length} inside`}
+        <SectionTitle icon={UserCheck} tone="success" title="On premises"
+          meta={active.length ? <span className="inline-flex items-center gap-2">{active.length} inside <Live>LIVE</Live></span> : "0 inside"}
           actions={active.length > 0 && <GateFilter filter={insideFilter} onChange={setInsideFilter} total={active.length} shown={shownInside.length} />} />
         {active.length === 0 ? (
           <Empty icon={UserCheck} title="No visitors on the premises" hint="Visitors appear here when security checks them in at the gate." />
@@ -404,18 +428,25 @@ function SecurityDashboard() {
               <tbody>
                 {pagedInside.rows.map((v, i) => (
                   <tr key={v.visit_log_id ?? v.id ?? i}>
-                    <td className="font-medium">{orDash(v.visitor_name)}<span className="cell-sub mono">{v.pass_number}</span></td>
+                    <td className="font-medium">{orDash(v.visitor_name)}<span className="cell-sub"><PassLink pass={v.pass_number} /></span></td>
                     <td>
                       {orDash(v.host_name)}
                       {v.department_name && <span className="cell-sub">{v.department_name}</span>}
                     </td>
-                    <td><State tone="info">Inside premises</State></td>
+                    <td><Live /></td>
                     <td className="tabular">{fmtClock(v.check_in_at ?? v.check_in_time ?? v.checked_in_at)}</td>
                     {canCheckOut && (
                       <td className="num">
-                        <button type="button" onClick={() => setCheckoutVisitor(v)} className="btn-outline btn-sm">
-                          <LogOut size={13} /> Check out
-                        </button>
+                        <div className="flex gap-2 justify-end">
+                          <button type="button" onClick={() => setCheckoutVisitor(v)} className="btn-outline btn-sm"
+                            title="Check out without scanning; the pass and its QR stop working at once">
+                            <LogOut size={13} /> Direct
+                          </button>
+                          <button type="button" onClick={() => setQrCheckoutVisitor(v)} className="btn-primary btn-sm"
+                            title="Scan the pass; its QR stops working at once" disabled={!v.pass_number}>
+                            <QrCode size={13} /> By QR
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -427,6 +458,14 @@ function SecurityDashboard() {
           </>
         )}
       </section>
+
+      {qrCheckoutVisitor && (
+        <QRCheckoutModal
+          visitor={qrCheckoutVisitor}
+          onClose={() => setQrCheckoutVisitor(null)}
+          onSuccess={fetchData}
+        />
+      )}
 
       {checkoutVisitor && (
         <CheckoutModal
@@ -446,6 +485,11 @@ function EmployeeDashboard() {
   const { user } = useAuth();
   const [inbox, setInbox] = useState([]);
   const [upcomingVisits, setUpcomingVisits] = useState([]);
+  const [upcomingTotal, setUpcomingTotal] = useState(0);   // all of them, not just the 5 shown
+  // The signed-in employee is the visitor (their own mobile / email on the visit)
+  const digits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+  const isMe = (v) => (user?.phone && v.visitor_phone && digits(v.visitor_phone) === digits(user.phone))
+    || (user?.email && v.visitor_email && v.visitor_email.toLowerCase() === user.email.toLowerCase());
   const [myTotal, setMyTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -459,6 +503,7 @@ function EmployeeDashboard() {
       ]);
       setInbox(inboxRes.data?.data?.items ?? inboxRes.data?.data ?? []);
       setUpcomingVisits(upcomingRes.data?.data?.requests ?? []);
+      setUpcomingTotal(upcomingRes.data?.data?.pagination?.total ?? 0);
       setMyTotal(totalRes.data?.data?.pagination?.total ?? 0);
     } catch (err) {
       toast.error(err?.response?.data?.message || "Failed to load dashboard.");
@@ -499,7 +544,7 @@ function EmployeeDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_1fr] gap-3 mb-7">
         <HeroTile label="Waiting for your approval" value={inbox.length} tone={inbox.length > 0 ? "warning" : undefined}
           hint={inbox.length ? "Visitors asking to meet you" : "Nothing is waiting for you"} />
-        <MetricTile label="Upcoming visits" value={upcomingVisits.length} hint="Approved visits ahead" onClick={() => navigate("/requests")} />
+        <MetricTile label="Upcoming visits" value={upcomingTotal} hint="Approved visits ahead" onClick={() => navigate("/requests")} />
         <MetricTile label="My requests" value={myTotal} hint="All time" onClick={() => navigate("/requests")} />
       </div>
 
@@ -543,8 +588,12 @@ function EmployeeDashboard() {
               <thead><tr><th>Visitor</th><th>Type</th><th>Visit</th><th>Purpose</th></tr></thead>
               <tbody>
                 {upcomingVisits.map((v, i) => (
-                  <tr key={v.id ?? i} className="is-clickable" onClick={() => v.id && navigate(`/requests/${v.id}`)}>
-                    <td className="font-medium">{orDash(v.visitor_name)}</td>
+                  <tr key={`${v._cross_unit_id ?? "own"}-${v.id ?? i}`} className="is-clickable"
+                    onClick={() => v.id && navigate(v._cross_unit_id ? `/requests/${v.id}?unit_id=${v._cross_unit_id}` : `/requests/${v.id}`)}>
+                    <td className="font-medium">
+                      {orDash(v.visitor_name)}
+                      {isMe(v) && <span className="text-muted font-normal"> (You)</span>}
+                    </td>
                     <td><Status value={v.visit_category || v.visitor_type_code || v.visitor_type} /></td>
                     <td className="tabular whitespace-nowrap">{fmtDate(v.visit_date)}<span className="cell-sub">{timeOf(v)}</span></td>
                     <td className="max-w-[280px] truncate">{orDash(v.purpose)}</td>
@@ -649,7 +698,8 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
                 <thead><tr><th>Visitor</th><th>Host</th><th>Time</th></tr></thead>
                 <tbody>
                   {yetToCome.slice(0, 8).map((v, i) => (
-                    <tr key={v.id ?? i} className="is-clickable" onClick={() => v.id && navigate(`/requests/${v.id}`)}>
+                    <tr key={`${v._cross_unit_id ?? "own"}-${v.id ?? i}`} className="is-clickable"
+                    onClick={() => v.id && navigate(v._cross_unit_id ? `/requests/${v.id}?unit_id=${v._cross_unit_id}` : `/requests/${v.id}`)}>
                       <td className="font-medium">{orDash(v.visitor_name)}<span className="cell-sub">{describe(v.visit_category).label}</span></td>
                       <td>{orDash(v.host_name)}<span className="cell-sub">{orDash(v.department_name)}</span></td>
                       <td className="tabular">{timeOf(v)}</td>

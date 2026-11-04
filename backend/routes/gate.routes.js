@@ -34,6 +34,14 @@ router.get(
   gateController.getActiveVisitors
 );
 
+// POST /api/gate/lookup — scanned QR / typed pass number → can this visitor check in now?
+router.post(
+  '/lookup',
+  protect,
+  authorize('unit_admin', 'security', 'receptionist'),
+  gateController.lookupPass
+);
+
 // POST /api/gate/checkin/:requestId
 router.post(
   '/checkin/:requestId',

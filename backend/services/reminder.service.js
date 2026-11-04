@@ -24,6 +24,7 @@ const { sendNotification }     = require('./notification.service');
 const emailService             = require('./email.service');
 const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('./whatsapp.service');
 const { formatTime }           = require('../utils/displayFormat.util');
+const { expireAllUnits }       = require('./visitExpiry.service');
 
 const JOB_NAME       = 'daily_reminders';
 const REMINDER_HOUR  = parseInt(process.env.REMINDER_HOUR || '7', 10);
@@ -227,6 +228,11 @@ async function tick() {
 
 /** Call once after the server starts. */
 function startReminderScheduler() {
+  // Past-dated visits / passes → EXPIRED: runs even when reminders are off
+  const sweep = () => expireAllUnits().catch((err) => console.error('[VisitExpiry] sweep failed:', err.message));
+  setTimeout(sweep, 20 * 1000).unref();
+  setInterval(sweep, CHECK_EVERY_MS).unref();
+
   if (process.env.REMINDERS_ENABLED === 'false') {
     console.log('[Reminders] Disabled (REMINDERS_ENABLED=false).');
     return;

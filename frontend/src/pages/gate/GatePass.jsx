@@ -1,14 +1,12 @@
 // frontend/src/pages/gate/GatePass.jsx
-// Printable gate pass: a flat, hairline-bordered card with the OHPC letterhead,
-// visitor, host, validity and QR. Only the pass itself prints.
+// Gate pass page for staff: the pass (components/gate/GatePassCard) with Back / Print.
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { Printer, QrCode } from "../../components/icons";
+import { Printer } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
-import BrandLogo from '../../components/BrandLogo';
 import { PageHeader, Spinner } from "../../components/ui";
-import { fmtDate, fmtTime, orDash } from "../../lib/format";
+import GatePassCard from "../../components/gate/GatePassCard";
 
 export default function GatePass() {
   const { passNumber } = useParams();
@@ -37,9 +35,6 @@ export default function GatePass() {
   if (loading) return <><PageHeader title="Gate pass" /><Spinner label="Loading the pass…" /></>;
   if (!passData) return null;
 
-  // A signed S3 link, or a QR the server drew from the pass data (no S3 on this server)
-  const hasQr = /^(https?:\/\/|data:image\/)/.test(passData.qr_code_path ?? '');
-
   return (
     <div className="animate-fade-in">
       <div className="print:hidden">
@@ -57,88 +52,7 @@ export default function GatePass() {
         />
       </div>
 
-      <article className="gate-pass card mx-auto w-full max-w-[460px] p-6 sm:p-7">
-        {/* Letterhead */}
-        <header className="text-center pb-5 mb-5 border-b border-line">
-          <div className="flex justify-center mb-3"><BrandLogo height={32} /></div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted">Government of Odisha</p>
-          <p className="text-[12.5px] font-semibold text-ink-2">Odisha Hydro Power Corporation Ltd.</p>
-          {passData.unit_name && (
-            <p className="text-[12px] text-ink-2 mt-0.5">
-              {passData.unit_name}{passData.unit_code ? <span className="mono text-muted"> · {passData.unit_code}</span> : null}
-            </p>
-          )}
-          <h2 className="mt-3 text-[22px] font-bold tracking-[0.12em] uppercase text-ink">Gate pass</h2>
-          <p className="mt-1 mono text-[12.5px] text-ink-2">{passData.pass_number}</p>
-        </header>
-
-        {/* Visitor + QR */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1 space-y-3">
-            <div>
-              <p className="group-heading mb-0.5">Visitor</p>
-              <p className="text-[20px] font-semibold leading-tight text-ink break-words">{passData.visitor_name}</p>
-              {passData.visitor_phone && <p className="mt-0.5 text-[12.5px] tabular text-ink-2">{passData.visitor_phone}</p>}
-            </div>
-            <div>
-              <p className="group-heading mb-0.5">Host</p>
-              <p className="text-[13px] font-medium text-ink">{orDash(passData.host_name)}</p>
-              {passData.department_name && <p className="text-[12px] text-muted">{passData.department_name}</p>}
-            </div>
-          </div>
-
-          {/* qr_code_path: a short-lived signed S3 link, or a data: image drawn by the API.
-              No crossOrigin attribute: it would require a CORS rule on the private bucket. */}
-          <div className="shrink-0 p-1.5 bg-white rounded border border-line">
-            {hasQr ? (
-              <img src={passData.qr_code_path} alt={`QR code for pass ${passData.pass_number}`} className="w-24 h-24 object-contain" />
-            ) : (
-              <div className="w-24 h-24 flex flex-col items-center justify-center gap-1 text-[11px] text-muted">
-                <QrCode size={20} /> No QR
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Validity */}
-        <dl className="mt-5 grid grid-cols-3 gap-3 rounded-lg bg-surface-alt px-3 py-2.5">
-          <div>
-            <dt className="group-heading mb-0.5">Visit date</dt>
-            <dd className="text-[13px] font-medium tabular text-ink">{fmtDate(passData.visit_date)}</dd>
-          </div>
-          <div>
-            <dt className="group-heading mb-0.5">From</dt>
-            <dd className="text-[13px] font-medium tabular text-ink">{passData.visit_start_time ? fmtTime(passData.visit_start_time) : '—'}</dd>
-          </div>
-          <div>
-            <dt className="group-heading mb-0.5">Until</dt>
-            <dd className="text-[13px] font-medium tabular text-ink">{passData.visit_end_time ? fmtTime(passData.visit_end_time) : '—'}</dd>
-          </div>
-        </dl>
-
-        <p className="mt-5 pt-4 border-t border-line text-center text-[11px] text-muted">
-          Wear this pass where it can be seen while on the premises.
-        </p>
-      </article>
-
-      {/* Print only the pass */}
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-@media print {
-  @page { margin: 15mm; }
-  body * { visibility: hidden; }
-  .gate-pass, .gate-pass * { visibility: visible; }
-  .gate-pass {
-    position: absolute; left: 0; top: 0;
-    width: 100%; max-width: 400px; margin: 0;
-    background: #fff; color: #000; border-color: #999;
-    page-break-inside: avoid; break-inside: avoid;
-  }
-}
-`,
-        }}
-      />
+      <GatePassCard pass={{ ...passData, qr: passData.qr_code_path }} />
     </div>
   );
 }

@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Loader2,
   AlertTriangle,
+  CreditCard,
 } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
@@ -20,6 +21,8 @@ import useAuth from "../../hooks/useAuth";
 import { getApiErrorMessage } from "../../utils/apiError";
 import Select from "../../components/Select";
 import { PageHeader, SectionTitle, Field, Modal, Note } from "../../components/ui";
+import PhotoCapture from "../../components/PhotoCapture";
+import { ID_PROOFS, cleanIdNumber, idProofError } from "../../lib/idProof";
 
 // ── Category definitions ───────────────────────────────────────────────────────
 const ALL_CATEGORIES = [
@@ -127,8 +130,9 @@ export default function NewRequest() {
   const role = user?.role_type || user?.role || "employee";
   // Security and reception can't open Visit Requests: send them back to where they
   // started (dashboard or gate), or to the dashboard on a fresh tab
-  const leave = () => {
+  const leave = (created = false) => {
     if (!["security", "receptionist"].includes(role)) navigate("/requests");
+    else if (created) navigate("/gate/walk-ins");
     else if (window.history.state?.idx > 0) navigate(-1);
     else navigate("/dashboard");
   };
@@ -175,8 +179,11 @@ export default function NewRequest() {
     gst_number: "",
     work_order_ref: "",
     service_type: "",
+    id_proof_type: "AADHAAR",
+    id_proof_number: "",
     companions: [],
   });
+  const [visitorPhoto, setVisitorPhoto] = useState(null);   // optional; uploaded after the request is created
 
   // ── Data fetching ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -261,7 +268,8 @@ export default function NewRequest() {
           setSelectedCategory(biz ? "SPOT_BUSINESS" : "SPOT_INDIVIDUAL");
           setSpotVisitorType(biz ? "business" : "individual");
         }
-        toast.success(`Returning visitor found: ${visitor.full_name}`);
+        const where = visitor.source === "portal" ? " (visitor portal account)" : visitor.source === "other_unit" ? " (visited another OHPC unit)" : "";
+        toast.success(`Returning visitor found: ${visitor.full_name}${where}`);
       } else {
         setVisitorLookupState("not_found");
         setFormData(p => ({ ...p, visitor_id: "", visitor_name: "", visitor_email: "" }));
@@ -609,6 +617,13 @@ export default function NewRequest() {
     const payload = { ...formData };
     const cat = payload.visit_category;
 
+    if (["PERSONAL_VISIT", "SPOT", "VENDOR"].includes(cat)) {
+      payload.id_proof_number = cleanIdNumber(payload.id_proof_type, payload.id_proof_number);
+    } else {
+      delete payload.id_proof_type;
+      delete payload.id_proof_number;
+    }
+
     if (cat !== "VENDOR" && !(cat === "SPOT" && spotVisitorType === "business")) {
       delete payload.company_name;
       delete payload.vendor_email;
@@ -742,13 +757,22 @@ export default function NewRequest() {
       document.getElementById("contact_person")?.focus();
       return;
     }
+    if (["PERSONAL_VISIT", "SPOT", "VENDOR"].includes(catNow)) {
+      const idError = idProofError(formData.id_proof_type, formData.id_proof_number, true);
+      if (idError) {
+        toast.error(`ID proof: ${idError}`);
+        document.getElementById("id_proof_number")?.focus();
+        return;
+      }
+    }
 
     setLoading(true);
     try {
       const payload = buildPayload();
-      await apiClient.post("/visit-requests", payload);
+      const res = await apiClient.post("/visit-requests", payload);
+      await savePhoto(res.data?.data?.id);
       toast.success("Visit request created successfully");
-      leave();
+      leave(true);
     } catch (error) {
       const data = error.response?.data;
       // ── Conflict detected → show confirmation modal instead of toast ──
@@ -770,6 +794,18 @@ export default function NewRequest() {
     }
   };
 
+  /** Uploads the optional visitor photo for a request just created; the request stands if this fails. */
+  const savePhoto = async (requestId) => {
+    if (!visitorPhoto || !requestId) return;
+    try {
+      const fd = new FormData();
+      fd.append("photo", await (await fetch(visitorPhoto)).blob(), "visitor_photo.jpg");
+      await apiClient.post(`/visit-requests/${requestId}/photo`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "The request is saved, but the photo couldn't be uploaded. Take it at check-in."), { duration: 6000 });
+    }
+  };
+
   // ── Force submit (override conflict) ──────────────────────────────────────────
   const handleForceSubmit = async () => {
     if (!conflictModal) return;
@@ -777,9 +813,10 @@ export default function NewRequest() {
     setConflictModal(null);
     try {
       const payload = { ...conflictModal.pendingPayload, force_create: true };
-      await apiClient.post("/visit-requests", payload);
+      const res = await apiClient.post("/visit-requests", payload);
+      await savePhoto(res.data?.data?.id);
       toast.success("Visit request created (conflict overridden).");
-      leave();
+      leave(true);
     } catch (error) {
       toast.error(getApiErrorMessage(error, "Failed to create request."));
     } finally {
@@ -1182,6 +1219,35 @@ export default function NewRequest() {
           </section>
         )}
 
+        {/* ── Visitor ID proof + optional photo (checked again at the gate) ── */}
+        {["PERSONAL_VISIT", "SPOT", "VENDOR"].includes(cat) && (
+          <section className="section">
+            <SectionTitle icon={CreditCard} title="ID proof and visitor photo"
+              meta={isVendorBusiness ? "of the contact person" : "of the visitor"} />
+            <div className="grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-x-4 gap-y-3 max-w-[720px]">
+              <Field label="ID type" required>
+                <Select value={formData.id_proof_type} aria-label="ID type"
+                  onChange={(e) => setFormData((p) => ({ ...p, id_proof_type: e.target.value }))}>
+                  {ID_PROOFS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </Select>
+              </Field>
+              <Field label="ID number" htmlFor="id_proof_number" required
+                error={idProofError(formData.id_proof_type, formData.id_proof_number)}
+                hint="Security checks the card against this at check-in.">
+                <input id="id_proof_number" type="text" required value={formData.id_proof_number}
+                  onChange={(e) => setFormData((p) => ({ ...p, id_proof_number: e.target.value }))}
+                  placeholder={ID_PROOFS.find((t) => t.value === formData.id_proof_type)?.placeholder}
+                  maxLength={formData.id_proof_type === "AADHAAR" ? 14 : 30} autoComplete="off"
+                  aria-invalid={!!idProofError(formData.id_proof_type, formData.id_proof_number) || undefined}
+                  className="control mono uppercase" />
+              </Field>
+              <Field label="Visitor photo (face)" hint="Optional — a photo of the person, not of the ID card. It can also be taken at check-in." className="sm:col-span-2">
+                <PhotoCapture value={visitorPhoto} onChange={setVisitorPhoto} label="Visitor photo" />
+              </Field>
+            </div>
+          </section>
+        )}
+
         {/* ── Companions ── */}
         <section className="section">
           <SectionTitle
@@ -1267,7 +1333,7 @@ export default function NewRequest() {
               {loading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
               {loading ? "Submitting…" : "Submit request"}
             </button>
-            <button type="button" onClick={leave} className="btn-outline">Cancel</button>
+            <button type="button" onClick={() => leave()} className="btn-outline">Cancel</button>
           </div>
         </aside>
       </form>

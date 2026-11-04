@@ -266,6 +266,9 @@ export default function RequestDetail() {
               <dl className="mt-1 space-y-0.5 text-[12px] text-ink-2">
                 {request.host_designation && <dd>{request.host_designation}</dd>}
                 {request.department_name && <dd>{request.department_name}</dd>}
+                {request.host_unit_name && (
+                  <dd className="text-ink">{request.host_unit_name}{request.host_unit_city ? `, ${request.host_unit_city}` : ""}</dd>
+                )}
                 {request.host_email && <dd className="break-all">{request.host_email}</dd>}
               </dl>
             </div>
