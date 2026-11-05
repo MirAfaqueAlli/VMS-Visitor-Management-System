@@ -1,6 +1,7 @@
 // frontend/src/context/AuthContext.jsx
 import { createContext, useReducer, useEffect, useCallback } from "react";
 import apiClient from "../api/axios";
+import { unsubscribePush } from "../lib/push";
 
 export const AuthContext = createContext(null);
 
@@ -82,6 +83,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(() => {
+    // This browser stops getting this user's system notifications (token passed: it's cleared next)
+    unsubscribePush(localStorage.getItem("vms_token"));
     localStorage.removeItem("vms_token");
     localStorage.removeItem("vms_user");
     localStorage.removeItem("vms_active_unit");

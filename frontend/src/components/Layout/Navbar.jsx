@@ -291,6 +291,13 @@ export default function Navbar({ onMenuToggle }) {
     toast.error(`Your visit request was declined${by}${reason}`, { duration: 12000, id: `rejected-${data.visit_request_id}` });
   }, []);
 
+  /* Socket: decided elsewhere (an admin, another tab), a visitor came / left, a visit was
+     cancelled — resync the bell from the server */
+  useSocketEvent('visit:actioned', () => { fetchInbox(); }, [fetchInbox]);
+  useSocketEvent('visit:checkin', () => { fetchInbox(); }, [fetchInbox]);
+  useSocketEvent('visit:checkout', () => { fetchInbox(); }, [fetchInbox]);
+  useSocketEvent('visit:cancelled', () => { fetchInbox(); }, [fetchInbox]);
+
   /* Socket: the host already has a visitor with them */
   useSocketEvent('visit:conflict:meeting', (data) => {
     toast.error(

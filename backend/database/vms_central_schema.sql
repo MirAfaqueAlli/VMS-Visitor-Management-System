@@ -234,3 +234,26 @@ INSERT INTO visitor_types (name, code, is_active) VALUES
 ON DUPLICATE KEY UPDATE name=VALUES(name);
 
 
+
+-- Browser push subscriptions (system notifications while the app is closed or
+-- minimised, desktop and mobile). One row per browser / device per signed-in user.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id       INT           NOT NULL,
+    unit_db       VARCHAR(64)   NOT NULL,          -- 'central' or the unit's DB name
+    endpoint      VARCHAR(700)  NOT NULL,
+    p256dh        VARCHAR(200)  NOT NULL,
+    auth          VARCHAR(100)  NOT NULL,
+    user_agent    VARCHAR(255)  NULL,
+    created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at  DATETIME      NULL,
+    UNIQUE KEY uq_push_endpoint (endpoint(255)),
+    KEY idx_push_user (unit_db, user_id)
+);
+
+-- Small server settings (e.g. the generated Web Push VAPID key pair)
+CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key   VARCHAR(100)  PRIMARY KEY,
+    setting_value TEXT          NOT NULL,
+    updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);

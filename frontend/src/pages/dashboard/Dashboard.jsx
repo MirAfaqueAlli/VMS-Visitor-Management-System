@@ -305,6 +305,9 @@ function SecurityDashboard() {
   }, []), []);
 
   // Socket: checked out → off premises, one more completed
+  // A visit expected today was cancelled — reload today's lists
+  useSocketEvent("visit:cancelled", () => { fetchData(); }, [fetchData]);
+
   useSocketEvent("visit:checkout", useCallback((data) => {
     setDashData((prev) => {
       if (!prev) return prev;

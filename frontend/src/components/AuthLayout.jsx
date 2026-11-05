@@ -112,15 +112,15 @@ export default function AuthLayout({
 
       {/* Right: full-height form panel (the scroll container) */}
       <main className="flex-1 min-w-0 overflow-y-auto flex flex-col bg-surface">
-        {/* Compact brand header — replaces the left panel on small screens */}
-        <div className="lg:hidden" style={{ background: NAVY }}>
+        {/* Compact brand header — replaces the left panel on small screens: the original
+            (light) OHPC logo on white, with the product name beside it */}
+        <div className="lg:hidden bg-surface border-b border-line">
           <TricolourStrip height={3} />
-          <div className="flex items-center gap-2.5 px-4 py-3.5">
-            <img src="/brand/ohpc-emblem-white.svg" alt="OHPC" className="h-9 w-auto" />
-            <div>
-              <p className="text-white font-semibold text-[13.5px] leading-tight">{product}</p>
-              <p className="text-[11px] mt-0.5" style={{ color: '#a9bad3' }}>{ORG_NAME}</p>
-            </div>
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <img src="/brand/ohpc-logo.svg" alt={ORG_NAME} className="h-8 sm:h-9 w-auto max-w-[66%] object-contain object-left" />
+            <span className="min-w-0 max-w-[34%] text-[10.5px] font-semibold uppercase tracking-[0.08em] text-right leading-snug" style={{ color: NAVY }}>
+              {product}
+            </span>
           </div>
         </div>
 

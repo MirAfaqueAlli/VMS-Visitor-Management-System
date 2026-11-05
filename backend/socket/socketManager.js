@@ -133,6 +133,8 @@ function emitToUser(userId, unitDb, event, data) {
   const dbKey = unitDb || 'central';
   const roomName = `user:${dbKey}:${userId}`;
   io.to(roomName).emit(event, data);
+  // Also as a system notification on their browsers / phone (when the app isn't in view)
+  push().pushToUser(userId, dbKey, event, data);
 }
 
 /** Emit to all security/gate users of a unit. */
@@ -142,6 +144,27 @@ function emitToUnitSecurity(unitId, event, data) {
     return;
   }
   io.to(`unit:${unitId}:security`).emit(event, data);
+  push().pushToUnitSecurity(unitId, event, data);
+}
+
+/**
+ * Emit to the unit admins of a unit (they can approve any request there).
+ * @param {number}   unitId
+ * @param {string}   unitDb       - the unit's DB name (for their push subscriptions)
+ * @param {number[]} [skipUserIds] - e.g. the host, who already got their own copy
+ */
+async function emitToUnitAdmins(unitId, unitDb, event, data, skipUserIds = []) {
+  if (!io || !unitId) return;
+  try {
+    const [admins] = await getPool(unitDb).query(
+      "SELECT id FROM users WHERE role_type = 'unit_admin' AND is_active = 1 AND deleted_at IS NULL"
+    );
+    for (const a of admins) {
+      if (!skipUserIds.map(Number).includes(Number(a.id))) emitToUser(a.id, unitDb, event, data);
+    }
+  } catch (err) {
+    console.warn('[Socket] emitToUnitAdmins failed:', err.message);
+  }
 }
 
 /** Emit to ALL connected users of a unit. */
@@ -153,4 +176,7 @@ function emitToUnit(unitId, event, data) {
   io.to(`unit:${unitId}:all`).emit(event, data);
 }
 
-module.exports = { initSocket, getIO, emitToUser, emitToUnitSecurity, emitToUnit };
+// push.service is loaded lazily (it needs the DB pools; keeps start-up order simple)
+const push = () => require('../services/push.service');
+
+module.exports = { initSocket, getIO, emitToUser, emitToUnitSecurity, emitToUnit, emitToUnitAdmins };

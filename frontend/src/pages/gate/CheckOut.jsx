@@ -67,6 +67,9 @@ export default function CheckOut() {
     toast.success(`${data.visitor_name || "A visitor"} checked in.`);
   }, []), []);
 
+  // A visit expected today was cancelled — reload the lists
+  useSocketEvent("visit:cancelled", fetchGateDashboard, [fetchGateDashboard]);
+
   useSocketEvent("visit:checkout", useCallback((data) => {
     setActiveVisitors(prev => prev.filter(v => v.visit_log_id !== data.visit_log_id));
     const method = data.checkout_method === "QR_SCAN" ? "via QR scan" : "";

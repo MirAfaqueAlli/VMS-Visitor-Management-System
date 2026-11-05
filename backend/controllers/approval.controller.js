@@ -7,7 +7,7 @@ const emailService = require('../services/email.service');
 const { logAudit } = require('../utils/auditLogger.util');
 const { generateGatePass } = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
-const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
+const { emitToUnitSecurity, emitToUser, emitToUnitAdmins } = require('../socket/socketManager');
 const { getSignedFileUrl } = require('../utils/s3.util');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
@@ -65,6 +65,17 @@ const getISTDateString = (d = new Date()) => {
  * the outcome in THEIR unit: dashboard + live socket event, and email unless they
  * already got the visitor email (same address). Never throws.
  */
+/**
+ * A request was decided: tell the host (when an admin decided for them) and the other
+ * unit admins, so the request leaves their approval inboxes and bells at once.
+ */
+function actionedToOthers(req, request, approver, payload) {
+  if (request.host_user_id && Number(request.host_user_id) !== Number(approver.id)) {
+    emitToUser(request.host_user_id, req.user.unit_db, 'visit:actioned', payload);
+  }
+  emitToUnitAdmins(req.user.unit_id, req.user.unit_db, 'visit:actioned', payload, [approver.id, request.host_user_id]);
+}
+
 /** Last 10 digits, for comparing mobile numbers. */
 const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
 
@@ -380,6 +391,8 @@ const approveRequest = async (req, res) => {
       visit_request_id: parseInt(id),
       action: 'APPROVED',
     });
+    // ...and the host (an admin may approve for them) and the other unit admins, so their inboxes drop it
+    actionedToOthers(req, request, user, { visit_request_id: parseInt(id), action: 'APPROVED' });
 
     // Notify security gate room if the approved visit is for today
     // NOTE: visit_requests table has no unit_id column — use req.user.unit_id
@@ -537,6 +550,7 @@ const rejectRequest = async (req, res) => {
       action: 'REJECTED',
       visit_category: request.visitor_type_code,
     });
+    actionedToOthers(req, request, user, { visit_request_id: parseInt(id), action: 'REJECTED' });
 
     // ── Socket: notify requester of rejection ────────────────────────────────
     if (request.requester_user_id) {

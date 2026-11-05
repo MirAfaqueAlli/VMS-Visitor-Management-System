@@ -12,13 +12,18 @@
  *  visit:approved       → requester: their visit/spot request was approved
  *  visit:rejected       → requester: their visit/spot request was rejected
  *  visit:checkin        → host & security/receptionist: visitor checked in
- *  visit:checkout       → security: visitor checked out
+ *  visit:checkout       → security + host: visitor checked out
+ *  visit:cancelled      → security: a visit expected today was cancelled
+ *
+ * The same events also arrive as server push (services/push.service) — shown by the
+ * service worker when VMS isn't in view, so they reach a minimised app or a phone.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import useSocketEvent from '../hooks/useSocketEvent';
 import useWebNotification from '../hooks/useWebNotification';
 import useAuth from '../hooks/useAuth';
+import { subscribePush } from '../lib/push';
 
 // Request detail link; cross_unit_id = the request lives in another unit's DB
 const requestLink = (data) => {
@@ -27,8 +32,14 @@ const requestLink = (data) => {
 };
 
 export default function NotificationManager() {
-  const { notify } = useWebNotification();
+  const { notify, permission } = useWebNotification();
   const { isSecurity, isReceptionist } = useAuth();
+
+  // Notifications allowed (now, or later from the browser's site settings) → this browser also
+  // gets push, so alerts arrive while VMS is minimised / closed and on phones
+  useEffect(() => {
+    if (permission === 'granted') subscribePush();
+  }, [permission]);
 
   // ── Helper: build notification options with a click-URL ─────────────────
   const makeOpts = (tag, url) => ({
@@ -100,6 +111,16 @@ export default function NotificationManager() {
       'Visitor checked out',
       `${data.visitor_name ?? 'A visitor'} has checked out.`,
       makeOpts('visit-checkout', '/gate')
+    );
+  }, [notify]), [notify]);
+
+  // ── A visit expected today was cancelled ─────────────────────────────────
+  // Received by: gate/security staff
+  useSocketEvent('visit:cancelled', useCallback((data) => {
+    notify(
+      'Visit cancelled',
+      `The visit of ${data.visitor_name ?? 'a visitor'} today was cancelled.`,
+      makeOpts(`cancel-${data.visit_request_id}`, '/dashboard')
     );
   }, [notify]), [notify]);
 

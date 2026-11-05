@@ -609,19 +609,24 @@ const checkOut = async (req, res) => {
     // ── Socket.IO: notify all security/gate users that a visitor checked out ───
     // Fetch visitor_name from visit_requests so the OS notification shows the real name
     let checkoutVisitorName = null;
+    let checkoutHostId = null;
     try {
       const [vrName] = await req.db.query(
-        'SELECT visitor_name FROM visit_requests WHERE id = ?', [visitRequestId]
+        'SELECT visitor_name, host_user_id FROM visit_requests WHERE id = ?', [visitRequestId]
       );
       checkoutVisitorName = vrName[0]?.visitor_name || null;
+      checkoutHostId = vrName[0]?.host_user_id || null;
     } catch (_) { /* non-fatal — keep name null */ }
 
-    emitToUnitSecurity(req.user.unit_id, 'visit:checkout', {
+    const checkoutEvent = {
       visit_log_id:     visitLog.id,
       visit_request_id: visitRequestId,
       visitor_name:     checkoutVisitorName,
       check_out_at:     checkOutTime.toISOString(),
-    });
+    };
+    emitToUnitSecurity(req.user.unit_id, 'visit:checkout', checkoutEvent);
+    // The host too — their visitor has left
+    if (checkoutHostId) emitToUser(checkoutHostId, req.user.unit_db, 'visit:checkout', checkoutEvent);
 
     // ── 3. Audit log ──────────────────────────────────────────────────────────
     logAudit({
@@ -873,20 +878,25 @@ const checkOutByQR = async (req, res) => {
 
     // ── Socket.IO: notify security ────────────────────────────────────────────
     let checkoutVisitorName = null;
+    let checkoutHostId = null;
     try {
       const [vrName] = await req.db.query(
-        'SELECT visitor_name FROM visit_requests WHERE id = ?', [visitRequestId]
+        'SELECT visitor_name, host_user_id FROM visit_requests WHERE id = ?', [visitRequestId]
       );
       checkoutVisitorName = vrName[0]?.visitor_name || null;
+      checkoutHostId = vrName[0]?.host_user_id || null;
     } catch (_) {}
 
-    emitToUnitSecurity(req.user.unit_id, 'visit:checkout', {
+    const checkoutEvent = {
       visit_log_id:     visitLog.id,
       visit_request_id: visitRequestId,
       visitor_name:     checkoutVisitorName,
       check_out_at:     checkOutTime.toISOString(),
       checkout_method:  'QR_SCAN',
-    });
+    };
+    emitToUnitSecurity(req.user.unit_id, 'visit:checkout', checkoutEvent);
+    // The host too — their visitor has left
+    if (checkoutHostId) emitToUser(checkoutHostId, req.user.unit_db, 'visit:checkout', checkoutEvent);
 
     // ── Audit log ─────────────────────────────────────────────────────────────
     logAudit({

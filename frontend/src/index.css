@@ -688,6 +688,9 @@
 .brand-print { display: none; }
 [data-theme="dark"] .brand-on-light { display: none; }
 [data-theme="dark"] .brand-on-dark  { display: block; }
+/* A section kept light in dark mode (the sign-in / register pages) keeps the light logo */
+[data-theme="dark"] [data-theme="light"] .brand-on-light { display: block; }
+[data-theme="dark"] [data-theme="light"] .brand-on-dark  { display: none; }
 @media print {
   .brand-on-light,
   .brand-on-dark { display: none !important; }

@@ -50,6 +50,7 @@ const { encryptField, decryptField, maskIdNumber } = require('../utils/crypto.ut
 const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
 const { idProofError, cleanIdNumber } = require('../utils/idProof.util');
 const { visitorOnRecord } = require('../services/visitorRecord.service');
+const { announceCancelled } = require('../services/visitEvents.service');
 const { squarePhoto } = require('../utils/photo.util');
 
 const SESSION_EXPIRY       = '12h';
@@ -641,6 +642,11 @@ const cancelVisit = async (req, res) => {
     const dateStr  = new Date(visit.visit_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
     const when     = `${dateStr}${visit.visit_start_time ? ` at ${String(visit.visit_start_time).slice(0, 5)}` : ''}`;
     const hostName = visit.host_name || 'your host';
+    // Live: out of the host's / admins' inboxes, off the gate's "expected today"
+    announceCancelled(unit.id, null, {
+      visit_request_id: Number(id), host_user_id: visit.host_id, visitor_name: req.visitorAccount.full_name,
+      visit_date: visit.visit_date, host_name: visit.host_name,
+    });
     setImmediate(async () => {
       try {
         if (a.email) {

@@ -10,26 +10,33 @@ self.addEventListener('activate', (event) => {
 });
 
 // ── Handle push events from the server (Web Push API) ─────────────────────
+// The server pushes every alert (services/push.service). When a VMS window is on
+// screen the app shows it itself (NotificationManager), so it's shown here only
+// when VMS is minimised, in a background tab, closed — or on a locked phone.
 self.addEventListener('push', (event) => {
   let data = {};
   try {
     data = event.data?.json() ?? {};
   } catch {
-    data = { title: 'VMS Notification', body: event.data?.text() ?? '' };
+    data = { title: 'OHPC VMS', body: event.data?.text() ?? '' };
   }
 
-  const title   = data.title ?? 'VMS — Visitor Management';
+  const title   = data.title ?? 'OHPC VMS';
   const options = {
     body:    data.body    ?? '',
     icon:    data.icon    ?? '/icons/icon-192.png',
     badge:   data.badge   ?? '/icons/badge-96.png',
     tag:     data.tag     ?? 'vms-notification',
-    data:    data.url     ? { url: data.url } : {},
+    data:    { url: data.url || '/dashboard' },
     vibrate: [200, 100, 200],
     requireInteraction: data.requireInteraction ?? false,
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil((async () => {
+    const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (windows.some((w) => w.visibilityState === 'visible')) return;   // the open app shows it
+    await self.registration.showNotification(title, options);
+  })());
 });
 
 // ── Notification click → focus or open the app ────────────────────────────
@@ -42,9 +49,7 @@ self.addEventListener('notificationclick', (event) => {
       // If a VMS window is already open, focus it and navigate
       for (const client of clientList) {
         if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.focus();
-          client.navigate(targetUrl);
-          return;
+          return client.focus().then((c) => (c && 'navigate' in c ? c.navigate(targetUrl) : null)).catch(() => null);
         }
       }
       // Otherwise open a new tab

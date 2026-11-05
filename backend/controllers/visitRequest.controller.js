@@ -11,7 +11,7 @@ const { logAudit }               = require('../utils/auditLogger.util');
 const { generateGatePass }       = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin, isEmployee, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
 const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
-const { emitToUser, emitToUnitSecurity } = require('../socket/socketManager');
+const { emitToUser, emitToUnitSecurity, emitToUnitAdmins } = require('../socket/socketManager');
 const { encryptField, decryptRows, maskIdNumber } = require('../utils/crypto.util');
 const { visitorOnRecord } = require('../services/visitorRecord.service');
 const { getSignedFileUrl, uploadToS3 } = require('../utils/s3.util');
@@ -20,6 +20,7 @@ const { squarePhoto } = require('../utils/photo.util');
 const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
 const { formatDate, formatTime, formatDateTime } = require('../utils/displayFormat.util');
 const { expireForRequest, visitDay } = require('../services/visitExpiry.service');
+const { announceCancelled } = require('../services/visitEvents.service');
 const { gatePassWhatsAppMedia }     = require('../services/gatePassImage.service');
 const { qrImageForPass }            = require('../services/qrcode.service');
 
@@ -845,18 +846,21 @@ const createRequest = async (req, res) => {
       const hostSocketDb = isCrossUnit ? crossUnitDbName : req.user.unit_db;
       if (hostSocketDb) {
         try {
-          const { emitToUser: emitFn } = require('../socket/socketManager');
-          emitFn(effectiveHostId, hostSocketDb, 'visit:request:new', {
+          const newRequest = {
             visit_request_id: visitRequestId,
-            visitor_name:     resolvedVisitorName || 'A visitor',
+            visitor_name:     resolvedVisitorName || req.user?.full_name || 'A visitor',
             visitor_phone:    resolvedVisitorPhone || null,
             visit_date:       visit_date,
             visit_start_time: visit_start_time || null,
             visit_category:   typeCode,
             purpose:          purpose,
             created_at:       new Date(),
-          });
-        
+          };
+          emitToUser(effectiveHostId, hostSocketDb, 'visit:request:new', newRequest);
+          // The host unit's admins can approve it too
+          emitToUnitAdmins(effectiveUnitId, hostSocketDb, 'visit:request:new', newRequest,
+            [effectiveHostId, ...(isCrossUnit ? [] : [req.user.id])]);
+
         } catch (socketErr) {
           console.error('[VisitRequestController] Failed to emit socket notification:', socketErr.message);
         }
@@ -1344,6 +1348,11 @@ const cancelRequest = async (req, res) => {
         );
         if (!details || details.length === 0) return;
         const d = details[0];
+        // Live: out of the host's / admins' inboxes, off the gate's "expected today"
+        announceCancelled(crossUnitId || myUnitId, user.id, {
+          visit_request_id: Number(id), action: 'CANCELLED', host_user_id: d.host_id,
+          visitor_name: d.visitor_name, visit_date: d.visit_date, host_name: d.host_name,
+        });
         // DATE columns come back as Date objects — show "30 Oct 2026", not the JS default
         d.visit_date = d.visit_date instanceof Date
           ? d.visit_date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
@@ -1833,7 +1842,7 @@ const createPublicRequest = async (req, res) => {
 
     // Emit socket notification to host
     try {
-      emitToUser(host.id, unit.db_name, 'visit:request:new', {
+      const newRequest = {
         visit_request_id: visitRequestId,
         visitor_name:     visitor_full_name,
         visitor_phone:    visitor_phone || null,
@@ -1842,7 +1851,9 @@ const createPublicRequest = async (req, res) => {
         visit_category:   visit_category,
         purpose:          purpose,
         created_at:       new Date(),
-      });
+      };
+      emitToUser(host.id, unit.db_name, 'visit:request:new', newRequest);
+      emitToUnitAdmins(unit.id, unit.db_name, 'visit:request:new', newRequest, [host.id]);   // admins can approve it too
     } catch (socketErr) {
       console.error('[VisitRequestController] Failed to emit socket notification for public request:', socketErr.message);
     }

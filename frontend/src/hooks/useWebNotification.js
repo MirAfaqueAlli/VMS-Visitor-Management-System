@@ -13,6 +13,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { pushActive } from '../lib/push';
 
 export default function useWebNotification() {
   const [permission, setPermission] = useState(
@@ -66,6 +67,8 @@ export default function useWebNotification() {
   const notify = useCallback((title, body, options = {}) => {
     if (!('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
+    // Tab in the background with push on: the server's push shows it (same tag) — don't show it twice
+    if (document.visibilityState === 'hidden' && pushActive()) return;
 
     const notifOptions = {
       body,
@@ -79,19 +82,24 @@ export default function useWebNotification() {
       ...options,
     };
 
-    // Prefer SW notification (works in background, shows on mobile)
-    if (swRegRef.current) {
-      swRegRef.current.showNotification(title, notifOptions).catch(() => {
-        // Fallback if SW notification fails
-        new Notification(title, notifOptions);
-      });
+    const direct = () => {
+      // Desktop only — Android's Chrome has no Notification constructor (it throws)
+      try {
+        const n = new Notification(title, notifOptions);
+        if (!notifOptions.requireInteraction) setTimeout(() => n.close(), 8000);
+      } catch { /* no other way to show it */ }
+    };
+
+    // Prefer the service worker (works in the background and on phones)
+    const reg = swRegRef.current;
+    if (reg) {
+      reg.showNotification(title, notifOptions).catch(direct);
+    } else if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready
+        .then((r) => r.showNotification(title, notifOptions))
+        .catch(direct);
     } else {
-      // Direct Notification constructor fallback
-      const n = new Notification(title, notifOptions);
-      // Auto-close after 8 seconds if no requireInteraction
-      if (!notifOptions.requireInteraction) {
-        setTimeout(() => n.close(), 8000);
-      }
+      direct();
     }
   }, []);
 
