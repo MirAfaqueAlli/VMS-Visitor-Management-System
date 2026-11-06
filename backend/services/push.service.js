@@ -11,6 +11,11 @@
  * worker (frontend/public/sw.js) shows it only when no VMS window is in view, so
  * an open app never shows it twice.
  *
+ * Visitor portal accounts subscribe too (push_subscriptions.unit_db = 'visitor',
+ * user_id = visitor_accounts.id): every message a visitor gets by SMS — submitted,
+ * approved, declined, cancelled, the visit-day reminder — is also pushed to the
+ * portal account that owns that (OTP-verified) mobile number. See pushToVisitorPhone.
+ *
  * VAPID keys: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY in .env, or — when not set — a
  * pair generated once and kept in vms_central.app_settings.
  */
@@ -64,6 +69,9 @@ function vapid() {
 
 const publicKey = async () => (await vapid()).publicKey;
 
+/** push_subscriptions.unit_db for visitor portal accounts (staff use 'central' or a unit DB name). */
+const VISITOR_SCOPE = 'visitor';
+
 /** Saves (or moves to this user) a browser's subscription. */
 async function saveSubscription(userId, unitDb, sub, userAgent) {
   if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) throw new Error('Invalid push subscription.');
@@ -76,8 +84,14 @@ async function saveSubscription(userId, unitDb, sub, userAgent) {
   );
 }
 
-async function removeSubscription(endpoint) {
+/** Forgets a browser's subscription; with `owner`, only if it belongs to that user / visitor account. */
+async function removeSubscription(endpoint, owner = null) {
   if (!endpoint) return;
+  if (owner) {
+    await centralPool.query('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ? AND unit_db = ?',
+      [String(endpoint).slice(0, 700), owner.userId, owner.unitDb]);
+    return;
+  }
   await centralPool.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [String(endpoint).slice(0, 700)]);
 }
 
@@ -129,17 +143,22 @@ async function deliver(rows, payload) {
   }));
 }
 
-/** Pushes a socket event to one user's browsers. Never throws. */
+/**
+ * Pushes a socket event to one user's browsers. Never throws.
+ * @returns {Promise<number>} how many devices it was sent to
+ */
 async function pushToUser(userId, unitDb, event, data) {
   try {
     const msg = messageFor(event, data);
-    if (!msg || !userId) return;
+    if (!msg || !userId) return 0;
     const [rows] = await centralPool.query(
       'SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ? AND unit_db = ?', [userId, unitDb || 'central']
     );
     await deliver(rows, msg);
+    return rows.length;
   } catch (err) {
     console.warn('[Push] pushToUser failed:', err.message);
+    return 0;
   }
 }
 
@@ -164,4 +183,33 @@ async function pushToUnitSecurity(unitId, event, data) {
   }
 }
 
-module.exports = { publicKey, saveSubscription, removeSubscription, pushToUser, pushToUnitSecurity, messageFor };
+/**
+ * Pushes a message to the visitor portal account that owns this mobile number (last
+ * 10 digits; the number must be OTP-verified). Shown even while the portal is open —
+ * the portal has no other live alert. Never throws.
+ * @param {string} phone
+ * @param {{ title: string, body?: string, url?: string, tag?: string }} msg
+ * @returns {Promise<number>} how many devices it was sent to
+ */
+async function pushToVisitorPhone(phone, msg) {
+  try {
+    const ten = String(phone || '').replace(/\D/g, '').slice(-10);
+    if (ten.length !== 10 || !msg?.title) return 0;
+    const [rows] = await centralPool.query(
+      `SELECT s.id, s.endpoint, s.p256dh, s.auth
+       FROM push_subscriptions s
+       JOIN visitor_accounts a ON a.id = s.user_id
+       WHERE s.unit_db = ? AND a.phone = ? AND a.is_active = 1 AND a.phone_verified_at IS NOT NULL`,
+      [VISITOR_SCOPE, ten]
+    );
+    await deliver(rows, { url: '/public-request', ...msg, audience: 'visitor' });
+    return rows.length;
+  } catch (err) {
+    console.warn('[Push] pushToVisitorPhone failed:', err.message);
+    return 0;
+  }
+}
+
+module.exports = {
+  VISITOR_SCOPE, publicKey, saveSubscription, removeSubscription, pushToUser, pushToUnitSecurity, pushToVisitorPhone, messageFor,
+};

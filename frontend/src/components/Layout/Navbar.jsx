@@ -11,9 +11,11 @@ import useSocketEvent from '../../hooks/useSocketEvent';
 import useTheme from '../../context/ThemeContext';
 import { initials as toInitials, fmtDate, fmtTime, relTime } from '../../lib/format';
 import {
-  Bell, Check, X, ChevronRight, ChevronDown, Menu, Sun, Moon, Search, User, LogOut, QrCode, CheckCircle,
+  Bell, BellOff, Check, X, ChevronRight, ChevronDown, Menu, Sun, Moon, Search, User, LogOut, QrCode, CheckCircle,
   ClipboardList,
 } from '../icons';
+import usePushSetup, { PUSH_COPY } from '../../hooks/usePushSetup';
+import PushSetting from '../PushSetting';
 
 // Roles that have an approvals inbox (same as the /approvals route guard in App.jsx)
 const APPROVER_ROLES = ['unit_admin', 'employee'];
@@ -35,6 +37,25 @@ const ROLE_LABELS = {
 };
 
 /* ── Notification panel (popover card) ──────────────────────────────────── */
+/** Account-menu item for system notifications on this device (same action as the bell panel's footer). */
+function NotifyMenuItem({ close }) {
+  const { state, busy, run } = usePushSetup();
+  if (state === 'unsupported' || state === 'on') return null;   // on: the bell panel shows it
+  const copy = PUSH_COPY[state];
+  return (
+    <button type="button" role="menuitem" className="menu-item" disabled={busy}
+      onClick={async () => { await run(); close(); }}>
+      <BellOff size={14} />
+      <span className="flex-1 text-left">
+        {state === 'off' ? 'Turn on notifications' : copy.title}
+        <span className="block text-[11px] text-muted">
+          {state === 'off' ? 'Alerts even when VMS is minimised' : copy.action}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 function NotificationPanel({ notifications, loading, onAction, onClose, navigate, canApprove }) {
   const [activeAction, setActiveAction] = useState(null); // { id, mode, remarks }
 
@@ -151,6 +172,9 @@ function NotificationPanel({ notifications, loading, onAction, onClose, navigate
           </ul>
         )}
       </div>
+
+      {/* System notifications on this device — turn on / send a test */}
+      <PushSetting variant="row" />
     </div>
   );
 }
@@ -437,6 +461,7 @@ export default function Navbar({ onMenuToggle }) {
             <button type="button" role="menuitem" className="menu-item" onClick={() => { setMenuOpen(false); navigate('/profile'); }}>
               <User size={14} /> My profile
             </button>
+            <NotifyMenuItem close={() => setMenuOpen(false)} />
             <button type="button" role="menuitem" className="menu-item" onClick={() => { setMenuOpen(false); logout(); }}>
               <LogOut size={14} /> Sign out
             </button>

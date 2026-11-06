@@ -10,6 +10,9 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# deploy: next build and the previous one, swapped in place (.github/workflows/deploy.yml)
+dist-next
+dist-prev
 *.local
 
 # Editor directories and files

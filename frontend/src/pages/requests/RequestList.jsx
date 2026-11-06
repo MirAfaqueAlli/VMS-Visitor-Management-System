@@ -2,12 +2,13 @@
 // Visit requests (DESIGN_RULES §6 list anatomy): breadcrumb + title + New request,
 // stat strip, perspective tabs, toolbar (count · search · status · date · export),
 // a plain sortable table whose rows open the request.
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, ClipboardList } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
+import useSocketEvent from "../../hooks/useSocketEvent";
 import Select from "../../components/Select";
 import Pagination from "../../components/shared/Pagination";
 import {
@@ -107,9 +108,9 @@ export default function RequestList() {
     return params;
   }, [activeTab]);
 
-  const fetchRequests = useCallback(async () => {
+  const fetchRequests = useCallback(async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);   // live refreshes update in place, no skeleton flash
       const params = { ...baseParams(), page, limit };
       if (statusFilter) params.status = statusFilter;
       if (dateFilter) params.visit_date = dateFilter;
@@ -129,6 +130,26 @@ export default function RequestList() {
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
+  // ── Live: a request arrived / was decided / a visitor came or left → refresh the list
+  //    and the counts (a burst of events refreshes once)
+  const [liveTick, setLiveTick] = useState(0);
+  const liveTimer = useRef(null);
+  const latestFetch = useRef(fetchRequests);
+  useEffect(() => { latestFetch.current = fetchRequests; }, [fetchRequests]);
+  useEffect(() => () => clearTimeout(liveTimer.current), []);
+  const onLive = useCallback(() => {
+    clearTimeout(liveTimer.current);
+    liveTimer.current = setTimeout(() => setLiveTick((n) => n + 1), 400);
+  }, []);
+  useEffect(() => { if (liveTick) latestFetch.current({ silent: true }); }, [liveTick]);
+  useSocketEvent("visit:request:new", onLive, [onLive]);
+  useSocketEvent("visit:actioned", onLive, [onLive]);
+  useSocketEvent("visit:approved", onLive, [onLive]);
+  useSocketEvent("visit:rejected", onLive, [onLive]);
+  useSocketEvent("visit:checkin", onLive, [onLive]);
+  useSocketEvent("visit:checkout", onLive, [onLive]);
+  useSocketEvent("visit:cancelled", onLive, [onLive]);
+
   // Counts for the stat strip — one light query per number (limit 1, total only)
   useEffect(() => {
     let cancelled = false;
@@ -139,7 +160,7 @@ export default function RequestList() {
     Promise.all([count({}), count({ status: "PENDING" }), count({ visit_date: todayIso() }), count({ status: "APPROVED" })])
       .then(([total, pending, today, approved]) => { if (!cancelled) setStats({ total, pending, today, approved }); });
     return () => { cancelled = true; };
-  }, [baseParams]);
+  }, [baseParams, liveTick]);   // liveTick: recount when a socket event arrives
 
   const { rows, sort, onSort } = useSort(requests, {
     visitor: (r) => r.visitor_name || r.company_name,

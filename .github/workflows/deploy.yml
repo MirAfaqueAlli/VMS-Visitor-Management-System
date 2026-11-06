@@ -28,5 +28,19 @@ jobs:
 
             cd ../frontend
             npm install
-            npm run build
+            # Build next to the live site, carry over the previous version's files (tabs opened
+            # before this deploy still load their pages), then swap folders — the live site is
+            # never empty mid-build and never missing a file an open tab asks for.
+            # Old files are dropped after 14 days.
+            rm -rf dist-next
+            if npm run build -- --outDir dist-next; then
+              if [ -d dist/assets ]; then cp -rnp dist/assets/. dist-next/assets/; fi
+              find dist-next/assets -type f -mtime +14 -delete
+              rm -rf dist-prev
+              if [ -d dist ]; then mv dist dist-prev; fi
+              mv dist-next dist
+            else
+              echo "Frontend build failed - the live site was left as it was."
+              exit 1
+            fi
             

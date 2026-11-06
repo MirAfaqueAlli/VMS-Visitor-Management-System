@@ -664,6 +664,7 @@ const cancelVisit = async (req, res) => {
         await sendNotification({
           db: pool, visitRequestId: id, recipientPhone: a.phone, type: 'SMS',
           message: `OHPC VMS: Your visit to ${hostName} on ${when} has been cancelled as requested.`,
+          push: { title: 'Visit cancelled', body: `Your visit to ${hostName} on ${when} has been cancelled as you asked.` },
           whatsappMessage: whatsappText({
             title: 'Visit cancelled', name: a.full_name,
             intro: 'Your visit request has been cancelled as you asked.',

@@ -455,6 +455,10 @@ const approveRequest = async (req, res) => {
         return notify({
           visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
           message, whatsappMedia,
+          push: {
+            title: 'Visit approved',
+            body: `Your visit on ${[formatDate(request.visit_date), formatTime(request.visit_start_time)].filter(Boolean).join(', ')} to meet ${hostFullName || user.full_name} is approved.${passResult?.pass_number ? ` Gate pass ${passResult.pass_number} — show it at the gate.` : ''}`,
+          },
           whatsappMessage: whatsappText({
             title: 'Visit approved', name: visitorName,
             intro: `Your visit request has been approved by ${user.full_name}.${whatsappMedia ? ' Your gate pass is attached.' : ''}`,
@@ -608,6 +612,10 @@ const rejectRequest = async (req, res) => {
       ...(visitorPhone ? [notify({
         visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
         message: `VMS: Your visit request on ${textDate(request.visit_date)}${timeStr} has been DECLINED. Reason: ${remarks.trim()}`,
+        push: {
+          title: 'Visit request declined',
+          body: `Your visit on ${formatDate(request.visit_date)}${hostInfo.full_name ? ` to meet ${hostInfo.full_name}` : ''} was declined. Reason: ${remarks.trim()}`,
+        },
         whatsappMessage: whatsappText({
           title: 'Visit request declined', name: visitorName,
           intro: 'We regret to inform you that your visit request has been declined.',

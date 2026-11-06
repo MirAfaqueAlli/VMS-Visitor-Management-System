@@ -3,6 +3,7 @@
 // says what and when). The xlsx library is loaded only when an export is made.
 import toast from 'react-hot-toast';
 import { exportName } from './format';
+import { importWithReload } from './chunkReload';
 
 /**
  * @param {object[]} rows
@@ -13,7 +14,7 @@ import { exportName } from './format';
 export async function downloadXlsx(rows, columns, what) {
   let XLSX;
   try {
-    XLSX = await import('xlsx');
+    XLSX = await importWithReload(() => import('xlsx'));
   } catch (err) {
     console.error('[export] Could not load the Excel library:', err);
     toast.error('Could not create the Excel file. Please try again.');

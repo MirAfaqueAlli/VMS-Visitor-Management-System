@@ -733,6 +733,10 @@ const createRequest = async (req, res) => {
               recipientPhone: effectiveVisitorPhone,
               type: 'SMS',
               message,
+              push: {
+                title: 'You are invited for a visit',
+                body: `${hostName} has invited you on ${formatDateTime(visit_date, visit_start_time)}${hostUnitName ? ` at ${hostUnitName}` : ''}.${passNum ? ` Gate pass ${passNum}.` : ''}`,
+              },
               whatsappMedia: await gatePassWhatsAppMedia(db, passResult),   // the pass lives in the host unit's DB
               whatsappMessage: whatsappText({
                 title: 'You are invited for a visit', name: effectiveVisitorName,
@@ -794,6 +798,10 @@ const createRequest = async (req, res) => {
       if (resolvedVisitorPhone) {
         const message = `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}`;
         await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS', message,
+          push: {
+            title: 'Visit scheduled',
+            body: `Your visit to meet ${host.full_name} on ${formatDateTime(visit_date, visit_start_time)} is scheduled.${passResult?.pass_number ? ` Gate pass ${passResult.pass_number}.` : ''}`,
+          },
           whatsappMedia: await gatePassWhatsAppMedia(db, passResult),
           whatsappMessage: whatsappText({
             title: 'Visit scheduled', name: contact_person || company_name,
@@ -837,6 +845,10 @@ const createRequest = async (req, res) => {
       if (resolvedVisitorPhone) {
         const message = `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} has been APPROVED.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}`;
         await notify({ visitRequestId, recipientPhone: resolvedVisitorPhone, type: 'SMS', message,
+          push: {
+            title: 'Visit approved',
+            body: `Your visit on ${formatDateTime(visit_date, visit_start_time)} to meet ${host.full_name} is approved.${passResult?.pass_number ? ` Gate pass ${passResult.pass_number} — show it at the gate.` : ''}`,
+          },
           whatsappMedia: await gatePassWhatsAppMedia(db, passResult),
           whatsappMessage: whatsappText({
             title: 'Visit approved', name: resolvedVisitorName,
@@ -1419,6 +1431,10 @@ const cancelRequest = async (req, res) => {
             db: targetDb, visitRequestId: parseInt(id),
             recipientPhone: d.visitor_phone, type: 'SMS',
             message: `OHPC VMS: Your visit to ${d.host_name || 'your host'} on ${d.visit_date}${timeStr} has been cancelled by ${canceller}. Contact administration if this is an error.`,
+            push: {
+              title: 'Visit cancelled',
+              body: `Your visit to ${d.host_name || 'your host'} on ${formatDateTime(d.visit_date, d.visit_start_time)} was cancelled by ${canceller}.`,
+            },
             whatsappMessage: whatsappText({
               title: 'Visit cancelled', name: d.visitor_name,
               intro: `Your visit request has been cancelled by ${canceller}.`,
@@ -1866,6 +1882,10 @@ const createPublicRequest = async (req, res) => {
             recipientPhone: visitor_phone,
             type: 'SMS',
             message: `OHPC VMS: Your visit request to ${host.full_name} on ${visit_date}${timeStr} has been submitted and is pending approval. You will be notified once reviewed.`,
+            push: {
+              title: 'Visit request submitted',
+              body: `Your request to meet ${host.full_name} on ${formatDateTime(visit_date, visit_start_time)} is waiting for approval. You'll be notified once it is reviewed.`,
+            },
             whatsappMessage: whatsappText({
               title: 'Visit request submitted', name: visitor_full_name,
               intro: 'Your visit request has been submitted and is pending approval. You will be informed once it is reviewed.',

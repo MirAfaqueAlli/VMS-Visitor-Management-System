@@ -7,7 +7,8 @@ const ctrl    = require('../controllers/visitorPortal.controller');
 const { validate } = require('../middlewares/validate.middleware');
 const { authLimiter } = require('../middlewares/rateLimit.middleware');
 const { uploadVisitorPhoto } = require('../middlewares/upload.middleware');
-const { sendError } = require('../utils/response.util');
+const { sendError, sendSuccess } = require('../utils/response.util');
+const push = require('../services/push.service');
 const { z } = require('zod');
 
 // Per-IP limits. /identify counts every request: it tells whether a number or
@@ -68,5 +69,33 @@ router.get('/me/visits',                    ctrl.myVisits);
 router.get('/me/visits/:unitId/:id/pass',   ctrl.myPass);
 router.post('/me/visits/:unitId/:id/cancel', ctrl.cancelVisit);
 router.post('/me/visitor-token',            ctrl.visitorToken);
+
+// System notifications on the visitor's devices (approved, declined, reminders… — see push.service)
+router.get('/me/push/public-key', async (req, res) => {
+  try {
+    return sendSuccess(res, { public_key: await push.publicKey() }, 'Push key.');
+  } catch (err) {
+    console.error('[VisitorPortal] push key error:', err.message);
+    return sendError(res, 'Notifications are not available right now.', 503);
+  }
+});
+router.post('/me/push/subscribe', async (req, res) => {
+  try {
+    await push.saveSubscription(req.visitorAccount.id, push.VISITOR_SCOPE, req.body?.subscription, req.headers['user-agent']);
+    return sendSuccess(res, null, 'Notifications are on for this device.');
+  } catch (err) {
+    console.error('[VisitorPortal] push subscribe error:', err.message);
+    return sendError(res, 'Could not turn on notifications for this device.', 400);
+  }
+});
+router.post('/me/push/unsubscribe', async (req, res) => {
+  try {
+    await push.removeSubscription(req.body?.endpoint, { userId: req.visitorAccount.id, unitDb: push.VISITOR_SCOPE });
+    return sendSuccess(res, null, 'Notifications are off for this device.');
+  } catch (err) {
+    console.error('[VisitorPortal] push unsubscribe error:', err.message);
+    return sendError(res, 'Could not turn off notifications.', 500);
+  }
+});
 
 module.exports = router;

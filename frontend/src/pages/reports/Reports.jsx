@@ -17,6 +17,7 @@ import useAuth from '../../hooks/useAuth';
 import { OFFICE_TYPES, officeTypeLabel } from '../../utils/officeTypes';
 import Select from '../../components/Select';
 import Pagination from '../../components/shared/Pagination';
+import { importWithReload } from '../../lib/chunkReload';
 import {
   PageHeader, Tabs, StatStrip, Stat, SearchInput, SkeletonRows, Status, Empty, ExcelIcon,
 } from '../../components/ui';
@@ -284,7 +285,7 @@ async function fetchAllReportRows(endpoint, params = {}) {
 async function exportExcel(rows, columns, filename, { title, metadata } = {}) {
   let XLSX;
   try {
-    XLSX = await import('xlsx');
+    XLSX = await importWithReload(() => import('xlsx'));
   } catch (err) {
     console.error('[Reports] Could not load the Excel exporter:', err);
     toast.error('Could not create the Excel file. Please try again.');
@@ -324,7 +325,7 @@ async function exportExcel(rows, columns, filename, { title, metadata } = {}) {
 async function exportPDF(rows, columns, title, filename, { metadata } = {}) {
   let jsPDF, autoTable;
   try {
-    [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+    [{ jsPDF }, { default: autoTable }] = await Promise.all([importWithReload(() => import('jspdf')), importWithReload(() => import('jspdf-autotable'))]);
   } catch (err) {
     console.error('[Reports] Could not load the PDF exporter:', err);
     toast.error('Could not create the PDF file. Please try again.');

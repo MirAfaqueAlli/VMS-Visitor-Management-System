@@ -145,6 +145,10 @@ async function runDailyReminders() {
           await sendNotification({
             db, visitRequestId: v.id, recipientPhone: v.visitor_phone, type: 'SMS',
             message: `VMS reminder: your visit to ${unit.name} is today${time} (host: ${v.host_name}).${pass} Please carry a photo ID.`,
+            push: {
+              title: 'Reminder: your visit is today',
+              body: `${unit.name}${v.visit_start_time ? `, ${formatTime(v.visit_start_time)}` : ''} — meet ${v.host_name}.${pass} Please carry a photo ID.`,
+            },
             whatsappMessage: whatsappText({
               title: 'Reminder: your visit today', name,
               intro: 'This is a reminder of your visit scheduled for today.',

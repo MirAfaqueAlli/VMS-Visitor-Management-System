@@ -6,8 +6,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import {
-  AlertCircle, Calendar, Check, Loader2, Plus, QrCode, RefreshCw, User, Mail, Lock, Clock, Printer, CreditCard,
+  AlertCircle, Calendar, Check, Loader2, Plus, QrCode, RefreshCw, User, Mail, Lock, Clock, Printer, CreditCard, Bell,
 } from "../../components/icons";
+import PushSetting from "../../components/PushSetting";
+import { VISITOR_PUSH_MESSAGE } from "../../lib/push";
 import Select from "../../components/Select";
 import PasswordStrength from "../../components/PasswordStrength";
 import { OtpField } from "../../components/PublicShell";
@@ -150,19 +152,28 @@ function VisitsTab({ onNew }) {
   const [status, setStatus] = useState("");
   const [open, setOpen] = useState(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /** silent: refresh in place (a notification arrived) — no loading state, no error toast */
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const { data } = await portalApi.get("/me/visits");
       setVisits(data.data.visits || []);
       setIncomplete(!!data.data.incomplete);
     } catch (err) {
-      toast.error(portalError(err, "Could not load your visits."));
+      if (!silent) toast.error(portalError(err, "Could not load your visits."));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // A notification about a visit (approved, declined, cancelled…) → refresh the list
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return undefined;
+    const onMessage = (e) => { if (e.data?.type === VISITOR_PUSH_MESSAGE) load(true); };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [load]);
 
   const upcoming = useMemo(
     () => visits.filter(isUpcoming).sort((a, b) => localDay(a.visit_date).localeCompare(localDay(b.visit_date))),
@@ -232,7 +243,7 @@ function VisitsTab({ onNew }) {
           {STATUS_FILTERS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </Select>
         {(search || status) && <button type="button" className="btn-ghost" onClick={() => { setSearch(""); setStatus(""); }}>Clear</button>}
-        <button type="button" className="btn-icon" onClick={load} disabled={loading} title="Refresh" aria-label="Refresh">
+        <button type="button" className="btn-icon" onClick={() => load()} disabled={loading} title="Refresh" aria-label="Refresh">
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
         </button>
       </Toolbar>
@@ -476,6 +487,11 @@ function ProfileTab({ account, onAccount, onSession }) {
         </form>
         {account.has_password && <p className="field-hint mt-2">Changing it signs you out on other devices.</p>}
       </section>
+
+      <section>
+        <SectionTitle icon={Bell} title="Notifications" meta="This device" />
+        <PushSetting variant="tile" visitor />
+      </section>
     </div>
   );
 }
@@ -493,6 +509,7 @@ export default function VisitorDashboard({ account, onAccount, onSession }) {
         meta={<span className="inline-flex items-center gap-1"><Clock size={12} /> Every unit, in one place</span>}
         actions={<button type="button" className="btn-primary" onClick={onNew}><Plus size={14} /> New visit request</button>}
       />
+      {tab === "visits" && <PushSetting variant="banner" visitor />}
       <Tabs
         className="mb-5"
         value={tab}

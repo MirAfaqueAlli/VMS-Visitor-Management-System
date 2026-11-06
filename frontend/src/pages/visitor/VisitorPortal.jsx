@@ -12,6 +12,7 @@ import VisitorDashboard from "./VisitorDashboard";
 import {
   portalApi, getVisitorSession, setVisitorSession, clearVisitorSession, SESSION_ENDED_EVENT,
 } from "../../lib/visitorPortal";
+import { visitorPushActive, subscribeVisitorPush, unsubscribeVisitorPush } from "../../lib/push";
 
 // The optional "set a password" step is offered once per browser session
 const promptKey = (id) => `vms_portal_password_prompted:${id}`;
@@ -38,6 +39,12 @@ export default function VisitorPortal() {
       .catch(() => { clearVisitorSession(); setPhase("signin"); });
   }, [phase, applyProfile]);
 
+  // Notifications already on in this browser → re-register them for whoever is signed in
+  // (also picks up a new server key)
+  useEffect(() => {
+    if (phase === "ready" && visitorPushActive()) subscribeVisitorPush();
+  }, [phase]);
+
   // Session expired / password changed elsewhere
   useEffect(() => {
     const onEnded = () => {
@@ -61,6 +68,7 @@ export default function VisitorPortal() {
     applyProfile(data);
   };
   const signOut = () => {
+    unsubscribeVisitorPush(getVisitorSession());   // no alerts for this account on this device any more
     clearVisitorSession();
     setAccount(null);
     setPhase("signin");

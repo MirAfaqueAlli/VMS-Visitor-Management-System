@@ -17,6 +17,8 @@ import IdProofPanel from "../../components/visitor/IdProofPanel";
 import {
   portalApi, publicApi, portalError, getVisitorSession, clearVisitorSession,
 } from "../../lib/visitorPortal";
+import { unsubscribeVisitorPush } from "../../lib/push";
+import PushSetting from "../../components/PushSetting";
 
 const getISTDateString = (d = new Date()) =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
@@ -145,7 +147,7 @@ export default function PublicRequest() {
     }
   };
 
-  const signOut = () => { clearVisitorSession(); toPortal(); };
+  const signOut = () => { unsubscribeVisitorPush(getVisitorSession()); clearVisitorSession(); toPortal(); };
 
   /* ── Confirmation ── */
   if (sent) {
@@ -165,6 +167,8 @@ export default function PublicRequest() {
               ["Date", <span key="d" className="tabular">{fmtDate(sent.date)}{sent.time ? `, ${sent.time}` : ""}</span>],
             ]} className="!grid-cols-[110px_minmax(0,1fr)]" />
           </div>
+          {/* Notifications off on this device → offer them now, when the visitor wants to hear back */}
+          <PushSetting variant="banner" visitor />
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={toPortal} className="btn-primary">Go to my visits</button>
             <button type="button" onClick={() => { setSent(null); setFormData(EMPTY_FORM); }} className="btn-outline">

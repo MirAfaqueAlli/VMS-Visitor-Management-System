@@ -10,9 +10,15 @@ self.addEventListener('activate', (event) => {
 });
 
 // ── Handle push events from the server (Web Push API) ─────────────────────
-// The server pushes every alert (services/push.service). When a VMS window is on
-// screen the app shows it itself (NotificationManager), so it's shown here only
-// when VMS is minimised, in a background tab, closed — or on a locked phone.
+// The server pushes every alert (services/push.service).
+//  - Staff: when a VMS window is on screen the app shows it itself (NotificationManager),
+//    so it's shown here only when VMS is minimised, in a background tab, closed — or
+//    on a locked phone.
+//  - Visitors (audience 'visitor', from the visitor portal's own registration): always
+//    shown — the portal has no other live alert — and an open portal refreshes its list.
+const PORTAL = '/public-request';
+const isPortalUrl = (url) => new URL(url, self.location.origin).pathname.startsWith(PORTAL);
+
 self.addEventListener('push', (event) => {
   let data = {};
   try {
@@ -27,14 +33,20 @@ self.addEventListener('push', (event) => {
     icon:    data.icon    ?? '/icons/icon-192.png',
     badge:   data.badge   ?? '/icons/badge-96.png',
     tag:     data.tag     ?? 'vms-notification',
-    data:    { url: data.url || '/dashboard' },
+    data:    { url: data.url || (data.audience === 'visitor' ? PORTAL : '/dashboard') },
     vibrate: [200, 100, 200],
     requireInteraction: data.requireInteraction ?? false,
   };
 
   event.waitUntil((async () => {
     const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-    if (windows.some((w) => w.visibilityState === 'visible')) return;   // the open app shows it
+    if (data.audience === 'visitor') {
+      windows.filter((w) => isPortalUrl(w.url)).forEach((w) => w.postMessage({ type: 'vms-visitor-push', tag: data.tag }));
+      await self.registration.showNotification(title, options);
+      return;
+    }
+    // The open app shows it itself
+    if (windows.some((w) => w.visibilityState === 'visible')) return;
     await self.registration.showNotification(title, options);
   })());
 });
@@ -46,9 +58,10 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // If a VMS window is already open, focus it and navigate
+      // A window of the same app already open (staff app or visitor portal) → focus it and navigate
+      const portal = isPortalUrl(targetUrl);
       for (const client of clientList) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
+        if (client.url.startsWith(self.location.origin) && isPortalUrl(client.url) === portal && 'focus' in client) {
           return client.focus().then((c) => (c && 'navigate' in c ? c.navigate(targetUrl) : null)).catch(() => null);
         }
       }

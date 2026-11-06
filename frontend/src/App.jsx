@@ -1,6 +1,6 @@
 import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
 
 import { AuthProvider }   from "./context/AuthContext";
 import { SocketProvider } from "./context/SocketContext";
@@ -9,41 +9,43 @@ import { ThemeProvider }  from "./context/ThemeContext";
 // ── Always-eager: layout scaffolding needed on every route ───────────────────
 import AppLayout      from "./components/Layout/AppLayout";
 import ProtectedRoute from "./components/Layout/ProtectedRoute";
+import RouteError     from "./components/RouteError";
+import { lazyWithReload } from "./lib/chunkReload";
 
 // ── Lazy page imports — each becomes a separate JS chunk ─────────────────────
-const Login                 = lazy(() => import("./pages/auth/Login"));
-const Setup                 = lazy(() => import("./pages/auth/Setup"));
-const RegisterOrganization  = lazy(() => import("./pages/auth/RegisterOrganization"));
-const PublicRequest         = lazy(() => import("./pages/requests/PublicRequest"));
-const VisitorPortal         = lazy(() => import("./pages/visitor/VisitorPortal"));
-const ResetPassword         = lazy(() => import("./pages/auth/ResetPassword"));
+const Login                 = lazyWithReload(() => import("./pages/auth/Login"));
+const Setup                 = lazyWithReload(() => import("./pages/auth/Setup"));
+const RegisterOrganization  = lazyWithReload(() => import("./pages/auth/RegisterOrganization"));
+const PublicRequest         = lazyWithReload(() => import("./pages/requests/PublicRequest"));
+const VisitorPortal         = lazyWithReload(() => import("./pages/visitor/VisitorPortal"));
+const ResetPassword         = lazyWithReload(() => import("./pages/auth/ResetPassword"));
 
 
 // Dashboard — default export is SuperAdmin view; named export AdminDashboard is unit view.
 // For named exports, .then() lets us remap them to `default` for lazy().
-const Dashboard     = lazy(() => import("./pages/dashboard/Dashboard"));
-const UnitDashboard = lazy(() =>
+const Dashboard     = lazyWithReload(() => import("./pages/dashboard/Dashboard"));
+const UnitDashboard = lazyWithReload(() =>
   import("./pages/dashboard/Dashboard").then((m) => ({ default: m.AdminDashboard }))
 );
 
-const VisitorList            = lazy(() => import("./pages/visitors/VisitorList"));
-const VisitorDetail          = lazy(() => import("./pages/visitors/VisitorDetail"));
-const VisitorForm            = lazy(() => import("./pages/visitors/VisitorForm"));
-const NewRequest             = lazy(() => import("./pages/requests/NewRequest"));
-const RequestList            = lazy(() => import("./pages/requests/RequestList"));
-const RequestDetail          = lazy(() => import("./pages/requests/RequestDetail"));
-const MyWalkIns              = lazy(() => import("./pages/gate/MyWalkIns"));
-const CheckIn                = lazy(() => import("./pages/gate/CheckIn"));
-const CheckOut               = lazy(() => import("./pages/gate/CheckOut"));
-const GatePass               = lazy(() => import("./pages/gate/GatePass"));
-const ApprovalInbox          = lazy(() => import("./pages/approvals/ApprovalInbox"));
-const UserManagement         = lazy(() => import("./pages/admin/UserManagement"));
-const DepartmentManagement   = lazy(() => import("./pages/admin/DepartmentManagement"));
-const UnitManagement         = lazy(() => import("./pages/super/UnitManagement"));
-const GlobalUserManagement   = lazy(() => import("./pages/super/GlobalUserManagement"));
-const Reports                = lazy(() => import("./pages/reports/Reports"));
-const AuditLog               = lazy(() => import("./pages/audit/AuditLog"));
-const Profile                = lazy(() => import("./pages/profile/Profile"));
+const VisitorList            = lazyWithReload(() => import("./pages/visitors/VisitorList"));
+const VisitorDetail          = lazyWithReload(() => import("./pages/visitors/VisitorDetail"));
+const VisitorForm            = lazyWithReload(() => import("./pages/visitors/VisitorForm"));
+const NewRequest             = lazyWithReload(() => import("./pages/requests/NewRequest"));
+const RequestList            = lazyWithReload(() => import("./pages/requests/RequestList"));
+const RequestDetail          = lazyWithReload(() => import("./pages/requests/RequestDetail"));
+const MyWalkIns              = lazyWithReload(() => import("./pages/gate/MyWalkIns"));
+const CheckIn                = lazyWithReload(() => import("./pages/gate/CheckIn"));
+const CheckOut               = lazyWithReload(() => import("./pages/gate/CheckOut"));
+const GatePass               = lazyWithReload(() => import("./pages/gate/GatePass"));
+const ApprovalInbox          = lazyWithReload(() => import("./pages/approvals/ApprovalInbox"));
+const UserManagement         = lazyWithReload(() => import("./pages/admin/UserManagement"));
+const DepartmentManagement   = lazyWithReload(() => import("./pages/admin/DepartmentManagement"));
+const UnitManagement         = lazyWithReload(() => import("./pages/super/UnitManagement"));
+const GlobalUserManagement   = lazyWithReload(() => import("./pages/super/GlobalUserManagement"));
+const Reports                = lazyWithReload(() => import("./pages/reports/Reports"));
+const AuditLog               = lazyWithReload(() => import("./pages/audit/AuditLog"));
+const Profile                = lazyWithReload(() => import("./pages/profile/Profile"));
 
 // ── Minimal page-level loading spinner (brand-blue ring, token colours) ───────
 function PageLoader() {
@@ -78,119 +80,125 @@ const REPORT_ROLES   = ["unit_admin", "unit_auditor", "global_auditor", "super_a
 const CREATE_ROLES   = ["unit_admin", "employee", "security", "receptionist"];
 
 const router = createBrowserRouter([
-  // ── Public pages ────────────────────────────────────────────────────────────
-  { path: "/setup",           element: <S><Setup /></S> },
-  { path: "/login",           element: <S><Login /></S> },
-  { path: "/login/:unitCode", element: <S><Login /></S> },
-  { path: "/register",        element: <S><RegisterOrganization /></S> },
-  // Visitor portal: sign-in / register / dashboard, and the new-visit form
-  { path: "/public-request",      element: <S><VisitorPortal /></S> },
-  { path: "/public-request/new",  element: <S><PublicRequest /></S> },
-  { path: "/visitor/*",           element: <Navigate to="/public-request" replace /> },
-  { path: "/reset-password",  element: <S><ResetPassword /></S> },
-
-
+  // Every route: a missing page file after a deployment reloads for the new version
   {
-    path: "/",
-    element: <ProtectedRoute />,
+    errorElement: <RouteError />,
     children: [
+      // ── Public pages ────────────────────────────────────────────────────────────
+      { path: "/setup",           element: <S><Setup /></S> },
+      { path: "/login",           element: <S><Login /></S> },
+      { path: "/login/:unitCode", element: <S><Login /></S> },
+      { path: "/register",        element: <S><RegisterOrganization /></S> },
+      // Visitor portal: sign-in / register / dashboard, and the new-visit form
+      { path: "/public-request",      element: <S><VisitorPortal /></S> },
+      { path: "/public-request/new",  element: <S><PublicRequest /></S> },
+      { path: "/visitor/*",           element: <Navigate to="/public-request" replace /> },
+      { path: "/reset-password",  element: <S><ResetPassword /></S> },
+
+
       {
-        element: <AppLayout />,
+        path: "/",
+        element: <ProtectedRoute />,
         children: [
-          { index: true,            element: <Navigate to="/dashboard" replace /> },
-          { path: "dashboard",      element: <S><Dashboard /></S> },
-          { path: "unit-dashboard", element: <S><UnitDashboard /></S> },
-          { path: "profile",        element: <S><Profile /></S> },
-
-          // Visitors
-          { path: "visitors",     element: <S><VisitorList /></S> },
           {
-            path: "visitors/new",
-            element: <ProtectedRoute roles={CREATE_ROLES} />,
-            children: [{ index: true, element: <S><VisitorForm /></S> }],
-          },
-          { path: "visitors/:id", element: <S><VisitorDetail /></S> },
-
-          // Visit Requests
-          { path: "requests",     element: <S><RequestList /></S> },
-          {
-            path: "requests/new",
-            element: <ProtectedRoute roles={CREATE_ROLES} />,
-            children: [{ index: true, element: <S><NewRequest /></S> }],
-          },
-          { path: "requests/:id", element: <S><RequestDetail /></S> },
-          { path: "gate/pass/:passNumber",   element: <S><GatePass /></S> },
-          { path: "passes/pass/:passNumber", element: <S><GatePass /></S> },
-
-          // Approvals
-          {
-            path: "approvals",
-            element: <ProtectedRoute roles={APPROVAL_ROLES} />,
-            children: [{ index: true, element: <S><ApprovalInbox /></S> }],
-          },
-
-          // Gate
-          {
-            path: "gate",
-            element: <ProtectedRoute roles={GATE_ROLES} />,
+            element: <AppLayout />,
             children: [
-              { index: true,                element: <S><CheckOut /></S> },
-              { path: "checkin/:requestId", element: <S><CheckIn /></S> },
-              { path: "walk-ins",           element: <S><MyWalkIns /></S> },
-              { path: "pass/:passNumber",   element: <S><GatePass /></S> },
-            ],
-          },
+              { index: true,            element: <Navigate to="/dashboard" replace /> },
+              { path: "dashboard",      element: <S><Dashboard /></S> },
+              { path: "unit-dashboard", element: <S><UnitDashboard /></S> },
+              { path: "profile",        element: <S><Profile /></S> },
 
-          // Reports
-          {
-            path: "reports",
-            element: <ProtectedRoute roles={REPORT_ROLES} />,
-            children: [{ index: true, element: <S><Reports /></S> }],
-          },
-
-          // Audit Logs
-          {
-            path: "audit-logs",
-            element: <ProtectedRoute roles={["super_admin", "global_auditor", "unit_admin", "unit_auditor"]} />,
-            children: [{ index: true, element: <S><AuditLog /></S> }],
-          },
-
-          // Admin — user + dept management
-          {
-            path: "admin",
-            element: <ProtectedRoute roles={ADMIN_ROLES} />,
-            children: [
-              { index: true, element: <Navigate to="/admin/employees" replace /> },
-              { path: "employees", element: <S><UserManagement key="employees" initialTab="employees" /></S> },
-              { path: "security",  element: <S><UserManagement key="security" initialTab="security" /></S> },
+              // Visitors
+              { path: "visitors",     element: <S><VisitorList /></S> },
               {
-                path: "departments",
-                element: <ProtectedRoute roles={["super_admin", "unit_admin"]} />,
-                children: [{ index: true, element: <S><DepartmentManagement /></S> }],
+                path: "visitors/new",
+                element: <ProtectedRoute roles={CREATE_ROLES} />,
+                children: [{ index: true, element: <S><VisitorForm /></S> }],
               },
-            ],
-          },
+              { path: "visitors/:id", element: <S><VisitorDetail /></S> },
 
-          // Super-admin panel
-          {
-            path: "super",
-            element: <ProtectedRoute roles={["super_admin", "global_auditor"]} />,
-            children: [
-              { path: "units", element: <S><UnitManagement /></S> },
+              // Visit Requests
+              { path: "requests",     element: <S><RequestList /></S> },
               {
-                path: "users",
-                element: <ProtectedRoute roles={["super_admin"]} />,
-                children: [{ index: true, element: <S><GlobalUserManagement /></S> }],
+                path: "requests/new",
+                element: <ProtectedRoute roles={CREATE_ROLES} />,
+                children: [{ index: true, element: <S><NewRequest /></S> }],
+              },
+              { path: "requests/:id", element: <S><RequestDetail /></S> },
+              { path: "gate/pass/:passNumber",   element: <S><GatePass /></S> },
+              { path: "passes/pass/:passNumber", element: <S><GatePass /></S> },
+
+              // Approvals
+              {
+                path: "approvals",
+                element: <ProtectedRoute roles={APPROVAL_ROLES} />,
+                children: [{ index: true, element: <S><ApprovalInbox /></S> }],
+              },
+
+              // Gate
+              {
+                path: "gate",
+                element: <ProtectedRoute roles={GATE_ROLES} />,
+                children: [
+                  { index: true,                element: <S><CheckOut /></S> },
+                  { path: "checkin/:requestId", element: <S><CheckIn /></S> },
+                  { path: "walk-ins",           element: <S><MyWalkIns /></S> },
+                  { path: "pass/:passNumber",   element: <S><GatePass /></S> },
+                ],
+              },
+
+              // Reports
+              {
+                path: "reports",
+                element: <ProtectedRoute roles={REPORT_ROLES} />,
+                children: [{ index: true, element: <S><Reports /></S> }],
+              },
+
+              // Audit Logs
+              {
+                path: "audit-logs",
+                element: <ProtectedRoute roles={["super_admin", "global_auditor", "unit_admin", "unit_auditor"]} />,
+                children: [{ index: true, element: <S><AuditLog /></S> }],
+              },
+
+              // Admin — user + dept management
+              {
+                path: "admin",
+                element: <ProtectedRoute roles={ADMIN_ROLES} />,
+                children: [
+                  { index: true, element: <Navigate to="/admin/employees" replace /> },
+                  { path: "employees", element: <S><UserManagement key="employees" initialTab="employees" /></S> },
+                  { path: "security",  element: <S><UserManagement key="security" initialTab="security" /></S> },
+                  {
+                    path: "departments",
+                    element: <ProtectedRoute roles={["super_admin", "unit_admin"]} />,
+                    children: [{ index: true, element: <S><DepartmentManagement /></S> }],
+                  },
+                ],
+              },
+
+              // Super-admin panel
+              {
+                path: "super",
+                element: <ProtectedRoute roles={["super_admin", "global_auditor"]} />,
+                children: [
+                  { path: "units", element: <S><UnitManagement /></S> },
+                  {
+                    path: "users",
+                    element: <ProtectedRoute roles={["super_admin"]} />,
+                    children: [{ index: true, element: <S><GlobalUserManagement /></S> }],
+                  },
+                ],
               },
             ],
           },
         ],
       },
+
+      // ── Catch-all: unknown path → dashboard (ProtectedRoute handles auth) ───────
+      { path: "*", element: <Navigate to="/dashboard" replace /> },
     ],
   },
-
-  // ── Catch-all: unknown path → dashboard (ProtectedRoute handles auth) ───────
-  { path: "*", element: <Navigate to="/dashboard" replace /> },
 ]);
 
 // ── Toasts (DESIGN_RULES §16): bottom-right, 320px white card with a tinted

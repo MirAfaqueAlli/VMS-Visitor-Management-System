@@ -5,6 +5,7 @@ const { centralPool, getPool } = require('./dbManager');
 const emailService = require('./email.service');
 const smsService   = require('./sms.service');
 const whatsapp     = require('./whatsapp.service');
+const push         = require('./push.service');
 
 /**
  * Inserts a notification record and delivers it via the appropriate channel.
@@ -28,6 +29,10 @@ const whatsapp     = require('./whatsapp.service');
  * @param {string|null}  opts.whatsappMessage — text for the WhatsApp copy (whatsapp.whatsappText); without
  *                                              it the SMS text is put in the standard layout. (SMS text is
  *                                              fixed by DLT templates; WhatsApp can say more.)
+ * @param {{title: string, body?: string, url?: string}|null} opts.push
+ *                                            — SMS to a visitor (no recipientUserId) only: the notification
+ *                                              pushed to their visitor-portal account. Without it the SMS
+ *                                              text is pushed under the subject or "OHPC VMS".
  * @returns {Promise<{ success: boolean }>}
  *
  * Every SMS is also sent on WhatsApp (as its own WHATSAPP notification row) when
@@ -45,6 +50,7 @@ const sendNotification = async ({
   attachments       = null,
   whatsappMedia     = null,
   whatsappMessage   = null,
+  push: pushMsg     = null,
 }) => {
   // ── 1. Resolve which DB pool to write the notification into ─────────────────
   let unitDb = db;
@@ -141,7 +147,18 @@ const sendNotification = async ({
     }
   }
 
-  // ── 4. WhatsApp copy of every SMS (its own row, so each channel is tracked) ──
+  // ── 4. Visitor SMS → also a system notification on their visitor-portal devices ──
+  // (staff are pushed from their live socket events instead — see socketManager)
+  if (type === 'SMS' && recipientPhone && !recipientUserId) {
+    await push.pushToVisitorPhone(recipientPhone, {
+      title: pushMsg?.title || subject || 'OHPC VMS',
+      body:  pushMsg?.body  || String(message || '').replace(/^(OHPC )?VMS( reminder)?:\s*/i, ''),
+      url:   pushMsg?.url,
+      tag:   visitRequestId ? `visit-${visitRequestId}` : undefined,   // the latest news about a visit replaces older
+    });
+  }
+
+  // ── 5. WhatsApp copy of every SMS (its own row, so each channel is tracked) ──
   if (type === 'SMS' && recipientPhone && whatsapp.isWhatsAppConfigured()) {
     await sendNotification({
       db: unitDb, visitRequestId, recipientUserId, recipientPhone,

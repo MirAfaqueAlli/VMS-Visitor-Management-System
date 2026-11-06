@@ -2,7 +2,8 @@
 // My profile (DESIGN_RULES §11/§12): details tile on the left, change-password
 // form on the right with its action below a hairline.
 import { useState, useEffect } from 'react';
-import { User, Lock, Eye, EyeOff, Loader2 } from '../../components/icons';
+import { User, Lock, Eye, EyeOff, Loader2, Bell } from '../../components/icons';
+import PushSetting from '../../components/PushSetting';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
@@ -121,6 +122,11 @@ export default function Profile() {
               ['Department', orDash(data.department_name)],
               ['Organisation', orDash(data.organization_name)],
             ]} />
+          </div>
+
+          <div className="mt-8">
+            <SectionTitle icon={Bell} title="Notifications" meta="This device" />
+            <PushSetting variant="tile" />
           </div>
         </section>
 
