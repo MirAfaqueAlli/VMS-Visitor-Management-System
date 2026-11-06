@@ -46,6 +46,7 @@ export default function MyWalkIns() {
   useSocketEvent("visit:checkin", load, [load]);
   useSocketEvent("visit:checkout", load, [load]);
   useSocketEvent("visit:cancelled", load, [load]);
+  useSocketEvent("gate:changed", load, [load]);   // declined / cancelled / expired
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 

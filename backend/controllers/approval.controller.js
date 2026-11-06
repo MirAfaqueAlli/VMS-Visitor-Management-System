@@ -7,7 +7,7 @@ const emailService = require('../services/email.service');
 const { logAudit } = require('../utils/auditLogger.util');
 const { generateGatePass } = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
-const { emitToUnitSecurity, emitToUser, emitToUnitAdmins } = require('../socket/socketManager');
+const { emitToUnitSecurity, emitToUser, emitToUnitAdmins, emitGateChanged } = require('../socket/socketManager');
 const { getSignedFileUrl } = require('../utils/s3.util');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
@@ -393,6 +393,7 @@ const approveRequest = async (req, res) => {
     });
     // ...and the host (an admin may approve for them) and the other unit admins, so their inboxes drop it
     actionedToOthers(req, request, user, { visit_request_id: parseInt(id), action: 'APPROVED' });
+    emitGateChanged(req.user.unit_id, 'approved');   // any day — the gate's upcoming list counts it
 
     // Notify security gate room if the approved visit is for today
     // NOTE: visit_requests table has no unit_id column — use req.user.unit_id
@@ -419,6 +420,7 @@ const approveRequest = async (req, res) => {
     if (request.requester_user_id && request.requester_user_id !== user.id) {
       emitToUser(request.requester_user_id, req.user.unit_db, 'visit:approved', {
         visit_request_id: request.id,
+        visitor_name: request.visitor_name || request.company_name || null,
         visit_date: request.visit_date,
         visit_category: request.visitor_type_code,
         approved_by: user.full_name || user.email,
@@ -555,11 +557,13 @@ const rejectRequest = async (req, res) => {
       visit_category: request.visitor_type_code,
     });
     actionedToOthers(req, request, user, { visit_request_id: parseInt(id), action: 'REJECTED' });
+    emitGateChanged(req.user.unit_id, 'rejected');   // e.g. a walk-in security registered (Spot Visits)
 
     // ── Socket: notify requester of rejection ────────────────────────────────
     if (request.requester_user_id) {
       emitToUser(request.requester_user_id, req.user.unit_db, 'visit:rejected', {
         visit_request_id: parseInt(id),
+        visitor_name: request.visitor_name || request.company_name || null,
         visit_category: request.visitor_type_code,
         remarks: remarks.trim(),
         rejected_by: user.full_name || user.email,

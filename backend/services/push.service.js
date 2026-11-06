@@ -107,10 +107,16 @@ function messageFor(event, d = {}) {
         ? { title: 'Walk-in visitor waiting', body: `${who} is at the gate / reception waiting for your approval.`, url: '/approvals', tag: `req-${d.visit_request_id}` }
         : { title: 'New visit request to approve', body: `${who} has requested a visit${date}.`, url: '/approvals', tag: `req-${d.visit_request_id}` };
     case 'visit:approved':
+      if (d.visit_category === 'SPOT') {
+        return { title: 'Walk-in approved', body: `${who} was approved${d.approved_by ? ` by ${d.approved_by}` : ''}${d.pass_number ? ` · Gate pass ${d.pass_number}` : ''} — they can be checked in now.`, url: d.pass_number ? `/passes/pass/${d.pass_number}` : reqUrl, tag: `appr-${d.visit_request_id}` };
+      }
       return d.is_hosted
         ? { title: 'You are invited for a visit', body: `${d.approved_by || d.host_name || 'A colleague'} has hosted you${date}${d.pass_number ? ` · Gate pass ${d.pass_number}` : ''}.`, url: reqUrl, tag: `appr-${d.visit_request_id}` }
         : { title: 'Visit approved', body: `Your visit${date} was approved${d.approved_by ? ` by ${d.approved_by}` : ''}${d.pass_number ? ` · Gate pass ${d.pass_number}` : ''}.`, url: reqUrl, tag: `appr-${d.visit_request_id}` };
     case 'visit:rejected':
+      if (d.visit_category === 'SPOT') {
+        return { title: 'Walk-in declined', body: `${who} was declined${d.rejected_by ? ` by ${d.rejected_by}` : ''}${d.remarks ? `: “${d.remarks}”` : '.'}`, url: reqUrl, tag: `rej-${d.visit_request_id}` };
+      }
       return { title: 'Visit request declined', body: `Your visit request was declined${d.remarks ? `: “${d.remarks}”` : '.'}`, url: reqUrl, tag: `rej-${d.visit_request_id}` };
     case 'visit:approved:today':
       return { title: 'Visitor expected today', body: `${who}${d.host_name ? ` to meet ${d.host_name}` : ''} is approved for today.`, url: '/dashboard', tag: `today-${d.id || d.visit_request_id}` };

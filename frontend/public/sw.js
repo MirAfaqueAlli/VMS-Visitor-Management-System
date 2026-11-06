@@ -14,8 +14,10 @@ self.addEventListener('activate', (event) => {
 //  - Staff: when a VMS window is on screen the app shows it itself (NotificationManager),
 //    so it's shown here only when VMS is minimised, in a background tab, closed — or
 //    on a locked phone.
-//  - Visitors (audience 'visitor', from the visitor portal's own registration): always
-//    shown — the portal has no other live alert — and an open portal refreshes its list.
+//  - Visitors (audience 'visitor', from the visitor portal's own registration): open
+//    portal tabs get the message (they refresh and show it); the system notification is
+//    shown unless a portal tab is on screen — so it arrives when the browser is
+//    minimised, the portal is in a background tab or closed, or the phone is locked.
 const PORTAL = '/public-request';
 const isPortalUrl = (url) => new URL(url, self.location.origin).pathname.startsWith(PORTAL);
 
@@ -41,12 +43,14 @@ self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
     const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true });
     if (data.audience === 'visitor') {
-      windows.filter((w) => isPortalUrl(w.url)).forEach((w) => w.postMessage({ type: 'vms-visitor-push', tag: data.tag }));
+      const portals = windows.filter((w) => isPortalUrl(w.url));
+      portals.forEach((w) => w.postMessage({ type: 'vms-visitor-push', tag: data.tag, title, body: options.body }));
+      if (portals.some((w) => w.visibilityState === 'visible')) return;   // the portal on screen shows it
       await self.registration.showNotification(title, options);
       return;
     }
-    // The open app shows it itself
-    if (windows.some((w) => w.visibilityState === 'visible')) return;
+    // The staff app on screen shows it itself (NotificationManager)
+    if (windows.some((w) => w.visibilityState === 'visible' && !isPortalUrl(w.url))) return;
     await self.registration.showNotification(title, options);
   })());
 });

@@ -4,7 +4,7 @@
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
 const { isSuperAdmin, isUnitAdmin, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
-const { emitToUnitSecurity, emitToUser } = require('../socket/socketManager');
+const { emitToUnitSecurity, emitToUser, emitToVisitorPhone } = require('../socket/socketManager');
 const { verifyQRToken }          = require('../utils/qrToken.util');
 const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
 const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
@@ -372,6 +372,10 @@ const checkIn = async (req, res) => {
 
     const hostName = hostInfoRows[0]?.full_name || null;
 
+    emitToVisitorPhone(request.visitor_phone, {
+      visit_request_id: requestId, tag: `visit-${requestId}`,
+      title: 'Checked in at the gate', body: `Welcome${hostName ? ` — ${hostName} has been told you are here` : ''}.`,
+    });
     emitToUnitSecurity(req.user.unit_id, 'visit:checkin', {
       visit_request_id: requestId,
       visitor_name:     request.visitor_name,
@@ -610,12 +614,14 @@ const checkOut = async (req, res) => {
     // Fetch visitor_name from visit_requests so the OS notification shows the real name
     let checkoutVisitorName = null;
     let checkoutHostId = null;
+    let checkoutVisitorPhone = null;
     try {
       const [vrName] = await req.db.query(
-        'SELECT visitor_name, host_user_id FROM visit_requests WHERE id = ?', [visitRequestId]
+        'SELECT visitor_name, visitor_phone, host_user_id FROM visit_requests WHERE id = ?', [visitRequestId]
       );
       checkoutVisitorName = vrName[0]?.visitor_name || null;
       checkoutHostId = vrName[0]?.host_user_id || null;
+      checkoutVisitorPhone = vrName[0]?.visitor_phone || null;
     } catch (_) { /* non-fatal — keep name null */ }
 
     const checkoutEvent = {
@@ -625,6 +631,10 @@ const checkOut = async (req, res) => {
       check_out_at:     checkOutTime.toISOString(),
     };
     emitToUnitSecurity(req.user.unit_id, 'visit:checkout', checkoutEvent);
+    emitToVisitorPhone(checkoutVisitorPhone, {
+      visit_request_id: visitRequestId, tag: `visit-${visitRequestId}`,
+      title: 'Checked out', body: 'Thank you for visiting OHPC.',
+    });
     // The host too — their visitor has left
     if (checkoutHostId) emitToUser(checkoutHostId, req.user.unit_db, 'visit:checkout', checkoutEvent);
 
@@ -879,12 +889,14 @@ const checkOutByQR = async (req, res) => {
     // ── Socket.IO: notify security ────────────────────────────────────────────
     let checkoutVisitorName = null;
     let checkoutHostId = null;
+    let checkoutVisitorPhone = null;
     try {
       const [vrName] = await req.db.query(
-        'SELECT visitor_name, host_user_id FROM visit_requests WHERE id = ?', [visitRequestId]
+        'SELECT visitor_name, visitor_phone, host_user_id FROM visit_requests WHERE id = ?', [visitRequestId]
       );
       checkoutVisitorName = vrName[0]?.visitor_name || null;
       checkoutHostId = vrName[0]?.host_user_id || null;
+      checkoutVisitorPhone = vrName[0]?.visitor_phone || null;
     } catch (_) {}
 
     const checkoutEvent = {
@@ -895,6 +907,10 @@ const checkOutByQR = async (req, res) => {
       checkout_method:  'QR_SCAN',
     };
     emitToUnitSecurity(req.user.unit_id, 'visit:checkout', checkoutEvent);
+    emitToVisitorPhone(checkoutVisitorPhone, {
+      visit_request_id: visitRequestId, tag: `visit-${visitRequestId}`,
+      title: 'Checked out', body: 'Thank you for visiting OHPC.',
+    });
     // The host too — their visitor has left
     if (checkoutHostId) emitToUser(checkoutHostId, req.user.unit_db, 'visit:checkout', checkoutEvent);
 

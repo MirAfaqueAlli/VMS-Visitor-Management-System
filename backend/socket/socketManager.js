@@ -31,6 +31,23 @@ function initSocket(httpServer) {
   // ── JWT Authentication middleware ──────────────────────────────────────────
   io.use(async (socket, next) => {
     try {
+      // Visitor portal (auth.visitorSession = the X-Visitor-Session token): live updates
+      // of their own visits only — see emitToVisitorPhone
+      const visitorSession = socket.handshake.auth?.visitorSession;
+      if (visitorSession) {
+        const v = jwt.verify(visitorSession, process.env.JWT_SECRET);
+        if (v.purpose !== 'VISITOR_SESSION' || !v.aid) return next(new Error('INVALID_TOKEN'));
+        const [[account]] = await centralPool.query(
+          'SELECT id, phone, is_active, phone_verified_at, password_changed_at FROM visitor_accounts WHERE id = ? LIMIT 1', [v.aid]
+        );
+        if (!account || !account.is_active) return next(new Error('INVALID_TOKEN'));
+        // A password change ends older sessions (same rule as the portal API)
+        const pwv = account.password_changed_at ? new Date(account.password_changed_at).getTime() : 0;
+        if ((v.pwv ?? 0) !== pwv) return next(new Error('INVALID_TOKEN'));
+        socket.visitor = { id: account.id, phone: account.phone, verified: !!account.phone_verified_at };
+        return next();
+      }
+
       const token =
         socket.handshake.auth?.token ||
         socket.handshake.headers?.authorization?.replace('Bearer ', '');
@@ -84,6 +101,13 @@ function initSocket(httpServer) {
 
   // ── Connection handler ─────────────────────────────────────────────────────
   io.on('connection', (socket) => {
+    // Visitor portal: only their own room (their visits are found by mobile number,
+    // so only once that number is verified)
+    if (socket.visitor) {
+      if (socket.visitor.verified) socket.join(`visitor:${socket.visitor.phone}`);
+      return;
+    }
+
     const { id: userId, role_type, unit_id, unit_db } = socket.user;
 
     // Personal room — scoped by unit DB to prevent cross-unit ID collisions
@@ -167,6 +191,28 @@ async function emitToUnitAdmins(unitId, unitDb, event, data, skipUserIds = []) {
   }
 }
 
+/**
+ * Tells a unit's gate screens (security dashboard, Spot Visits) that its visits changed —
+ * approved for any day, declined, cancelled, expired — so they reload quietly. No push.
+ * @param {number} unitId
+ * @param {string} reason — 'approved' | 'rejected' | 'cancelled' | 'expired'
+ */
+function emitGateChanged(unitId, reason) {
+  if (!io || !unitId) return;
+  io.to(`unit:${unitId}:security`).emit('gate:changed', { reason });
+}
+
+/**
+ * A visitor's visit changed (submitted, approved, declined, cancelled, checked in / out):
+ * their open visitor-portal tabs reload it, and show `data.title` / `data.body` as a
+ * message when given. Matched by the mobile number's last 10 digits.
+ */
+function emitToVisitorPhone(phone, data) {
+  const ten = String(phone || '').replace(/\D/g, '').slice(-10);
+  if (!io || ten.length !== 10) return;
+  io.to(`visitor:${ten}`).emit('visitor:visit:changed', data || {});
+}
+
 /** Emit to ALL connected users of a unit. */
 function emitToUnit(unitId, event, data) {
   if (!io) {
@@ -179,4 +225,6 @@ function emitToUnit(unitId, event, data) {
 // push.service is loaded lazily (it needs the DB pools; keeps start-up order simple)
 const push = () => require('../services/push.service');
 
-module.exports = { initSocket, getIO, emitToUser, emitToUnitSecurity, emitToUnit, emitToUnitAdmins };
+module.exports = {
+  initSocket, getIO, emitToUser, emitToUnitSecurity, emitToUnit, emitToUnitAdmins, emitGateChanged, emitToVisitorPhone,
+};

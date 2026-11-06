@@ -78,14 +78,23 @@ async function expirePastVisits(db) {
   return { visits: visits.affectedRows, passes: passes.affectedRows, autoCheckedOut: closed.affectedRows };
 }
 
+/** Gate screens of the unit with this DB reload quietly (socketManager is loaded lazily — no require cycle). */
+async function gateChanged(dbName) {
+  try {
+    const [[unit]] = await centralPool.query('SELECT id FROM units WHERE db_name = ? LIMIT 1', [dbName]);
+    if (unit) require('../socket/socketManager').emitGateChanged(unit.id, 'expired');
+  } catch { /* the screens catch up on their next reload */ }
+}
+
 /** Sweeps this unit DB if it hasn't been swept today. Never throws (lists must still load). */
 async function expireIfDue(db, dbName) {
   if (!db || !dbName) return;
   const today = istDate();
   if (sweptOn.get(dbName) === today) return;
   try {
-    await expirePastVisits(db);
+    const done = await expirePastVisits(db);
     sweptOn.set(dbName, today);
+    if (done && (done.visits || done.passes || done.autoCheckedOut)) gateChanged(dbName);
   } catch (err) {
     console.error(`[VisitExpiry] ${dbName} sweep failed:`, err.message);
   }

@@ -6,6 +6,7 @@ const emailService = require('./email.service');
 const smsService   = require('./sms.service');
 const whatsapp     = require('./whatsapp.service');
 const push         = require('./push.service');
+const { emitToVisitorPhone } = require('../socket/socketManager');
 
 /**
  * Inserts a notification record and delivers it via the appropriate channel.
@@ -147,15 +148,17 @@ const sendNotification = async ({
     }
   }
 
-  // ── 4. Visitor SMS → also a system notification on their visitor-portal devices ──
-  // (staff are pushed from their live socket events instead — see socketManager)
+  // ── 4. Visitor SMS → also live in their open visitor portal, and a system
+  //       notification on their devices (staff get theirs from their own socket events)
   if (type === 'SMS' && recipientPhone && !recipientUserId) {
-    await push.pushToVisitorPhone(recipientPhone, {
+    const visitorMsg = {
       title: pushMsg?.title || subject || 'OHPC VMS',
       body:  pushMsg?.body  || String(message || '').replace(/^(OHPC )?VMS( reminder)?:\s*/i, ''),
       url:   pushMsg?.url,
       tag:   visitRequestId ? `visit-${visitRequestId}` : undefined,   // the latest news about a visit replaces older
-    });
+    };
+    emitToVisitorPhone(recipientPhone, { ...visitorMsg, visit_request_id: visitRequestId });
+    await push.pushToVisitorPhone(recipientPhone, visitorMsg);
   }
 
   // ── 5. WhatsApp copy of every SMS (its own row, so each channel is tracked) ──

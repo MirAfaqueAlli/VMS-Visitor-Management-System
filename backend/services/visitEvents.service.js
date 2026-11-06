@@ -6,12 +6,12 @@
  */
 
 const { centralPool } = require('./dbManager');
-const { emitToUser, emitToUnitSecurity, emitToUnitAdmins } = require('../socket/socketManager');
+const { emitToUser, emitToUnitSecurity, emitToUnitAdmins, emitGateChanged } = require('../socket/socketManager');
 const { visitDay } = require('./visitExpiry.service');
 
 /**
  * A visit was cancelled: the host and the unit admins drop it from their inboxes,
- * and — when it was for today — the gate drops it from "expected today". Never throws.
+ * and the gate drops it from "expected today" / upcoming. Never throws.
  *
  * @param {number} unitId    — the unit the request lives in
  * @param {number} byUserId  — staff user who cancelled (no copy to them); null when the visitor did
@@ -27,6 +27,7 @@ async function announceCancelled(unitId, byUserId, payload) {
     }
     emitToUnitAdmins(unitId, unit.db_name, 'visit:actioned', event, [byUserId, event.host_user_id].filter(Boolean));
     if (visitDay(event.visit_date) === 'today') emitToUnitSecurity(unitId, 'visit:cancelled', event);
+    emitGateChanged(unitId, 'cancelled');
   } catch (err) {
     console.warn('[VisitEvents] announceCancelled failed:', err.message);
   }

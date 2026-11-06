@@ -2,7 +2,7 @@
 // Role dashboards (DESIGN_RULES §13): title + scope, a lead row with one hero
 // number (54px, parts bar + legend) beside smaller metric tiles, then sections
 // with head-icon chips and plain tables. No greetings, no gradients.
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Clock, UserCheck, AlertCircle, Calendar, Check, X, Plus, ClipboardList, Building2, ChevronRight, LogOut, Loader2, QrCode,
@@ -15,6 +15,7 @@ import { toast } from "react-hot-toast";
 import apiClient from "../../api/axios";
 import useAuth from "../../hooks/useAuth";
 import useSocketEvent from "../../hooks/useSocketEvent";
+import { useSocket } from "../../context/SocketContext";
 import { PageHeader, SectionTitle, Status, Tag, State, Empty, Spinner, Modal, Field, KV, SearchInput, Live } from "../../components/ui";
 import Select from "../../components/Select";
 import { fmtDate, fmtTime, fmtClock, fmtNumber, orDash } from "../../lib/format";
@@ -245,20 +246,49 @@ function SecurityDashboard() {
     } catch { /* the tile shows 0 */ }
   }, []);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  /** silent: reload in place (live update) — no spinner, no error toast */
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await apiClient.get("/gate/dashboard");
       setDashData(res.data?.data ?? res.data);
     } catch (err) {
-      toast.error(err?.response?.data?.message || "Failed to load gate data.");
+      if (!silent) toast.error(err?.response?.data?.message || "Failed to load gate data.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
     fetchUpcoming();
   }, [fetchUpcoming]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Live: every gate event reloads today's lists and the upcoming tile quietly
+  // (debounced — a burst of events is one reload). The socket events below also
+  // patch the lists at once, so the screen moves before the reload lands.
+  const refreshTimer = useRef(null);
+  const refreshSoon = useCallback(() => {
+    clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => fetchData(true), 400);
+  }, [fetchData]);
+  useEffect(() => () => clearTimeout(refreshTimer.current), []);
+
+  // Approved for any day, declined, cancelled, expired (server: emitGateChanged)
+  useSocketEvent("gate:changed", refreshSoon, [refreshSoon]);
+
+  // Catch up on anything missed: after a reconnect, when the tab comes back into
+  // view, and every 2 minutes while on screen (also rolls the lists over at midnight)
+  const { connected } = useSocket();
+  const wasConnected = useRef(connected);
+  useEffect(() => {
+    if (connected && !wasConnected.current) refreshSoon();
+    wasConnected.current = connected;
+  }, [connected, refreshSoon]);
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") refreshSoon(); };
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = setInterval(() => { if (document.visibilityState === "visible") fetchData(true); }, 120_000);
+    return () => { document.removeEventListener("visibilitychange", onVisible); clearInterval(timer); };
+  }, [refreshSoon, fetchData]);
 
   const confirmCheckout = async (remarks) => {
     const v = checkoutVisitor;
@@ -281,7 +311,7 @@ function SecurityDashboard() {
         };
       });
       setCheckoutVisitor(null);
-      fetchData();
+      refreshSoon();
     } catch (err) {
       toast.error(err?.response?.data?.message || "Could not check the visitor out.");
     } finally {
@@ -303,7 +333,8 @@ function SecurityDashboard() {
       return { ...prev, yet_to_come: updated, summary: { ...prev.summary, yet_to_come_count: updated.length } };
     });
     toast(`${data.visitor_name || "A visitor"} is approved to visit today.`, { duration: 4000 });
-  }, []), []);
+    refreshSoon();
+  }, [refreshSoon]), [refreshSoon]);
 
   // Socket: checked in → move from Expected to On premises
   useSocketEvent("visit:checkin", useCallback((data) => {
@@ -323,11 +354,14 @@ function SecurityDashboard() {
       };
     });
     toast(`${data.visitor_name ?? "A visitor"} checked in.`, { duration: 4000 });
-  }, []), []);
+    refreshSoon();
+  }, [refreshSoon]), [refreshSoon]);
 
-  // Socket: checked out → off premises, one more completed
   // A visit expected today was cancelled — reload today's lists
-  useSocketEvent("visit:cancelled", () => { fetchData(); }, [fetchData]);
+  useSocketEvent("visit:cancelled", refreshSoon, [refreshSoon]);
+
+  // Socket: checked out → off premises, one more completed (not twice when this
+  // screen already took it off — e.g. its own check-out)
 
   useSocketEvent("visit:checkout", useCallback((data) => {
     setDashData((prev) => {
@@ -335,13 +369,15 @@ function SecurityDashboard() {
       const updatedActive = (prev.active ?? []).filter(
         (v) => v.visit_log_id !== data.visit_log_id && v.visit_request_id !== data.visit_request_id,
       );
+      if (updatedActive.length === (prev.active ?? []).length) return prev;
       return {
         ...prev, active: updatedActive,
         summary: { ...prev.summary, active_count: updatedActive.length, completed_today_count: (prev.summary?.completed_today_count ?? 0) + 1 },
       };
     });
     toast(`${data.visitor_name ?? "A visitor"} checked out.`, { duration: 3000 });
-  }, []), []);
+    refreshSoon();
+  }, [refreshSoon]), [refreshSoon]);
 
   // Filtered + paged before the loading return (hooks always run in the same order)
   const yetToCome = dashData?.yet_to_come ?? [];

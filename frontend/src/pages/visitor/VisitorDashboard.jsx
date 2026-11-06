@@ -2,14 +2,15 @@
 // The signed-in visitor's home: every visit request they have in any unit (made
 // by them, by a host, or at the gate), its status, gate pass and gate times, and
 // their profile / email / password.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import {
   AlertCircle, Calendar, Check, Loader2, Plus, QrCode, RefreshCw, User, Mail, Lock, Clock, Printer, CreditCard, Bell,
 } from "../../components/icons";
 import PushSetting from "../../components/PushSetting";
-import { VISITOR_PUSH_MESSAGE } from "../../lib/push";
+import { VISITOR_PUSH_MESSAGE, visitorPushActive } from "../../lib/push";
+import useVisitorLive from "../../hooks/useVisitorLive";
 import Select from "../../components/Select";
 import PasswordStrength from "../../components/PasswordStrength";
 import { OtpField } from "../../components/PublicShell";
@@ -144,6 +145,34 @@ function VisitDrawer({ visit, onClose }) {
 }
 
 /* ── Visits tab ──────────────────────────────────────────────────────────────── */
+/**
+ * News about one of the visitor's visits, on screen: a toast (one per visit — a newer
+ * message replaces it). With the tab in the background and no push on this browser,
+ * also a system notification from the page itself (push shows its own otherwise).
+ */
+function announce({ title, body, tag }) {
+  const content = (
+    <span className="block">
+      <b className="block">{title}</b>
+      {body && <span className="block text-[12px] mt-0.5">{body}</span>}
+    </span>
+  );
+  const opts = { id: tag || title, duration: 7000 };
+  if (/declined|cancel/i.test(title)) toast.error(content, opts);
+  else if (/approved|invited|scheduled|checked in/i.test(title)) toast.success(content, opts);
+  else toast(content, opts);
+
+  if (document.visibilityState !== "hidden" || visitorPushActive()) return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const options = { body, tag: tag || "vms-visitor", icon: "/icons/icon-192.png", badge: "/icons/badge-96.png", data: { url: "/public-request" } };
+  const direct = () => { try { new Notification(title, options); } catch { /* Android: SW only */ } };
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistration("/public-request")
+      .then((reg) => (reg ? reg.showNotification(title, options) : direct()))
+      .catch(direct);
+  } else direct();
+}
+
 function VisitsTab({ onNew }) {
   const [visits, setVisits] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -157,8 +186,11 @@ function VisitsTab({ onNew }) {
     if (!silent) setLoading(true);
     try {
       const { data } = await portalApi.get("/me/visits");
-      setVisits(data.data.visits || []);
+      const list = data.data.visits || [];
+      setVisits(list);
       setIncomplete(!!data.data.incomplete);
+      // An open visit shows its new status too
+      setOpen((o) => (o ? list.find((v) => v.id === o.id && v.unit_id === o.unit_id) || o : o));
     } catch (err) {
       if (!silent) toast.error(portalError(err, "Could not load your visits."));
     } finally {
@@ -167,13 +199,38 @@ function VisitsTab({ onNew }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // A notification about a visit (approved, declined, cancelled…) → refresh the list
+  // Live: a visit changed (socket) or a notification arrived (service worker) → say what
+  // happened and reload quietly. Debounced: both may arrive for the same change.
+  const refreshTimer = useRef(null);
+  const refreshSoon = useCallback(() => {
+    clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => load(true), 400);
+  }, [load]);
+  useEffect(() => () => clearTimeout(refreshTimer.current), []);
+
+  const onNews = useCallback((msg) => {
+    if (msg?.title) announce(msg);
+    refreshSoon();
+  }, [refreshSoon]);
+  useVisitorLive(onNews);
+
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return undefined;
-    const onMessage = (e) => { if (e.data?.type === VISITOR_PUSH_MESSAGE) load(true); };
+    const onMessage = (e) => {
+      if (e.data?.type === VISITOR_PUSH_MESSAGE) onNews({ title: e.data.title, body: e.data.body, tag: e.data.tag });
+    };
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
-  }, [load]);
+  }, [onNews]);
+
+  // Catch up on anything missed (e.g. a visit expiring overnight): when the tab comes
+  // back into view, and every 2 minutes while on screen
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") refreshSoon(); };
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = setInterval(() => { if (document.visibilityState === "visible") load(true); }, 120_000);
+    return () => { document.removeEventListener("visibilitychange", onVisible); clearInterval(timer); };
+  }, [refreshSoon, load]);
 
   const upcoming = useMemo(
     () => visits.filter(isUpcoming).sort((a, b) => localDay(a.visit_date).localeCompare(localDay(b.visit_date))),

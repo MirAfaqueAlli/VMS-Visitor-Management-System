@@ -11,7 +11,7 @@ const { logAudit }               = require('../utils/auditLogger.util');
 const { generateGatePass }       = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin, isEmployee, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
 const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
-const { emitToUser, emitToUnitSecurity, emitToUnitAdmins } = require('../socket/socketManager');
+const { emitToUser, emitToUnitSecurity, emitToUnitAdmins, emitGateChanged } = require('../socket/socketManager');
 const { encryptField, decryptRows, maskIdNumber } = require('../utils/crypto.util');
 const { visitorOnRecord, visitorRecordByPhone } = require('../services/visitorRecord.service');
 const { getSignedFileUrl, uploadToS3 } = require('../utils/s3.util');
@@ -551,7 +551,9 @@ const createRequest = async (req, res) => {
     const host = hostRows[0] || {};
 
     // ── Socket: notify security gate room for auto-approved visits that are today ─
+    // (and, for any day, refresh the gate's upcoming list)
     if (status === 'APPROVED' && effectiveUnitId) {
+      emitGateChanged(effectiveUnitId, 'approved');
       try {
         const todayIST    = getISTDateString();
         const visitDateIST = getISTDateString(new Date(visit_date));
