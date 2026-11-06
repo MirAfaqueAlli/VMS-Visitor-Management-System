@@ -9,6 +9,8 @@ import {
 } from "../../components/icons";
 import PassLookupModal from "../../components/gate/PassLookupModal";
 import QRCheckoutModal from "../../components/gate/QRCheckoutModal";
+import UpcomingVisitsDrawer from "../../components/gate/UpcomingVisitsDrawer";
+import { upcomingGroups } from "../../lib/upcomingVisits";
 import { toast } from "react-hot-toast";
 import apiClient from "../../api/axios";
 import useAuth from "../../hooks/useAuth";
@@ -26,11 +28,12 @@ import Pagination from "../../components/shared/Pagination";
 function HeroTile({ label, value, tone, hint, parts = [] }) {
   const total = parts.reduce((s, p) => s + (Number(p.value) || 0), 0);
   return (
-    <div className="tile flex flex-col justify-between min-h-[168px]">
+    // Phones: the same size as the other tiles; wide screens: the hero number
+    <div className="tile flex flex-col justify-between lg:min-h-[168px]">
       <div>
         <div className="stat-label">{label}</div>
-        <div className="mt-2 tabular" style={{
-          fontSize: 54, fontWeight: 650, letterSpacing: "-0.03em", lineHeight: 0.9,
+        <div className="mt-1.5 lg:mt-2 tabular text-[26px] lg:text-[54px] leading-[1.1] lg:leading-[0.9]" style={{
+          fontWeight: 650, letterSpacing: "-0.03em",
           color: tone === "warning" ? "var(--warning-text)" : "var(--ink)",
         }}>
           {fmtNumber(value ?? 0)}
@@ -62,7 +65,8 @@ function MetricTile({ label, value, unit, hint, tone, onClick }) {
   const Comp = onClick ? "button" : "div";
   return (
     <Comp type={onClick ? "button" : undefined} onClick={onClick}
-      className={`stat text-left ${onClick ? "hover:bg-neutral-soft transition-colors" : ""}`}>
+      // flex column: a <button> would otherwise centre its contents vertically
+      className={`stat text-left flex flex-col justify-start items-stretch ${onClick ? "hover:bg-neutral-soft transition-colors" : ""}`}>
       <div className="stat-label flex items-center gap-1">{label}{onClick && <ChevronRight size={12} className="text-muted" />}</div>
       <div className={`stat-value${tone ? ` is-${tone}` : ""}`}>
         {fmtNumber(value ?? 0)}{unit && <span className="stat-unit">{unit}</span>}
@@ -213,6 +217,12 @@ function PassLink({ pass }) {
   );
 }
 
+/** "Today 2 · Tomorrow 1 · Later 4" for the Upcoming visits tile. */
+const upcomingHint = ({ visits, today }) => {
+  const [t, tm, ...rest] = upcomingGroups(visits, today);
+  return `Today ${t.rows.length} · Tomorrow ${tm.rows.length} · Later ${rest.reduce((n, g) => n + g.rows.length, 0)}`;
+};
+
 function SecurityDashboard() {
   const navigate = useNavigate();
   const { hasRole, user } = useAuth();
@@ -224,6 +234,16 @@ function SecurityDashboard() {
   const [expectedFilter, setExpectedFilter] = useState({ category: "", search: "" });
   const [lookupOpen, setLookupOpen] = useState(false);   // "Check in by pass" (scan / type)
   const [insideFilter, setInsideFilter] = useState({ category: "", search: "" });
+  // Approved visits from today on (today, tomorrow, the next two days, later)
+  const [upcoming, setUpcoming] = useState({ today: null, visits: [] });
+  const [upcomingOpen, setUpcomingOpen] = useState(false);
+
+  const fetchUpcoming = useCallback(async () => {
+    try {
+      const res = await apiClient.get("/gate/upcoming");
+      setUpcoming({ today: res.data?.data?.today ?? null, visits: res.data?.data?.visits ?? [] });
+    } catch { /* the tile shows 0 */ }
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -235,7 +255,8 @@ function SecurityDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+    fetchUpcoming();
+  }, [fetchUpcoming]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -363,7 +384,9 @@ function SecurityDashboard() {
             { label: "Inside", value: inside, color: "var(--ramp-3)" },
             { label: "Left", value: completed, color: "var(--ramp-4)" },
           ]} />
-        <MetricTile label="Expected today" value={expected} hint="Approved, not yet arrived" />
+        <MetricTile label="Upcoming visits" value={upcoming.visits.length}
+          hint={upcoming.today ? upcomingHint(upcoming) : "Approved, not yet arrived"}
+          onClick={() => { fetchUpcoming(); setUpcomingOpen(true); }} />
         <MetricTile label="Completed today" value={completed} hint="Checked in and out" />
       </div>
 
@@ -461,6 +484,11 @@ function SecurityDashboard() {
           </>
         )}
       </section>
+
+      {upcomingOpen && upcoming.today && (
+        <UpcomingVisitsDrawer visits={upcoming.visits} today={upcoming.today} canCheckIn={canCheckIn}
+          onClose={() => setUpcomingOpen(false)} />
+      )}
 
       {qrCheckoutVisitor && (
         <QRCheckoutModal

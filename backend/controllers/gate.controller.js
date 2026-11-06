@@ -11,7 +11,7 @@ const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
 const { sendNotification }       = require('../services/notification.service');
 const { escapeHtml: esc, noticeMessage } = require('../services/email.service');
 const { whatsappText }           = require('../services/whatsapp.service');
-const { visitDay }               = require('../services/visitExpiry.service');
+const { visitDay, istDate, expireForRequest } = require('../services/visitExpiry.service');
 const { visitorOnRecord }        = require('../services/visitorRecord.service');
 const { squarePhoto }            = require('../utils/photo.util');
 const { formatDate }             = require('../utils/displayFormat.util');
@@ -931,6 +931,38 @@ const checkOutByQR = async (req, res) => {
   }
 };
 
+// ── getUpcoming ───────────────────────────────────────────────────────────────
+/**
+ * GET /api/gate/upcoming — approved visits from today (IST) on, not yet at the gate,
+ * for the gate's "Upcoming visits" (today, tomorrow, the next two days, later).
+ * Each row carries `day` (YYYY-MM-DD) so the screen can group them.
+ */
+const getUpcoming = async (req, res) => {
+  try {
+    await expireForRequest(req);
+    const [rows] = await req.db.query(
+      `SELECT vr.id, DATE_FORMAT(vr.visit_date, '%Y-%m-%d') AS day, vr.visit_date,
+              vr.visit_start_time, vr.visit_end_time, vr.visit_category, vr.purpose, vr.accompanying_count,
+              vr.visitor_name, vr.visitor_phone, vr.company_name,
+              h.full_name AS host_name, d.name AS department_name,
+              gp.pass_number
+         FROM visit_requests vr
+         JOIN users h ON h.id = vr.host_user_id
+         LEFT JOIN departments d ON d.id = vr.department_id
+         LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
+        WHERE vr.visit_date >= ? AND vr.status IN ('APPROVED', 'SCHEDULED')
+          AND (gp.status IS NULL OR gp.status = 'ISSUED')
+        ORDER BY vr.visit_date ASC, vr.visit_start_time IS NULL, vr.visit_start_time ASC
+        LIMIT 500`,
+      [istDate()]
+    );
+    return sendSuccess(res, { today: istDate(), visits: rows }, 'Upcoming visits.');
+  } catch (err) {
+    console.error('[GateController] getUpcoming error:', err.message);
+    return sendError(res, 'Could not load upcoming visits.', 500);
+  }
+};
+
 // ── lookupPass ────────────────────────────────────────────────────────────────
 /**
  * POST /api/gate/lookup { code }  — a scanned QR (signed token) or a typed pass number.
@@ -1002,4 +1034,4 @@ const lookupPass = async (req, res) => {
   }
 };
 
-module.exports = { getDashboard, checkIn, checkOut, checkOutByQR, rejectAtGate, getActiveVisitors, lookupPass };
+module.exports = { getDashboard, checkIn, checkOut, checkOutByQR, rejectAtGate, getActiveVisitors, lookupPass, getUpcoming };

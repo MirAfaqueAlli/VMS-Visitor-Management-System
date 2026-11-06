@@ -11,6 +11,43 @@ import useAuth from '../../hooks/useAuth';
 import { PageHeader, SectionTitle, KV, Status, State, Tag, Empty, Spinner, Modal, Field, Note } from '../../components/ui';
 import { fmtDate, fmtDateTime, fmtTime, orDash } from '../../lib/format';
 import { describe } from '../../lib/status';
+import { idProofLabel } from '../../lib/idProof';
+
+/** The verb for the summary line, by where the visit stands. */
+const visitVerb = (status) => ({
+  PENDING: 'wants to visit', APPROVED: 'will visit', SCHEDULED: 'will visit', COMPLETED: 'visited',
+}[status] || 'asked to visit');
+
+/**
+ * One line: who visits whom, in which department and unit, and when —
+ * "Employ 2 (papers, UNIT 1) will visit Sunita Mohanty of the General department, UNIT 2 on 4 Nov 2026."
+ */
+function VisitSummary({ request: r }) {
+  const visitor = r.visitor_name || r.company_name;
+  if (!visitor || !r.host_name) return null;
+  const from = r.visit_category === 'EMPLOYEE_VISIT'
+    ? [r.visitor_department_name, r.visitor_unit_name].filter(Boolean).join(', ')
+    : r.company_name && r.visitor_name ? r.company_name : '';
+  const where = [r.department_name && <>the <b className="text-ink">{r.department_name}</b> department</>,
+    r.host_unit_name && <b className="text-ink">{r.host_unit_name}</b>].filter(Boolean);
+  return (
+    <p className="-mt-3 mb-6 text-[13.5px] text-ink-2">
+      <b className="text-ink">{visitor}</b>
+      {from && <> ({r.visit_category === 'EMPLOYEE_VISIT' ? from : <>of {from}</>})</>}
+      {' '}{visitVerb(r.status)}{' '}
+      <b className="text-ink">{r.host_name}</b>
+      {where.length > 0 && <> of {where.reduce((acc, part, i) => (i ? [...acc, ', ', part] : [part]), [])}</>}
+      {r.visit_date && <> on <b className="text-ink tabular">{fmtDate(r.visit_date)}</b></>}.
+    </p>
+  );
+}
+
+/** Where the ID on record came from (shown on hover). */
+const ID_SOURCE = {
+  request:        'Taken with this visit request',
+  profile:        "From the visitor's portal profile",
+  previous_visit: 'From their last visit',
+};
 
 const last10 = (p) => String(p || '').replace(/\D/g, '').slice(-10);
 
@@ -246,19 +283,39 @@ export default function RequestDetail() {
         {conflictFlag && <Tag tone="warning" title="Created even though the host had another visit at this time">Time conflict</Tag>}
       </div>
 
+      {/* Who visits whom, where — in one line */}
+      <VisitSummary request={request} />
+
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-x-8 gap-y-6 items-start">
         <div className="min-w-0">
           {/* Visitor · host · visit */}
           <div className="tile grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-5">
             <div>
               <p className="group-heading mb-2">Visitor</p>
-              <p className="text-[13.5px] font-semibold">{request.visitor_name ?? request.company_name ?? 'Visitor to be confirmed'}</p>
-              <dl className="mt-1 space-y-0.5 text-[12px] text-ink-2">
-                {request.company_name && request.visitor_name && <dd>{request.company_name}</dd>}
-                {request.visitor_phone && <dd className="tabular">{request.visitor_phone}</dd>}
-                {(request.visitor_email || request.vendor_email) && <dd className="break-all">{request.visitor_email || request.vendor_email}</dd>}
-                {request.visitor_address && <dd>{request.visitor_address}</dd>}
-              </dl>
+              <div className="flex items-start gap-3">
+                {/* Photo on record (this request, their portal profile or an earlier visit) */}
+                {request.visitor_photo_path && (
+                  <a href={request.visitor_photo_path} target="_blank" rel="noreferrer" title="Open the photo"
+                    className="shrink-0 block w-16 h-16 rounded border border-line overflow-hidden bg-surface">
+                    <img src={request.visitor_photo_path} alt={`Photo of ${request.visitor_name || "the visitor"}`} className="w-full h-full object-cover" />
+                  </a>
+                )}
+                <div className="min-w-0">
+                  <p className="text-[13.5px] font-semibold">{request.visitor_name ?? request.company_name ?? 'Visitor to be confirmed'}</p>
+                  <dl className="mt-1 space-y-0.5 text-[12px] text-ink-2">
+                    {request.company_name && request.visitor_name && <dd>{request.company_name}</dd>}
+                    {request.visitor_phone && <dd className="tabular">{request.visitor_phone}</dd>}
+                    {(request.visitor_email || request.vendor_email) && <dd className="break-all">{request.visitor_email || request.vendor_email}</dd>}
+                    {request.visitor_address && <dd>{request.visitor_address}</dd>}
+                    {request.id_proof_type && (
+                      <dd title={ID_SOURCE[request.id_proof_source] || undefined}>
+                        <span className="text-muted">ID · </span>{idProofLabel(request.id_proof_type)}{" "}
+                        {request.id_proof_number && <span className="mono text-ink">{request.id_proof_number}</span>}
+                      </dd>
+                    )}
+                  </dl>
+                </div>
+              </div>
             </div>
             <div>
               <p className="group-heading mb-2">Host</p>

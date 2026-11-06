@@ -8,7 +8,10 @@
  *   visit_requests  PENDING / APPROVED / SCHEDULED, no check-in → EXPIRED
  *   gate_passes     ISSUED                                       → EXPIRED
  *
- * Visits with a check-in are left alone (completed / still inside / refused at the gate).
+ * A visitor checked in but never checked out at the gate is checked out automatically
+ * once the visit date has passed — like a normal check-out: the visit log COMPLETED
+ * (check-out at the end of the visit day, no staff member, a note saying so), the
+ * request COMPLETED and the pass EXPIRED. So nobody stays "on premises" forever.
  *
  * Runs once per unit per IST day: from the scheduler (startReminderScheduler) and,
  * as a backstop, from the lists security and staff open (expireIfDue).
@@ -23,12 +26,41 @@ const istDate = (d = new Date()) =>
 const sweptOn = new Map();
 
 /**
- * Expires every past-dated visit and unused pass in one unit database.
+ * Expires every past-dated visit and unused pass in one unit database, and checks out
+ * visitors left "inside" after their visit date.
  * @param {object} db — unit pool
- * @returns {Promise<{ visits: number, passes: number }>}
+ * @returns {Promise<{ visits: number, passes: number, autoCheckedOut: number }>}
  */
 async function expirePastVisits(db) {
   const today = istDate();
+
+  // Checked in, never checked out, visit date over → closed like a check-out
+  const [closed] = await db.query(
+    `UPDATE visit_logs vl
+       JOIN visit_requests vr ON vr.id = vl.visit_request_id
+        SET vl.status = 'COMPLETED',
+            vl.check_out_at = TIMESTAMP(vr.visit_date, '23:59:59'),
+            vl.remarks = CONCAT_WS(' · ', NULLIF(vl.remarks, ''), 'Not checked out at the gate — checked out automatically after the visit date')
+      WHERE vl.status = 'ACTIVE' AND vr.visit_date < ?`,
+    [today]
+  );
+  if (closed.affectedRows) {
+    await db.query(
+      `UPDATE gate_passes gp
+         JOIN visit_requests vr ON vr.id = gp.visit_request_id
+          SET gp.status = 'EXPIRED', gp.qr_expires_at = LEAST(COALESCE(gp.qr_expires_at, NOW()), NOW())
+        WHERE gp.status = 'USED' AND vr.visit_date < ?`,
+      [today]
+    );
+    await db.query(
+      `UPDATE visit_requests vr
+          SET vr.status = 'COMPLETED'
+        WHERE vr.status IN ('APPROVED', 'SCHEDULED') AND vr.visit_date < ?
+          AND EXISTS (SELECT 1 FROM visit_logs vl WHERE vl.visit_request_id = vr.id AND vl.status = 'COMPLETED')`,
+      [today]
+    );
+  }
+
   const [passes] = await db.query(
     `UPDATE gate_passes gp
        JOIN visit_requests vr ON vr.id = gp.visit_request_id
@@ -43,7 +75,7 @@ async function expirePastVisits(db) {
         AND NOT EXISTS (SELECT 1 FROM visit_logs vl WHERE vl.visit_request_id = vr.id)`,
     [today]
   );
-  return { visits: visits.affectedRows, passes: passes.affectedRows };
+  return { visits: visits.affectedRows, passes: passes.affectedRows, autoCheckedOut: closed.affectedRows };
 }
 
 /** Sweeps this unit DB if it hasn't been swept today. Never throws (lists must still load). */

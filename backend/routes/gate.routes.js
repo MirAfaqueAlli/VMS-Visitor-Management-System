@@ -34,6 +34,14 @@ router.get(
   gateController.getActiveVisitors
 );
 
+// GET /api/gate/upcoming — approved visits from today on (gate "Upcoming visits")
+router.get(
+  '/upcoming',
+  protect,
+  authorize('unit_admin', 'security', 'receptionist'),
+  gateController.getUpcoming
+);
+
 // POST /api/gate/lookup — scanned QR / typed pass number → can this visitor check in now?
 router.post(
   '/lookup',

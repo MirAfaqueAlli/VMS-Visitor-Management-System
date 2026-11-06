@@ -51,6 +51,7 @@ const requestSchema = z.object({
   // Visitor's ID proof (required for personal, walk-in and vendor visits — checked at the gate)
   id_proof_type:   z.enum(ID_PROOF_TYPES).optional().nullable(),
   id_proof_number: z.string().trim().max(50).optional().nullable(),
+  id_proof_from_record: z.boolean().optional(),   // use the ID already on record for this mobile (server looks it up)
   // Conflict override
   force_create:   z.boolean().optional().default(false),
   // Companions
@@ -72,6 +73,7 @@ const requestSchema = z.object({
   })).optional().default([]),
 }).superRefine((data, ctx) => {
   if (!['PERSONAL_VISIT', 'SPOT', 'VENDOR'].includes(data.visit_category)) return;
+  if (data.id_proof_from_record) return;   // checked against the record in the controller
   const message = idProofError(data.id_proof_type, data.id_proof_number);
   if (message) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: [data.id_proof_type ? 'id_proof_number' : 'id_proof_type'], message });

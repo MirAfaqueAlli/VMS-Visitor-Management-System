@@ -14,6 +14,7 @@ import {
   Loader2,
   AlertTriangle,
   CreditCard,
+  Camera,
 } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
@@ -59,6 +60,13 @@ const addMinutesToTime = (timeStr, minutes = 30) => {
 };
 const isSpotId = (id) => id === "SPOT" || id === "SPOT_INDIVIDUAL" || id === "SPOT_BUSINESS";
 
+/** Where an ID proof / photo on record came from. */
+const RECORD_SOURCE = {
+  profile:        "the visitor's portal profile",
+  previous_visit: "an earlier visit",
+  request:        "an earlier request",
+};
+
 export default function NewRequest() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -78,9 +86,16 @@ export default function NewRequest() {
   const [visitorLookupState, setVisitorLookupState] = useState("idle"); // idle | loading | found | not_found
   const [foundVisitorData, setFoundVisitorData] = useState(null);
 
+  // ID proof / photo already on record for the looked-up mobile (portal profile or an earlier visit)
+  const [onRecord, setOnRecord] = useState(null);
+  const [retakePhoto, setRetakePhoto] = useState(false);
+  const idOnRecord = !!onRecord?.id_proof_type;
+
   const resetVisitorLookup = useCallback(() => {
     setVisitorLookupState("idle");
     setFoundVisitorData(null);
+    setOnRecord(null);
+    setRetakePhoto(false);
   }, []);
 
   // ── Vendor phone lookup state ────────────────────────────────────────────────
@@ -88,6 +103,8 @@ export default function NewRequest() {
 
   const resetVendorLookup = useCallback(() => {
     setVendorLookupState("idle");
+    setOnRecord(null);
+    setRetakePhoto(false);
   }, []);
 
   // ── EMPLOYEE_VISIT state ─────────────────────────────────────────────────────
@@ -246,6 +263,7 @@ export default function NewRequest() {
     try {
       const res = await apiClient.get("/visitors/lookup", { params: { phone } });
       const { found, visitor } = res.data.data;
+      setOnRecord(visitor?.on_record?.id_proof_type || visitor?.on_record?.photo_url ? visitor.on_record : null);
       if (found && visitor) {
         if (formData.visit_category === "PERSONAL_VISIT" && visitor.visitor_type && visitor.visitor_type !== "individual") {
           setVisitorLookupState("not_found");
@@ -291,6 +309,7 @@ export default function NewRequest() {
     try {
       const res = await apiClient.get("/visitors/lookup", { params: { phone } });
       const { found, visitor } = res.data.data;
+      setOnRecord(visitor?.on_record?.id_proof_type || visitor?.on_record?.photo_url ? visitor.on_record : null);
       if (found && visitor) {
         if (visitor.visitor_type && visitor.visitor_type !== "business") {
           setVendorLookupState("not_found");
@@ -617,7 +636,12 @@ export default function NewRequest() {
     const payload = { ...formData };
     const cat = payload.visit_category;
 
-    if (["PERSONAL_VISIT", "SPOT", "VENDOR"].includes(cat)) {
+    if (["PERSONAL_VISIT", "SPOT", "VENDOR"].includes(cat) && idOnRecord) {
+      // The ID on record is used as it is — the server looks it up (staff may only see it masked)
+      payload.id_proof_from_record = true;
+      delete payload.id_proof_type;
+      delete payload.id_proof_number;
+    } else if (["PERSONAL_VISIT", "SPOT", "VENDOR"].includes(cat)) {
       payload.id_proof_number = cleanIdNumber(payload.id_proof_type, payload.id_proof_number);
     } else {
       delete payload.id_proof_type;
@@ -757,7 +781,7 @@ export default function NewRequest() {
       document.getElementById("contact_person")?.focus();
       return;
     }
-    if (["PERSONAL_VISIT", "SPOT", "VENDOR"].includes(catNow)) {
+    if (["PERSONAL_VISIT", "SPOT", "VENDOR"].includes(catNow) && !idOnRecord) {
       const idError = idProofError(formData.id_proof_type, formData.id_proof_number, true);
       if (idError) {
         toast.error(`ID proof: ${idError}`);
@@ -1225,24 +1249,52 @@ export default function NewRequest() {
             <SectionTitle icon={CreditCard} title="ID proof and visitor photo"
               meta={isVendorBusiness ? "of the contact person" : "of the visitor"} />
             <div className="grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-x-4 gap-y-3 max-w-[720px]">
-              <Field label="ID type" required>
-                <Select value={formData.id_proof_type} aria-label="ID type"
-                  onChange={(e) => setFormData((p) => ({ ...p, id_proof_type: e.target.value }))}>
-                  {ID_PROOFS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </Select>
-              </Field>
-              <Field label="ID number" htmlFor="id_proof_number" required
-                error={idProofError(formData.id_proof_type, formData.id_proof_number)}
-                hint="Security checks the card against this at check-in.">
-                <input id="id_proof_number" type="text" required value={formData.id_proof_number}
-                  onChange={(e) => setFormData((p) => ({ ...p, id_proof_number: e.target.value }))}
-                  placeholder={ID_PROOFS.find((t) => t.value === formData.id_proof_type)?.placeholder}
-                  maxLength={formData.id_proof_type === "AADHAAR" ? 14 : 30} autoComplete="off"
-                  aria-invalid={!!idProofError(formData.id_proof_type, formData.id_proof_number) || undefined}
-                  className="control mono uppercase" />
-              </Field>
-              <Field label="Visitor photo (face)" hint="Optional — a photo of the person, not of the ID card. It can also be taken at check-in." className="sm:col-span-2">
-                <PhotoCapture value={visitorPhoto} onChange={setVisitorPhoto} label="Visitor photo" />
+              {idOnRecord ? (
+                <>
+                  {/* On record — shown, not edited (the gate checks the card against it) */}
+                  <Field label="ID type">
+                    <Select value={onRecord.id_proof_type} aria-label="ID type" disabled onChange={() => {}}>
+                      {ID_PROOFS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="ID number" hint={`On record from ${RECORD_SOURCE[onRecord.id_proof_source] || "an earlier record"} — it can't be changed here.`}>
+                    <input type="text" value={onRecord.id_proof_number || ""} disabled className="control mono" aria-label="ID number" />
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label="ID type" required>
+                    <Select value={formData.id_proof_type} aria-label="ID type"
+                      onChange={(e) => setFormData((p) => ({ ...p, id_proof_type: e.target.value }))}>
+                      {ID_PROOFS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="ID number" htmlFor="id_proof_number" required
+                    error={idProofError(formData.id_proof_type, formData.id_proof_number)}
+                    hint="Security checks the card against this at check-in.">
+                    <input id="id_proof_number" type="text" required value={formData.id_proof_number}
+                      onChange={(e) => setFormData((p) => ({ ...p, id_proof_number: e.target.value }))}
+                      placeholder={ID_PROOFS.find((t) => t.value === formData.id_proof_type)?.placeholder}
+                      maxLength={formData.id_proof_type === "AADHAAR" ? 14 : 30} autoComplete="off"
+                      aria-invalid={!!idProofError(formData.id_proof_type, formData.id_proof_number) || undefined}
+                      className="control mono uppercase" />
+                  </Field>
+                </>
+              )}
+              <Field label="Visitor photo (face)" className="sm:col-span-2"
+                hint={onRecord?.photo_url && !visitorPhoto
+                  ? `On record from ${RECORD_SOURCE[onRecord.photo_source] || "an earlier record"}. Take a new one only if it doesn't match.`
+                  : "Optional — a photo of the person, not of the ID card. It can also be taken at check-in."}>
+                {onRecord?.photo_url && !visitorPhoto && !retakePhoto ? (
+                  <div className="flex items-start gap-3">
+                    <img src={onRecord.photo_url} alt="Visitor photo on record" className="w-24 h-24 object-cover rounded border border-line" />
+                    <button type="button" onClick={() => setRetakePhoto(true)} className="btn-outline btn-sm mt-1">
+                      <Camera size={13} /> Take a new photo
+                    </button>
+                  </div>
+                ) : (
+                  <PhotoCapture value={visitorPhoto} onChange={setVisitorPhoto} label="Visitor photo" />
+                )}
               </Field>
             </div>
           </section>

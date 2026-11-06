@@ -12,7 +12,7 @@
  * The ID number comes back decrypted — callers mask it for roles that mustn't see it.
  */
 
-const { centralPool } = require('./dbManager');
+const { centralPool, getPool } = require('./dbManager');
 const { decryptField } = require('../utils/crypto.util');
 
 const PHONE_SQL = "RIGHT(REGEXP_REPLACE(COALESCE(%s, ''), '[^0-9]', ''), 10)";
@@ -86,4 +86,34 @@ async function visitorOnRecord(db, request) {
   return out;
 }
 
-module.exports = { visitorOnRecord };
+/**
+ * The ID proof and photo on record for a mobile number, before any request exists
+ * (the staff "new request" lookup): their portal profile, then this unit's records,
+ * then every other unit's.
+ *
+ * @param {string} phone
+ * @param {object} db      — the unit pool the request is being made in
+ * @param {string} dbName  — its DB name (skipped when looking at the other units)
+ */
+async function visitorRecordByPhone(phone, db, dbName) {
+  const probe = { id: 0, visitor_phone: phone };
+  const rec = await visitorOnRecord(db, probe);
+  if (rec.id_proof_type && rec.photo_path) return rec;
+  try {
+    const [units] = await centralPool.query("SELECT db_name FROM units WHERE is_active = 1 AND db_status = 'ACTIVE'");
+    for (const u of units) {
+      if (u.db_name === dbName) continue;
+      const other = await visitorOnRecord(getPool(u.db_name), probe);
+      if (!rec.id_proof_type && other.id_proof_type) {
+        Object.assign(rec, { id_proof_type: other.id_proof_type, id_proof_number: other.id_proof_number, id_proof_source: other.id_proof_source });
+      }
+      if (!rec.photo_path && other.photo_path) Object.assign(rec, { photo_path: other.photo_path, photo_source: other.photo_source });
+      if (rec.id_proof_type && rec.photo_path) break;
+    }
+  } catch (err) {
+    console.warn('[VisitorRecord] other units lookup failed:', err.message);
+  }
+  return rec;
+}
+
+module.exports = { visitorOnRecord, visitorRecordByPhone };

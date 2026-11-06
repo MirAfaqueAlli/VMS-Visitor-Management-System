@@ -3,8 +3,10 @@
 
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { isSuperAdmin, isUnitAdmin, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
-const { encryptField, decryptField, decryptRows } = require('../utils/crypto.util');
+const { encryptField, decryptField, decryptRows, maskIdNumber } = require('../utils/crypto.util');
+const { getSignedFileUrl } = require('../utils/s3.util');
 const { findExistingVisitorByPhone } = require('../services/visitorDirectory.service');
+const { visitorRecordByPhone } = require('../services/visitorRecord.service');
 
 // ── createVisitor ─────────────────────────────────────────────────────────────
 /**
@@ -278,6 +280,7 @@ const lookupVisitorByPhone = async (req, res) => {
     // Resolve the correct DB pool.
     // super_admin tokens use the centralPool — fall back to unit DB via unit_id param.
     let db = req.db;
+    let lookupDbName = req.unitDbName || req.user?.unit_db || null;
     const { getPool, centralPool, CENTRAL_DB_NAME } = require('../services/dbManager');
     const isCentralUser = req.user?.unit_db === 'central' || req.user?.unit_db === CENTRAL_DB_NAME || !req.user?.unit_db;
 
@@ -287,7 +290,7 @@ const lookupVisitorByPhone = async (req, res) => {
         const [unitRows] = await centralPool.query(
           'SELECT db_name FROM units WHERE id = ? AND is_active = 1 LIMIT 1', [targetUnitId]
         );
-        if (unitRows.length > 0) db = getPool(unitRows[0].db_name);
+        if (unitRows.length > 0) { db = getPool(unitRows[0].db_name); lookupDbName = unitRows[0].db_name; }
       }
       if (db === centralPool) {
         return sendSuccess(res, { found: false, visitor: null }, 'Cannot lookup from central admin context without unit_id.');
@@ -317,8 +320,24 @@ const lookupVisitorByPhone = async (req, res) => {
       [phone.trim(), cleaned, cleaned, last10]
     );
 
+    // Their ID proof and photo on record (portal profile, this unit, other units) — the form
+    // shows them; the ID number in full only for roles that check IDs
+    const withRecord = async (visitor) => {
+      const rec = await visitorRecordByPhone(last10, db, lookupDbName);
+      return {
+        ...visitor,
+        on_record: {
+          id_proof_type:   rec.id_proof_type,
+          id_proof_number: rec.id_proof_number && (canViewFullIdNumbers(req.user) ? rec.id_proof_number : maskIdNumber(rec.id_proof_number)),
+          id_proof_source: rec.id_proof_source,
+          photo_url:       rec.photo_path ? await getSignedFileUrl(rec.photo_path) : null,
+          photo_source:    rec.photo_source,
+        },
+      };
+    };
+
     if (rows.length > 0) {
-      return sendSuccess(res, { found: true, visitor: { ...rows[0], source: 'unit' } }, 'Previous visit record found.');
+      return sendSuccess(res, { found: true, visitor: await withRecord({ ...rows[0], source: 'unit' }) }, 'Previous visit record found.');
     }
 
     // ── Not in this unit: the same person is one visitor everywhere ──────────
@@ -330,7 +349,7 @@ const lookupVisitorByPhone = async (req, res) => {
       const a = accounts[0];
       return sendSuccess(res, {
         found: true,
-        visitor: { full_name: a.full_name, phone: a.phone, email: a.email || '', visitor_type: 'individual', source: 'portal' },
+        visitor: await withRecord({ full_name: a.full_name, phone: a.phone, email: a.email || '', visitor_type: 'individual', source: 'portal' }),
       }, 'Visitor found (visitor portal account).');
     }
 
@@ -339,14 +358,14 @@ const lookupVisitorByPhone = async (req, res) => {
     if (elsewhere) {
       return sendSuccess(res, {
         found: true,
-        visitor: {
+        visitor: await withRecord({
           full_name:    elsewhere.visitor_name,
           phone:        elsewhere.visitor_phone,
           email:        elsewhere.visitor_email || '',
           company_name: elsewhere.company_name || undefined,
           visitor_type: elsewhere.company_name ? 'business' : 'individual',
           source:       'other_unit',
-        },
+        }),
       }, 'Visitor found (another unit).');
     }
 

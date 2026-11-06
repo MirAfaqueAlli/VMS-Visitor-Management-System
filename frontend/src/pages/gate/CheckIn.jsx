@@ -57,6 +57,7 @@ export default function CheckIn() {
   const [loading,      setLoading]      = useState(true);
   const [submitting,   setSubmitting]   = useState(false);
   const [passVerified, setPassVerified] = useState(false);
+  const [autoVerified, setAutoVerified] = useState(null);   // 'walk-in' | 'lookup' — verified without a scan here
 
   // ── Step 1: verification mode & state ─────────────────────────────────────
   const [verifyMode,   setVerifyMode]   = useState(null); // null | 'webcam' | 'upload' | 'manual'
@@ -99,8 +100,12 @@ export default function CheckIn() {
           id_verified_number: data.id_proof_number && !/X{4}/.test(data.id_proof_number) ? data.id_proof_number : p.id_verified_number,
         }));
       }
-      if (handedPass && data?.pass_number === handedPass && !offDay(data)) {
+      // Verified already: checked by "Check in by pass", or a walk-in — registered here at
+      // the gate with the visitor present, so scanning the pass again proves nothing
+      const walkIn = data?.visit_category === "SPOT" && !!data?.pass_number;
+      if (((handedPass && data?.pass_number === handedPass) || walkIn) && !offDay(data)) {
         setPassVerified(true);
+        setAutoVerified(walkIn ? "walk-in" : "lookup");
         setFormData((p) => ({ ...p, pass_number: data.pass_number }));
       }
     } catch {
@@ -301,6 +306,7 @@ export default function CheckIn() {
   const resetVerification = () => {
     stopQrCamera();
     setPassVerified(false);
+    setAutoVerified(null);
     setQrDetected(false);
     setVerifyMode(null);
     setFormData(p => ({ ...p, pass_number: "" }));
@@ -483,8 +489,13 @@ export default function CheckIn() {
               <div className="inset-cell flex items-center gap-3 !bg-[var(--success-soft)]">
                 <CheckCircle2 size={18} className="text-success shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-medium text-success">Pass verified</p>
+                  <p className="text-[13px] font-medium text-success">
+                    {autoVerified === "walk-in" ? "Walk-in — verified automatically" : "Pass verified"}
+                  </p>
                   <p className="mono text-[12px] text-ink-2">{formData.pass_number}</p>
+                  {autoVerified === "walk-in" && (
+                    <p className="text-[11.5px] text-ink-2 mt-0.5">Registered at this gate with the visitor present — no scan needed.</p>
+                  )}
                 </div>
                 <button type="button" onClick={resetVerification} className="btn-ghost btn-sm">Scan again</button>
               </div>
@@ -562,18 +573,32 @@ export default function CheckIn() {
           {/* ══ Step 2: Photo ══ */}
           <section className={`section${stepCls}`} aria-disabled={!passVerified}>
             <SectionTitle icon={Camera} title="2 · Visitor photo" meta="Optional" />
-            {request.visitor_photo_path && !photoDataUrl && (
-              <p className="text-[12.5px] text-ink-2 mb-3">
-                Photo on record from {SOURCE_TEXT[request.photo_source] || "an earlier record"} (shown on the left) — it&apos;s saved with this check-in.
-                Take a new one only if it doesn&apos;t match the visitor.
-              </p>
-            )}
             <canvas ref={canvasRef} className="hidden" />
+
+            {/* Photo on record: shown here, saved with the check-in unless a new one is taken */}
+            {request.visitor_photo_path && !photoDataUrl && captureMode !== "camera" && (
+              <div className="flex items-start gap-4 mb-3">
+                <img src={request.visitor_photo_path} alt="Visitor photo on record" className="w-28 h-28 object-cover rounded-lg border border-line" />
+                <div className="space-y-1 pt-1 min-w-0">
+                  <p className="text-[13px] font-medium text-ink flex items-center gap-1.5">
+                    <Check size={14} weight="bold" className="text-success" /> Photo on record
+                  </p>
+                  <p className="text-[12px] text-muted">
+                    From {SOURCE_TEXT[request.photo_source] || "an earlier record"} — saved with this check-in.
+                    Take a new one only if it doesn&apos;t match the visitor.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {!photoDataUrl && captureMode !== "camera" && (
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={startCamera} className="btn-outline"><Camera size={14} /> Use camera</button>
-                <button type="button" onClick={() => fileRef.current?.click()} className="btn-outline"><Upload size={14} /> Upload photo</button>
+                <button type="button" onClick={startCamera} className="btn-outline">
+                  <Camera size={14} /> {request.visitor_photo_path ? "Take a new photo" : "Use camera"}
+                </button>
+                <button type="button" onClick={() => fileRef.current?.click()} className="btn-outline">
+                  <Upload size={14} /> {request.visitor_photo_path ? "Upload a new photo" : "Upload photo"}
+                </button>
                 <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFileUpload} className="hidden" />
               </div>
             )}

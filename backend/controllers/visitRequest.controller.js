@@ -13,7 +13,7 @@ const { isSuperAdmin, isUnitAdmin, isEmployee, canViewFullIdNumbers } = require(
 const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
 const { emitToUser, emitToUnitSecurity, emitToUnitAdmins } = require('../socket/socketManager');
 const { encryptField, decryptRows, maskIdNumber } = require('../utils/crypto.util');
-const { visitorOnRecord } = require('../services/visitorRecord.service');
+const { visitorOnRecord, visitorRecordByPhone } = require('../services/visitorRecord.service');
 const { getSignedFileUrl, uploadToS3 } = require('../utils/s3.util');
 const { cleanIdNumber } = require('../utils/idProof.util');
 const { squarePhoto } = require('../utils/photo.util');
@@ -194,10 +194,10 @@ const createRequest = async (req, res) => {
       service_type,
       work_order_ref,
       contact_person,
-      id_proof_type,
-      id_proof_number,
+      id_proof_from_record = false,
       force_create = false,
     } = req.body;
+    let { id_proof_type, id_proof_number } = req.body;
 
     const requester_user_id = req.user ? req.user.id : null;
     const typeCode = visit_category;
@@ -424,6 +424,17 @@ const createRequest = async (req, res) => {
         conn.release();
         return sendError(res, `Department (id=${effectiveDeptId}) does not exist in this unit's database. Please refresh and select a valid department.`, 422);
       }
+    }
+
+    // ── ID proof already on record for this mobile (the form shows it locked) ──
+    if (id_proof_from_record && ['PERSONAL_VISIT', 'SPOT', 'VENDOR'].includes(typeCode)) {
+      const rec = await visitorRecordByPhone(resolvedVisitorPhone || visitor_phone, db, req.unitDbName || req.user?.unit_db);
+      if (!rec.id_proof_type) {
+        conn.release();
+        return sendError(res, "No ID proof is on record for this mobile number — enter the visitor's ID.", 400);
+      }
+      id_proof_type   = rec.id_proof_type;
+      id_proof_number = rec.id_proof_number;
     }
 
     // ── Insert visit request (visitor_id = NULL — stored inline) ──────────────
@@ -1048,6 +1059,33 @@ const getRequest = async (req, res) => {
       const [[u]] = await centralPool.query('SELECT name, city, code FROM units WHERE id = ? LIMIT 1', [request.unit_id]);
       hostUnit = u || null;
     }
+    // An employee visiting: their own unit and department ("Employ 2 · IT, UNIT 1"), for the summary line
+    let visitorUnitName = null;
+    let visitorDeptName = null;
+    if (request.visit_category === 'EMPLOYEE_VISIT') {
+      try {
+        if (request.cross_unit_requester_id && request.requester_unit_id) {
+          const [[vu]] = await centralPool.query('SELECT name, db_name FROM units WHERE id = ? LIMIT 1', [request.requester_unit_id]);
+          visitorUnitName = vu?.name || null;
+          if (vu && request.request_source === 'SELF') {
+            const [[emp]] = await getPool(vu.db_name).query(
+              'SELECT d.name AS dept FROM users u LEFT JOIN departments d ON d.id = u.department_id WHERE u.id = ? LIMIT 1',
+              [request.cross_unit_requester_id]
+            );
+            visitorDeptName = emp?.dept || null;
+          }
+        } else {
+          visitorUnitName = hostUnit?.name || null;
+          if (request.request_source === 'SELF' && request.requester_user_id) {
+            const [[emp]] = await db.query(
+              'SELECT d.name AS dept FROM users u LEFT JOIN departments d ON d.id = u.department_id WHERE u.id = ? LIMIT 1',
+              [request.requester_user_id]
+            );
+            visitorDeptName = emp?.dept || null;
+          }
+        }
+      } catch (_) { /* summary only */ }
+    }
     return sendSuccess(res, {
       ...request,
       my_role: isHost ? 'HOST' : 'VISITOR',
@@ -1060,6 +1098,8 @@ const getRequest = async (req, res) => {
       photo_source:       onRecord.photo_source,
       last_check_in_at:   onRecord.last_check_in_at,
       host_unit_name: hostUnit?.name || null,
+      visitor_unit_name: visitorUnitName,
+      visitor_department_name: visitorDeptName,
       host_unit_city: hostUnit?.city || null,
       visit_day: visitDay(request.visit_date),     // 'past' | 'today' | 'future' (IST) — the gate warns off-day
       qr_code_path: await qrImageForPass(request), // signed S3 link, or drawn from the pass data
