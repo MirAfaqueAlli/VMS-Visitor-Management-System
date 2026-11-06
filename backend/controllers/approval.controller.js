@@ -13,7 +13,6 @@ const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager
 const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
 const { formatDate, formatTime } = require('../utils/displayFormat.util');
 const { expireForRequest, visitDay } = require('../services/visitExpiry.service');
-const { gatePassWhatsAppMedia } = require('../services/gatePassImage.service');
 
 /** Visit date for SMS / WhatsApp / dashboard text: "31 Oct 2026" (mysql2 returns a Date). */
 const textDate = (d) => {
@@ -123,7 +122,7 @@ async function notifyStaffOfApproval(db, request, { approver, passResult, visito
   }));
 }
 
-async function notifyCrossUnitRequester(request, { approved, actorName, remarks = null, passResult = null }) {
+async function notifyCrossUnitRequester(request, { approved, actorName, remarks = null, passResult = null, passDb = null }) {
   if (!request.cross_unit_requester_id || !request.requester_unit_id) return;
   try {
     const [units] = await centralPool.query(
@@ -169,12 +168,12 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
 
     if (requester.email && requester.email !== request.visitor_email) {
       if (approved) {
-        const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
+        // The gate pass is attached when the queue sends it (the pass lives in the host unit's DB)
         const tmpl = emailService.visitApprovedTemplate(
           requester.full_name, actorName, request.visit_date, '', passResult?.pass_number || null,
-          qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null, request.visit_start_time || null
+          passResult?.pass_number ? `cid:${emailService.GATE_PASS_QR_CID}` : null, request.visit_start_time || null
         );
-        await sendNotification({ db: requesterDb, recipientUserId: requester.id, recipientEmail: requester.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
+        await sendNotification({ db: requesterDb, recipientUserId: requester.id, recipientEmail: requester.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, gatePass: passResult, gatePassDb: passDb });
       } else {
         const tmpl = emailService.visitRejectedTemplate(requester.full_name, actorName, request.visit_date, remarks, request.visit_start_time || null);
         await sendNotification({ db: requesterDb, recipientUserId: requester.id, recipientEmail: requester.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
@@ -437,40 +436,39 @@ const approveRequest = async (req, res) => {
     const visitorPhone = request.visitor_phone || null;
     const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
     Promise.allSettled([
-      // Email visitor — QR attached inline (cid:) since the S3 bucket is private
+      // Email visitor — the queue attaches the real gate pass (and its QR in the body) when it sends
       ...(visitorEmail && ['EMPLOYEE_VISIT', 'SPOT', 'PERSONAL_VISIT', 'VENDOR'].includes(request.visitor_type_code)
         ? [(async () => {
-          const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
-          const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
+          const qrCodeSrc = passResult?.pass_number ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
           const tmpl = emailService.visitApprovedTemplate(
             visitorName || 'Visitor', user.full_name, request.visit_date, '',
             passResult?.pass_number || null, qrCodeSrc, request.visit_start_time || null
           );
-          return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
+          return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, gatePass: passResult });
         })()]
         : []),
       // SMS visitor (+ WhatsApp copy with the gate-pass picture and the portal link)
-      ...(visitorPhone ? [gatePassWhatsAppMedia(req.db, passResult).then((whatsappMedia) => {
+      ...(visitorPhone ? [(() => {
         const message = passResult?.pass_number
           ? `VMS: Your visit on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}. Gate Pass: ${passResult.pass_number}`
           : `VMS: Your visit on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}.`;
         return notify({
           visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
-          message, whatsappMedia,
+          message, gatePass: passResult,
           push: {
             title: 'Visit approved',
             body: `Your visit on ${[formatDate(request.visit_date), formatTime(request.visit_start_time)].filter(Boolean).join(', ')} to meet ${hostFullName || user.full_name} is approved.${passResult?.pass_number ? ` Gate pass ${passResult.pass_number} — show it at the gate.` : ''}`,
           },
           whatsappMessage: whatsappText({
             title: 'Visit approved', name: visitorName,
-            intro: `Your visit request has been approved by ${user.full_name}.${whatsappMedia ? ' Your gate pass is attached.' : ''}`,
+            intro: `Your visit request has been approved by ${user.full_name}.${passResult?.pass_number ? ' Your gate pass is attached.' : ''}`,
             details: [['Gate pass', passResult?.pass_number], ['Date', formatDate(request.visit_date)],
               ['Time', formatTime(request.visit_start_time)], ['To meet', hostFullName], ['Purpose', request.purpose]],
             notes: passResult?.pass_number ? VISITOR_NOTES : ['Carry a valid government photo ID.'],
             link: visitorPortalUrl(),
           }),
         });
-      })] : []),
+      })()] : []),
       // Dashboard — requester
       ...(request.requester_user_id && request.requester_user_id !== user.id
         ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}.` })]
@@ -480,7 +478,7 @@ const approveRequest = async (req, res) => {
       // Email + SMS — requester, host and unit admins
       notifyStaffOfApproval(req.db, request, { approver: user, passResult, visitorName, visitorEmail, visitorPhone }),
       // Cross-unit requester (lives in another unit's DB)
-      notifyCrossUnitRequester(request, { approved: true, actorName: user.full_name, passResult }),
+      notifyCrossUnitRequester(request, { approved: true, actorName: user.full_name, passResult, passDb: req.db }),
       // Audit log
       logAudit({ db: req.db, userId: user.id, action: 'APPROVE_REQUEST', module: 'APPROVAL', recordType: 'VISIT_REQUEST', recordId: request.id, ipAddress: req.ip, userAgent: req.headers['user-agent'] || null }),
     ]).catch(err => console.error('[ApprovalController] Background task error:', err.message));

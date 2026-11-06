@@ -151,6 +151,7 @@ initSocket(server);
 
 const { autoMigrate } = require('./services/databaseInit.service');
 const { startReminderScheduler } = require('./services/reminder.service');
+const { startMessageWorkers } = require('./services/messageQueue.service');
 
 async function start() {
   try {
@@ -158,6 +159,7 @@ async function start() {
     server.listen(PORT, () => {
       console.log(`[Server] VMS backend running on port ${PORT}`);
       startReminderScheduler(); // daily visit/approval reminders (tender 1.3)
+      startMessageWorkers();    // sends queued email / SMS / WhatsApp (services/messageQueue.service)
     });
   } catch (err) {
     console.error('[Server] Fatal error initializing database:', err.message);

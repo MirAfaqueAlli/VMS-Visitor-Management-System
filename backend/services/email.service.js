@@ -8,7 +8,16 @@ const { getFileBuffer } = require('../utils/s3.util');
 const { formatDateTime: displayDateTime, todayIST } = require('../utils/displayFormat.util');
 
 // ── Transporter ──────────────────────────────────────────────────────────────
+// Emails are sent by the message queue (services/messageQueue.service), EMAIL_CONCURRENCY
+// at a time — so the pool keeps that many SMTP connections open and reuses them.
+// Timeouts are bounded so a stuck send can't hold a queue slot for long.
 const transporter = nodemailer.createTransport({
+  pool: true,
+  maxConnections: Math.max(1, parseInt(process.env.EMAIL_CONCURRENCY, 10) || 3),
+  maxMessages: 100,
+  connectionTimeout: 30_000,
+  greetingTimeout: 30_000,
+  socketTimeout: 60_000,
   host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT, 10) || 587,
   secure: parseInt(process.env.SMTP_PORT, 10) === 465,
@@ -52,7 +61,7 @@ const htmlToText = (html) => String(html || '')
  * email gets a plain-text copy.
  *
  * @param {{ to: string, subject: string, html?: string, text?: string, attachments?: object[]|null }} options
- * @returns {Promise<{ success: boolean, error?: string }>}
+ * @returns {Promise<{ success: boolean, error?: string, retryable?: boolean }>}
  */
 const sendEmail = async ({ to, subject, html, text, attachments = null }) => {
   try {
@@ -71,9 +80,13 @@ const sendEmail = async ({ to, subject, html, text, attachments = null }) => {
     return { success: true };
   } catch (err) {
     console.error('[EmailService] Failed to send email:', err.message);
-    return { success: false, error: err.message };
+    // Connection trouble or an SMTP 4xx ("try again later") is worth another try;
+    // a rejected address or a login failure is not
+    const temporary = TEMPORARY_SMTP.has(err.code) || (err.responseCode >= 400 && err.responseCode < 500);
+    return { success: false, error: err.message, retryable: temporary };
   }
 };
+const TEMPORARY_SMTP = new Set(['ETIMEDOUT', 'ECONNECTION', 'ECONNRESET', 'ECONNREFUSED', 'ESOCKET', 'EDNS', 'ETLS']);
 
 // ── Gate-pass QR as an inline attachment ─────────────────────────────────────
 // The S3 bucket is private, and signed links expire within hours, so the QR is

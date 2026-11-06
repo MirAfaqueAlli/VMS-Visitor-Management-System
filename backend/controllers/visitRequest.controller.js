@@ -21,7 +21,6 @@ const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../se
 const { formatDate, formatTime, formatDateTime } = require('../utils/displayFormat.util');
 const { expireForRequest, visitDay } = require('../services/visitExpiry.service');
 const { announceCancelled } = require('../services/visitEvents.service');
-const { gatePassWhatsAppMedia }     = require('../services/gatePassImage.service');
 const { qrImageForPass }            = require('../services/qrcode.service');
 
 // IST date helper (mirrors the one in approval.controller.js)
@@ -695,11 +694,10 @@ const createRequest = async (req, res) => {
           }
         } catch (_) {}
 
-        // Send Email to visitor with inline QR code gate pass
+        // Email the visitor — the queue attaches the real gate pass (and its QR in the body)
         if (effectiveVisitorEmail) {
           try {
-            const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
-            const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
+            const qrCodeSrc = passNum ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
             const tmpl = emailService.employeeHostedVisitTemplate(
               effectiveVisitorName,
               hostName,
@@ -717,7 +715,7 @@ const createRequest = async (req, res) => {
               type: 'EMAIL',
               subject: tmpl.subject,
               message: tmpl.html,
-              attachments: qrAttachment ? [qrAttachment] : null,
+              gatePass: passResult, gatePassDb: db,   // the pass lives in the host unit's DB
             });
           } catch (mailErr) {
             console.error('[VisitRequestController] Failed to send email to hosted visitor:', mailErr.message);
@@ -739,7 +737,7 @@ const createRequest = async (req, res) => {
                 title: 'You are invited for a visit',
                 body: `${hostName} has invited you on ${formatDateTime(visit_date, visit_start_time)}${hostUnitName ? ` at ${hostUnitName}` : ''}.${passNum ? ` Gate pass ${passNum}.` : ''}`,
               },
-              whatsappMedia: await gatePassWhatsAppMedia(db, passResult),   // the pass lives in the host unit's DB
+              gatePass: passResult, gatePassDb: db,   // the pass lives in the host unit's DB
               whatsappMessage: whatsappText({
                 title: 'You are invited for a visit', name: effectiveVisitorName,
                 intro: `${hostName} has invited you for a visit.${passNum ? ' Your gate pass is attached.' : ''}`,
@@ -792,10 +790,9 @@ const createRequest = async (req, res) => {
     } else if (typeCode === 'VENDOR') {
       if (vendor_email) {
         // QR is attached inline (cid:) — the S3 bucket is private
-        const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
-        const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
+        const qrCodeSrc = passResult?.pass_number ? `cid:${emailService.GATE_PASS_QR_CID}` : null;   // the queue attaches the real pass
         const tmpl = emailService.visitApprovedTemplate(contact_person || company_name || 'Vendor Team', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
-        await notify({ visitRequestId, recipientEmail: vendor_email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
+        await notify({ visitRequestId, recipientEmail: vendor_email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, gatePass: passResult });
       }
       if (resolvedVisitorPhone) {
         const message = `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}`;
@@ -804,7 +801,7 @@ const createRequest = async (req, res) => {
             title: 'Visit scheduled',
             body: `Your visit to meet ${host.full_name} on ${formatDateTime(visit_date, visit_start_time)} is scheduled.${passResult?.pass_number ? ` Gate pass ${passResult.pass_number}.` : ''}`,
           },
-          whatsappMedia: await gatePassWhatsAppMedia(db, passResult),
+          gatePass: passResult,
           whatsappMessage: whatsappText({
             title: 'Visit scheduled', name: contact_person || company_name,
             intro: `Your visit to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ' Your gate pass is attached.' : ''}`,
@@ -839,10 +836,9 @@ const createRequest = async (req, res) => {
     } else if (typeCode === 'PERSONAL_VISIT') {
       if (resolvedVisitorEmail) {
         // QR is attached inline (cid:) — the S3 bucket is private
-        const qrAttachment = await emailService.gatePassQrAttachment(passResult?.qr_code_path);
-        const qrCodeSrc    = qrAttachment ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
+        const qrCodeSrc = passResult?.pass_number ? `cid:${emailService.GATE_PASS_QR_CID}` : null;   // the queue attaches the real pass
         const tmpl = emailService.visitApprovedTemplate(resolvedVisitorName || 'Guest', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
-        await notify({ visitRequestId, recipientEmail: resolvedVisitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, attachments: qrAttachment ? [qrAttachment] : null });
+        await notify({ visitRequestId, recipientEmail: resolvedVisitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, gatePass: passResult });
       }
       if (resolvedVisitorPhone) {
         const message = `VMS: Your visit on ${visit_date}${timeStr} to meet ${host.full_name} has been APPROVED.${passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : ''}`;
@@ -851,7 +847,7 @@ const createRequest = async (req, res) => {
             title: 'Visit approved',
             body: `Your visit on ${formatDateTime(visit_date, visit_start_time)} to meet ${host.full_name} is approved.${passResult?.pass_number ? ` Gate pass ${passResult.pass_number} — show it at the gate.` : ''}`,
           },
-          whatsappMedia: await gatePassWhatsAppMedia(db, passResult),
+          gatePass: passResult,
           whatsappMessage: whatsappText({
             title: 'Visit approved', name: resolvedVisitorName,
             intro: `Your visit to meet ${host.full_name} has been approved.${passResult?.pass_number ? ' Your gate pass is attached.' : ''}`,

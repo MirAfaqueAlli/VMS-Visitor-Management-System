@@ -16,6 +16,10 @@
  * iCloudSMS delivery report if accepted messages don't arrive.
  *
  * Nothing here throws — callers get { success, error? }.
+ *
+ * Notifications reach here through the message queue (services/messageQueue.service),
+ * which retries a failure marked `retryable`. OTPs are sent directly — the person is
+ * waiting and is told at once if it failed.
  */
 
 const API_URL     = 'https://msg.icloudsms.com/rest/services/sendSMS/sendGroupSms';
@@ -45,13 +49,17 @@ async function postToGateway(number, message) {
     const res  = await fetch(`${API_URL}?${query}`, { signal: AbortSignal.timeout(10_000) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || String(data.responseCode) !== ACCEPTED) {
-      return { success: false, error: `iCloudSMS: ${data.response || `HTTP ${res.status}`} (code ${data.responseCode ?? 'none'})` };
+      // Gateway down (5xx) → try again; a rejected message → don't
+      return { success: false, error: `iCloudSMS: ${data.response || `HTTP ${res.status}`} (code ${data.responseCode ?? 'none'})`, retryable: res.status >= 500 };
     }
     return { success: true, messageId: data.response };
   } catch (err) {
-    return { success: false, error: `iCloudSMS request failed: ${err.message}` };
+    // No connection → try again. A timeout is not retried: the gateway may already have
+    // taken it, and a second copy would be a duplicate SMS.
+    return { success: false, error: `iCloudSMS request failed: ${err.message}`, retryable: err.name !== 'TimeoutError' };
   }
 }
+
 
 /** Sends a numeric OTP (wording of the sender's existing DLT OTP template). */
 const sendOtpSms = async (phone, otp) => {

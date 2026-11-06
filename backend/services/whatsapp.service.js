@@ -62,11 +62,13 @@ async function sendWhatsApp(phone, text, { mediaUrl = null } = {}) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !(data.success === true || data.status === 'success')) {
-      return { success: false, error: `Wishper: ${data.message || data.error || `HTTP ${res.status}`}` };
+      // Service down (5xx) → try again; a rejected message → don't
+      return { success: false, error: `Wishper: ${data.message || data.error || `HTTP ${res.status}`}`, retryable: res.status >= 500 };
     }
     return { success: true, messageId: data.queue_id ?? data.data?.queue_id ?? null };
   } catch (err) {
-    return { success: false, error: `Wishper request failed: ${err.message}` };
+    // No connection → try again; a timeout isn't (it may already have been taken — no duplicates)
+    return { success: false, error: `Wishper request failed: ${err.message}`, retryable: err.name !== 'TimeoutError' };
   }
 }
 

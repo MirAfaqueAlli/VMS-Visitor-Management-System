@@ -257,3 +257,28 @@ CREATE TABLE IF NOT EXISTS app_settings (
     setting_value TEXT          NOT NULL,
     updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+
+-- Outgoing email / SMS / WhatsApp queue (services/messageQueue.service). Every message
+-- is written here first and sent by background workers: in order, a few at a time,
+-- retried with backoff on temporary failures, kept as FAILED (dead letter) when it
+-- can't be delivered. Survives restarts. Sent rows are removed after 7 days, failed
+-- ones after 30.
+CREATE TABLE IF NOT EXISTS message_queue (
+    id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    channel         ENUM('EMAIL','SMS','WHATSAPP')            NOT NULL,
+    priority        TINYINT        NOT NULL DEFAULT 0,          -- higher goes first (1 = someone is waiting)
+    payload         JSON           NOT NULL,                    -- address, text, gate-pass reference (no files)
+    status          ENUM('QUEUED','SENDING','SENT','FAILED')  NOT NULL DEFAULT 'QUEUED',
+    attempts        INT            NOT NULL DEFAULT 0,
+    max_attempts    INT            NOT NULL DEFAULT 5,
+    available_at    DATETIME(3)    NOT NULL DEFAULT CURRENT_TIMESTAMP(3),   -- not before (retry backoff)
+    locked_by       VARCHAR(100)   NULL,                        -- worker sending it (host:pid)
+    locked_at       DATETIME       NULL,
+    last_error      VARCHAR(1000)  NULL,
+    unit_db         VARCHAR(64)    NULL,                        -- the notifications row to update
+    notification_id BIGINT UNSIGNED NULL,
+    created_at      DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at         DATETIME       NULL,
+    KEY idx_mq_due (channel, status, priority, available_at, id),
+    KEY idx_mq_cleanup (status, created_at)
+);

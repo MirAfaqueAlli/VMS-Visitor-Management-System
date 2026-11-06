@@ -8,7 +8,8 @@ const jwt    = require('jsonwebtoken');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { logAudit }               = require('../utils/auditLogger.util');
-const { sendEmail, passwordResetTemplate } = require('../services/email.service');
+const { passwordResetTemplate } = require('../services/email.service');
+const { queueEmail } = require('../services/messageQueue.service');
 
 // Password-reset tokens are stored only as SHA-256 hashes
 const hashToken = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
@@ -420,7 +421,9 @@ const forgotPassword = async (req, res) => {
 
     const resetUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/reset-password?token=${resetToken}`;
     const { subject, html } = passwordResetTemplate(resetUrl, RESET_TOKEN_TTL_MINUTES);
-    sendEmail({ to: user.email, subject, html }).catch(() => {});
+    // Queued (retried if the mail server is busy), ahead of notification emails
+    queueEmail({ to: user.email, subject, html }, { priority: 1 })
+      .catch((err) => console.error('[Auth] password reset email not queued:', err.message));
     if (process.env.NODE_ENV !== 'production') {
       console.log(`\n[Auth] 🔑 Dev Mode password reset link for ${user.email}: ${resetUrl}\n`);
     }

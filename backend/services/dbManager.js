@@ -138,7 +138,14 @@ async function closeAll() {
   }
 }
 
+/** The database name of a pool from getPool() (e.g. req.db), or null. */
+function dbNameOf(pool) {
+  if (!pool) return null;
+  for (const [dbName, p] of pools.entries()) if (p === pool) return dbName;
+  return pool.pool?.config?.connectionConfig?.database || null;
+}
+
 module.exports = {
   getPool, getActiveUnitPoolByDbName, centralPool, CENTRAL_DB_NAME,
-  provisionUnitDb, queryAllUnits, closeAll,
+  provisionUnitDb, queryAllUnits, closeAll, dbNameOf,
 };
