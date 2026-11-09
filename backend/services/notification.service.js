@@ -29,8 +29,9 @@ const { enqueueMessage }     = require('./messageQueue.service');
  * @param {object|null}  opts.gatePass        — the gate pass to send with it ({ gate_pass_id, pass_number,
  *                                              qr_code_path } from generateGatePass). Stored as a reference
  *                                              and built when sent: EMAIL attaches the real gate pass (its QR
- *                                              in the body where the HTML has cid:gatepass-qr); the WhatsApp
- *                                              copy of an SMS carries the gate-pass picture.
+ *                                              in the body where the HTML has cid:gatepass-qr). On WhatsApp the
+ *                                              pass follows the message as a picture of its own, so the message
+ *                                              arrives even if the picture can't be delivered.
  * @param {object|null}  opts.gatePassDb      — the pool the pass was issued in, when not `db`
  * @param {string|null}  opts.whatsappMedia   — a ready media link for the WhatsApp copy (instead of gatePass)
  * @param {string|null}  opts.whatsappMessage — text for the WhatsApp copy (whatsapp.whatsappText); without
@@ -145,10 +146,20 @@ const sendNotification = async ({
       queued = true;
     } else if (type === 'WHATSAPP') {
       if (!recipientPhone) throw new Error('recipientPhone required for WHATSAPP notifications');
-      await enqueueMessage({
-        channel: 'WHATSAPP', unitDb: unitDbName, notificationId,
-        payload: { phone: recipientPhone, text: message, mediaUrl: whatsappMedia || null, gatePass: passRef?.unitDb ? passRef : null },
-      });
+      // The message on its own…
+      await enqueueMessage({ channel: 'WHATSAPP', unitDb: unitDbName, notificationId, payload: { phone: recipientPhone, text: message } });
+      // …then the gate pass as a picture of its own, a few seconds later (after the message).
+      // If the picture can't be delivered, the visitor still has the message and the portal link.
+      if (whatsappMedia || passRef?.unitDb) {
+        await enqueueMessage({
+          channel: 'WHATSAPP', delaySeconds: 5,
+          payload: {
+            phone: recipientPhone,
+            text: `*Gate pass${passRef?.passNumber ? ` ${passRef.passNumber}` : ''}*\nShow this at the security gate on the day of your visit, with a valid photo ID.`,
+            mediaUrl: whatsappMedia || null, gatePass: passRef?.unitDb ? passRef : null,
+          },
+        });
+      }
       queued = true;
     }
   } catch (err) {

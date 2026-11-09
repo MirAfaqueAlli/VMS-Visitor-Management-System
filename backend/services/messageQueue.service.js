@@ -100,6 +100,8 @@ const CHANNELS = {
         mediaUrl = await gatePassWhatsAppMedia(getPool(p.gatePass.unitDb), {
           gate_pass_id: p.gatePass.gatePassId, qr_code_path: p.gatePass.qrCodePath,
         });
+        // This message *is* the pass — without the picture there's nothing to send yet
+        if (!mediaUrl) return { success: false, error: 'The gate-pass picture could not be made or stored.', retryable: true };
       }
       return whatsapp.sendWhatsApp(p.phone, p.text, { mediaUrl });
     },
@@ -122,13 +124,14 @@ let started = false;
  * @param {number}  [o.priority=0]   — 1 when someone is waiting for it (password reset)
  * @param {string}  [o.unitDb]       — with notificationId: the notifications row to update
  * @param {number}  [o.notificationId]
+ * @param {number}  [o.delaySeconds=0] — not before (e.g. so a follow-up goes after the message it follows)
  */
-async function enqueueMessage({ channel, payload, priority = 0, unitDb = null, notificationId = null }) {
+async function enqueueMessage({ channel, payload, priority = 0, unitDb = null, notificationId = null, delaySeconds = 0 }) {
   if (!CHANNELS[channel]) throw new Error(`Unknown message channel: ${channel}`);
   const [r] = await centralPool.query(
-    `INSERT INTO message_queue (channel, priority, payload, max_attempts, unit_db, notification_id)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [channel, priority, JSON.stringify(payload), MAX_ATTEMPTS, unitDb, notificationId]
+    `INSERT INTO message_queue (channel, priority, payload, max_attempts, unit_db, notification_id, available_at)
+     VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(NOW(3), INTERVAL ? SECOND))`,
+    [channel, priority, JSON.stringify(payload), MAX_ATTEMPTS, unitDb, notificationId, Math.max(0, delaySeconds)]
   );
   if (started) setImmediate(() => pump(channel));   // this process takes it at once; others on their next poll
   return r.insertId;

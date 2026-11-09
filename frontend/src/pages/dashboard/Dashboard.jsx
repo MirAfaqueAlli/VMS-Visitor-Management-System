@@ -17,6 +17,8 @@ import useAuth from "../../hooks/useAuth";
 import useSocketEvent from "../../hooks/useSocketEvent";
 import { useSocket } from "../../context/SocketContext";
 import { PageHeader, SectionTitle, Status, Tag, State, Empty, Spinner, Modal, Field, KV, SearchInput, Live } from "../../components/ui";
+import ScheduleConflictModal from "../../components/shared/ScheduleConflictModal";
+import { hostConflictOf } from "../../lib/approvalConflict";
 import Select from "../../components/Select";
 import { fmtDate, fmtTime, fmtClock, fmtNumber, orDash } from "../../lib/format";
 import { describe } from "../../lib/status";
@@ -115,25 +117,37 @@ function RemarksModal({ mode, onConfirm, onCancel, loading }) {
 const timeOf = (v) => (v.visit_start_time ? fmtTime(v.visit_start_time) : "Any time");
 
 function useApprovalModal(onDone) {
-  const [modalState, setModalState] = useState(null); // null | { mode, id, loading }
+  // null | { mode, id, loading, remarks?, conflict? } — conflict: the host already has a visit then
+  const [modalState, setModalState] = useState(null);
   const open = (mode, id) => setModalState({ mode, id, loading: false });
-  const confirm = async (remarks) => {
+  const confirm = async (remarks, force = false) => {
     if (!modalState) return;
     const { mode, id } = modalState;
-    setModalState((p) => ({ ...p, loading: true }));
+    setModalState((p) => ({ ...p, loading: true, remarks }));
     try {
-      await apiClient.put(`/approvals/${id}/${mode}`, { remarks: remarks || undefined });
+      await apiClient.put(`/approvals/${id}/${mode}`, { remarks: remarks || undefined, force_approve: force || undefined });
       toast.success(mode === "approve" ? "Request approved — the gate pass has been sent to the visitor." : "Request rejected — the visitor has been told.");
       setModalState(null);
       onDone();
     } catch (err) {
+      // Host already booked then → ask: keep it pending, or approve anyway
+      const conflict = mode === "approve" && !force ? hostConflictOf(err) : null;
+      if (conflict) {
+        setModalState((p) => ({ ...p, loading: false, conflict }));
+        return;
+      }
       toast.error(err?.response?.data?.message || `Failed to ${mode} the request.`);
       setModalState((p) => ({ ...p, loading: false }));
     }
   };
   const modal = (
-    <RemarksModal key={modalState ? `${modalState.mode}-${modalState.id}` : "none"} mode={modalState?.mode ?? null}
-      loading={modalState?.loading ?? false} onConfirm={confirm} onCancel={() => setModalState(null)} />
+    <>
+      <RemarksModal key={modalState ? `${modalState.mode}-${modalState.id}` : "none"}
+        mode={modalState && !modalState.conflict ? modalState.mode : null}
+        loading={modalState?.loading ?? false} onConfirm={confirm} onCancel={() => setModalState(null)} />
+      <ScheduleConflictModal conflict={modalState?.conflict ?? null} busy={modalState?.loading ?? false}
+        onApproveAnyway={() => confirm(modalState?.remarks, true)} onKeepPending={() => setModalState(null)} />
+    </>
   );
   return { open, modal };
 }

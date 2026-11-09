@@ -11,6 +11,7 @@
  * missing picture never stops the message.
  */
 
+require('../utils/fonts.util');   // the app's own fonts (no boxes on a server without fonts) — before sharp
 const fs     = require('fs');
 const path   = require('path');
 const sharp  = require('sharp');
@@ -25,7 +26,7 @@ const LOGO = fs.readFileSync(path.join(__dirname, '../assets/ohpc-logo.svg'));
 const MEDIA_LINK_HOURS = 12;   // same as the QR link: queued WhatsApp sends may wait
 const WIDTH = 1080;
 const NAVY = '#13315c';
-const FONT = 'Arial, Helvetica, DejaVu Sans, Liberation Sans, sans-serif';
+const FONT = 'Liberation Sans, Arial, Helvetica, sans-serif';   // Liberation Sans ships in assets/fonts
 
 const xml = (s) => String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

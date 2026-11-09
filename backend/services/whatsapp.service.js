@@ -13,9 +13,10 @@
  *   WISHPER_QUEUE     — default true: Wishper's anti-ban queue (rate-limited delivery)
  *   WHATSAPP_ENABLED  — set to false to switch WhatsApp off without removing the key
  *
- * API: POST {WISHPER_API_URL}/v2/send  { recipient, text, media?, queue?, session? }
- * with the key in the x-api-key header. Success: { success: true, queue_id }.
- * Errors: 400 missing field, 401 invalid API key, 404 no linked WhatsApp number
+ * API: POST {WISHPER_API_URL}/v2/send  { apikey, recipient, text, media?, queue?, session? }
+ * (the key also in the x-api-key header). Success: { status: 'success', queue_id }.
+ * Errors: 400 missing field, 401 "Invalid API Key" (the key doesn't exist or was
+ * deactivated — check it in the Wishper dashboard), 404 no linked WhatsApp number
  * (scan the QR in the Wishper dashboard). Nothing here throws — callers get
  * { success, error? }.
  */
@@ -48,7 +49,8 @@ async function sendWhatsApp(phone, text, { mediaUrl = null } = {}) {
   const recipient = toRecipient(phone);
   if (recipient.length < 11 || recipient.length > 15) return { success: false, error: 'Invalid mobile number.' };
 
-  const body = { recipient, text, queue: process.env.WISHPER_QUEUE !== 'false' };
+  // The key in the body (Wishper's documented way) and in the x-api-key header (also accepted)
+  const body = { apikey: process.env.WISHPER_API_KEY, recipient, text, queue: process.env.WISHPER_QUEUE !== 'false' };
   if (mediaUrl) body.media = mediaUrl;
   if (process.env.WISHPER_SESSION) body.session = process.env.WISHPER_SESSION;
 

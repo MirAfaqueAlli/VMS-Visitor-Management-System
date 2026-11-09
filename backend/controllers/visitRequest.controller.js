@@ -19,6 +19,7 @@ const { cleanIdNumber } = require('../utils/idProof.util');
 const { squarePhoto } = require('../utils/photo.util');
 const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
 const { formatDate, formatTime, formatDateTime } = require('../utils/displayFormat.util');
+const { unitLabel } = require('../utils/unitLabel.util');
 const { expireForRequest, visitDay } = require('../services/visitExpiry.service');
 const { announceCancelled } = require('../services/visitEvents.service');
 const { qrImageForPass }            = require('../services/qrcode.service');
@@ -740,7 +741,7 @@ const createRequest = async (req, res) => {
               gatePass: passResult, gatePassDb: db,   // the pass lives in the host unit's DB
               whatsappMessage: whatsappText({
                 title: 'You are invited for a visit', name: effectiveVisitorName,
-                intro: `${hostName} has invited you for a visit.${passNum ? ' Your gate pass is attached.' : ''}`,
+                intro: `${hostName} has invited you for a visit.${passNum ? ' Your gate pass follows in the next message.' : ''}`,
                 details: [['Gate pass', passNum], ['Date', formatDate(visit_date)], ['Time', formatTime(visit_start_time)],
                   ['Invited by', hostName], ['Unit', hostUnitName]],
                 notes: passNum ? VISITOR_NOTES : [],
@@ -791,7 +792,7 @@ const createRequest = async (req, res) => {
       if (vendor_email) {
         // QR is attached inline (cid:) — the S3 bucket is private
         const qrCodeSrc = passResult?.pass_number ? `cid:${emailService.GATE_PASS_QR_CID}` : null;   // the queue attaches the real pass
-        const tmpl = emailService.visitApprovedTemplate(contact_person || company_name || 'Vendor Team', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
+        const tmpl = emailService.visitApprovedTemplate(contact_person || company_name || 'Vendor Team', host.full_name, visit_date, await unitLabel(effectiveUnitId), passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
         await notify({ visitRequestId, recipientEmail: vendor_email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, gatePass: passResult });
       }
       if (resolvedVisitorPhone) {
@@ -804,7 +805,7 @@ const createRequest = async (req, res) => {
           gatePass: passResult,
           whatsappMessage: whatsappText({
             title: 'Visit scheduled', name: contact_person || company_name,
-            intro: `Your visit to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ' Your gate pass is attached.' : ''}`,
+            intro: `Your visit to meet ${host.full_name} is scheduled.${passResult?.pass_number ? ' Your gate pass follows in the next message.' : ''}`,
             details: [['Gate pass', passResult?.pass_number], ['Company', company_name], ['Date', formatDate(visit_date)],
               ['Time', formatTime(visit_start_time)], ['To meet', host.full_name], ['Purpose', purpose]],
             notes: passResult?.pass_number ? VISITOR_NOTES : ['Carry a valid government photo ID.'],
@@ -837,7 +838,7 @@ const createRequest = async (req, res) => {
       if (resolvedVisitorEmail) {
         // QR is attached inline (cid:) — the S3 bucket is private
         const qrCodeSrc = passResult?.pass_number ? `cid:${emailService.GATE_PASS_QR_CID}` : null;   // the queue attaches the real pass
-        const tmpl = emailService.visitApprovedTemplate(resolvedVisitorName || 'Guest', host.full_name, visit_date, '', passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
+        const tmpl = emailService.visitApprovedTemplate(resolvedVisitorName || 'Guest', host.full_name, visit_date, await unitLabel(effectiveUnitId), passResult?.pass_number || null, qrCodeSrc, visit_start_time || null);
         await notify({ visitRequestId, recipientEmail: resolvedVisitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, gatePass: passResult });
       }
       if (resolvedVisitorPhone) {
@@ -850,7 +851,7 @@ const createRequest = async (req, res) => {
           gatePass: passResult,
           whatsappMessage: whatsappText({
             title: 'Visit approved', name: resolvedVisitorName,
-            intro: `Your visit to meet ${host.full_name} has been approved.${passResult?.pass_number ? ' Your gate pass is attached.' : ''}`,
+            intro: `Your visit to meet ${host.full_name} has been approved.${passResult?.pass_number ? ' Your gate pass follows in the next message.' : ''}`,
             details: [['Gate pass', passResult?.pass_number], ['Date', formatDate(visit_date)],
               ['Time', formatTime(visit_start_time)], ['To meet', host.full_name], ['Purpose', purpose]],
             notes: passResult?.pass_number ? VISITOR_NOTES : ['Carry a valid government photo ID.'],

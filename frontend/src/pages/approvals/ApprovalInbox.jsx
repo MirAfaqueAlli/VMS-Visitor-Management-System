@@ -4,14 +4,16 @@
 // rows open the request; Approve / Reject is the row's real action.
 import { Fragment, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, X, Loader2, AlertTriangle, RefreshCw } from "../../components/icons";
+import { Check, X, Loader2, RefreshCw } from "../../components/icons";
+import ScheduleConflictModal from "../../components/shared/ScheduleConflictModal";
+import { hostConflictOf } from "../../lib/approvalConflict";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import Pagination from "../../components/shared/Pagination";
 import useSocketEvent from "../../hooks/useSocketEvent";
 import useAuth from "../../hooks/useAuth";
 import useTheme from "../../context/ThemeContext";
-import { PageHeader, StatStrip, Stat, Toolbar, Th, SkeletonRows, Tag, Modal, Note } from "../../components/ui";
+import { PageHeader, StatStrip, Stat, Toolbar, Th, SkeletonRows, Tag } from "../../components/ui";
 import useSort from "../../lib/useSort";
 import { fmtDate, fmtTime, relTime, orDash } from "../../lib/format";
 
@@ -48,12 +50,9 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess, onOpen }) {
       setConflictData(null);
       onActionSuccess(item.visit_request_id);
     } catch (err) {
-      const data = err.response?.data;
-      if (err.response?.status === 409 && data?.conflict && data?.host_conflict) {
-        setConflictData(data.host_conflict);
-      } else {
-        toast.error(data?.message || "Failed to approve request.");
-      }
+      const conflict = forceApprove ? null : hostConflictOf(err);
+      if (conflict) setConflictData(conflict);
+      else toast.error(err.response?.data?.message || "Failed to approve request.");
     } finally {
       setSubmitting(false);
     }
@@ -150,30 +149,9 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess, onOpen }) {
       )}
 
       {/* Schedule conflict: the host already has a visit at this time */}
-      <Modal
-        open={!!conflictData}
-        onClose={() => { setConflictData(null); setSubmitting(false); }}
-        busy={submitting}
-        width={440}
-        title="Schedule conflict"
-        footer={(
-          <>
-            <button type="button" className="btn-outline" onClick={() => { setConflictData(null); setSubmitting(false); }} disabled={submitting}>
-              Keep it pending
-            </button>
-            <button type="button" className="btn-primary" onClick={() => doApprove(true)} disabled={submitting}>
-              {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Approve anyway
-            </button>
-          </>
-        )}
-      >
-        {conflictData && (
-          <Note tone="warning" icon={AlertTriangle}>
-            <b>{conflictData.visitor_name}</b> is already visiting the host during <b>{conflictData.time_window}</b>.
-            Approving anyway books both visits at the same time.
-          </Note>
-        )}
-      </Modal>
+      <ScheduleConflictModal conflict={conflictData} busy={submitting}
+        onApproveAnyway={() => doApprove(true)}
+        onKeepPending={() => { setConflictData(null); setSubmitting(false); }} />
     </Fragment>
   );
 }

@@ -6,6 +6,10 @@
 // date even on a UTC cloud server. MySQL sessions are pinned too (services/dbManager.js).
 process.env.TZ = 'Asia/Kolkata';
 
+// Pictures drawn on the server (the gate pass) use the app's own fonts — a server
+// without fonts would print every letter as a box. Before anything loads sharp.
+require('./utils/fonts.util');
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');

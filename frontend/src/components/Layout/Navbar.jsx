@@ -16,6 +16,8 @@ import {
 } from '../icons';
 import usePushSetup, { PUSH_COPY } from '../../hooks/usePushSetup';
 import PushSetting from '../PushSetting';
+import ScheduleConflictModal from '../shared/ScheduleConflictModal';
+import { hostConflictOf } from '../../lib/approvalConflict';
 
 // Roles that have an approvals inbox (same as the /approvals route guard in App.jsx)
 const APPROVER_ROLES = ['unit_admin', 'employee'];
@@ -344,19 +346,31 @@ export default function Navbar({ onMenuToggle }) {
   }, [panelOpen, menuOpen]);
 
   /* ── Approve / reject from the panel ─────────────────────────────────── */
-  const handleAction = async (id, mode, remarks) => {
+  // conflict: { id, remarks, data } — the host already has a visit then; ask before approving
+  const [conflict, setConflict] = useState(null);
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const handleAction = async (id, mode, remarks, force = false) => {
     try {
       if (mode === 'approve') {
-        await apiClient.put(`/approvals/${id}/approve`, { remarks });
+        await apiClient.put(`/approvals/${id}/approve`, { remarks, force_approve: force || undefined });
         toast.success('Request approved — the gate pass has been sent to the visitor.');
       } else {
         await apiClient.put(`/approvals/${id}/reject`, { remarks });
         toast.success('Request rejected — the visitor has been told.');
       }
+      setConflict(null);
       fetchInbox(false);
     } catch (err) {
-      toast.error(err?.response?.data?.message || 'Could not update the request.');
+      const clash = mode === 'approve' && !force ? hostConflictOf(err) : null;
+      if (clash) setConflict({ id, remarks, data: clash });
+      else toast.error(err?.response?.data?.message || 'Could not update the request.');
     }
+  };
+  const approveAnyway = async () => {
+    if (!conflict) return;
+    setConflictBusy(true);
+    await handleAction(conflict.id, 'approve', conflict.remarks, true);
+    setConflictBusy(false);
   };
 
   const togglePanel = () => {
@@ -426,6 +440,8 @@ export default function Navbar({ onMenuToggle }) {
               </span>
             )}
           </button>
+          <ScheduleConflictModal conflict={conflict?.data ?? null} busy={conflictBusy}
+            onApproveAnyway={approveAnyway} onKeepPending={() => setConflict(null)} />
           {panelOpen && (
             <div ref={panelRef} className="absolute right-0 top-full mt-2 z-50 animate-dropdown">
               <NotificationPanel

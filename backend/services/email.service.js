@@ -326,14 +326,14 @@ const visitRequestTemplate = (visitorName, hostName, visitDate, purpose, orgName
 /**
  * Template: Approval confirmation sent to visitor.
  */
-const visitApprovedTemplate = (visitorName, hostName, visitDate, orgName, passNumber = null, qrCodeUrl = null, visitTime = null) => {
+const visitApprovedTemplate = (visitorName, hostName, visitDate, unitName, passNumber = null, qrCodeUrl = null, visitTime = null) => {
   const when = displayDateTime(visitDate, visitTime);
   const title = passNumber ? 'Visit approved – gate pass issued' : 'Visit approved';
   const body = greeting(visitorName)
     + para(`Your visit request has been <strong style="color:${C.success};">approved</strong>. The details of your visit are given below.`)
     + detailsTable([
       ['To meet', hostName],
-      ['Organisation / unit', orgName],
+      ['Unit', unitName],
       ['Date and time', when],
       ['Gate pass number', passNumber, { mono: true, bold: true }],
       ['Status', tag('APPROVED', 'success'), { html: true }],
