@@ -12,72 +12,19 @@ const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
 const { getSignedFileUrl, withSignedUrls } = require('../utils/s3.util');
 const { qrImageForPass } = require('../services/qrcode.service');
 const { expireForRequest } = require('../services/visitExpiry.service');
-const { visitorOnRecord } = require('../services/visitorRecord.service');
+const { loadPassRecord } = require('../services/gatePassPdf.service');
 const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
 
 // ── Helper: fetch a full gate pass row with joins ─────────────────────────────
-// qr_code_path is returned as a short-lived signed link (the S3 bucket is private)
+// The record is shared with the PDF pass sent to visitors (services/gatePassPdf), so
+// both always show the same. qr_code_path and the photo are returned as short-lived
+// signed links (the S3 bucket is private).
 async function fetchFullPass(db, passId) {
-  const [rows] = await db.query(
-    `SELECT gp.*,
-            vr.visit_date, vr.visit_start_time, vr.visit_end_time,
-            vr.purpose, vr.status AS request_status, vr.visit_category,
-            vr.visitor_name, vr.visitor_phone, vr.company_name,
-            vr.unit_id, vr.visitor_id, vr.id_proof_type, vr.id_proof_number, vr.visitor_photo_path AS request_photo_path,
-            COALESCE(v.full_name, vr.visitor_name) AS resolved_visitor_name,
-            h.full_name  AS host_name,
-            d.name       AS department_name
-     FROM gate_passes gp
-     JOIN visit_requests vr ON vr.id = gp.visit_request_id
-     JOIN users           h  ON h.id  = vr.host_user_id
-     LEFT JOIN departments d  ON d.id  = vr.department_id
-     LEFT JOIN visitors    v  ON v.id  = vr.visitor_id
-     WHERE gp.id = ?`,
-    [passId]
-  );
-  if (!rows[0]) return null;
-  const row = rows[0];
-
-  // Fetch unit name from central DB (units table lives in central, not unit DBs)
-  let unit_name = null;
-  let unit_code = null;
-  if (row.unit_id) {
-    try {
-      const [unitRows] = await centralPool.query(
-        'SELECT name, code FROM units WHERE id = ? LIMIT 1', [row.unit_id]
-      );
-      if (unitRows[0]) { unit_name = unitRows[0].name; unit_code = unitRows[0].code; }
-    } catch (_) { /* non-fatal */ }
-  }
-
-  // Fallback: extract unit code from pass_number (e.g., VMS-U1-20261022-97667)
-  if (!unit_name && row.pass_number) {
-    const match = row.pass_number.match(/^VMS-([A-Za-z0-9_]+)-/);
-    if (match) {
-      try {
-        const [unitRows] = await centralPool.query(
-          'SELECT name, code FROM units WHERE code = ? LIMIT 1', [match[1]]
-        );
-        if (unitRows[0]) {
-          unit_name = unitRows[0].name;
-          unit_code = unitRows[0].code;
-        }
-      } catch (_) {}
-    }
-  }
-
-  // The visitor's photo: the one taken at this visit's check-in, else the one on record
-  const [[thisVisit]] = await db.query(
-    'SELECT visitor_photo_path FROM visit_logs WHERE visit_request_id = ? AND visitor_photo_path IS NOT NULL ORDER BY id DESC LIMIT 1',
-    [row.visit_request_id]
-  );
-  const photoPath = thisVisit?.visitor_photo_path || (await visitorOnRecord(db, {
-    id: row.visit_request_id, visitor_id: row.visitor_id, visitor_phone: row.visitor_phone,
-    id_proof_type: row.id_proof_type, id_proof_number: row.id_proof_number, visitor_photo_path: row.request_photo_path,
-  })).photo_path;
-
+  const rec = await loadPassRecord(db, passId);
+  if (!rec) return null;
+  const { photo_path: photoPath, ...row } = rec;
   return {
-    ...row, unit_name, unit_code,
+    ...row,
     id_proof_number: undefined, request_photo_path: undefined,   // not needed on the pass
     visitor_photo_url: await getSignedFileUrl(photoPath),
     qr_code_path: await qrImageForPass(row),

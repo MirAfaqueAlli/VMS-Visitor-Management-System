@@ -10,8 +10,8 @@
  *  - Hosts with PENDING requests for today or tomorrow get one dashboard + email
  *    + SMS reminder per day.
  *  - Staff get one SMS + email listing today's approved visits: the host and the
- *    employee who raised each visit get theirs, unit admins get every visit in
- *    the unit.
+ *    employee who raised each visit get theirs. Unit admins get no list for being
+ *    admin (they follow the unit's visits in VMS) — only their own visits.
  *
  * Runs once per day, the first time the scheduler ticks after REMINDER_HOUR (IST,
  * default 7). A row in vms_central.scheduled_job_runs claims the day, so with
@@ -22,7 +22,7 @@
 const { centralPool, getPool } = require('./dbManager');
 const { sendNotification }     = require('./notification.service');
 const emailService             = require('./email.service');
-const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('./whatsapp.service');
+const { whatsappText, appUrl, visitorPortalLink, VISITOR_NOTES } = require('./whatsapp.service');
 const { formatTime }           = require('../utils/displayFormat.util');
 const { expireAllUnits }       = require('./visitExpiry.service');
 
@@ -42,9 +42,9 @@ function istDateAndHour(d = new Date()) {
 }
 
 /**
- * One SMS + email per staff member listing today's approved visits: hosts and
- * requesters get their own, unit admins get all of the unit's. A visit where the
- * staff member is the visitor themself (employee visit) is left out of their list.
+ * One SMS + email per staff member listing today's approved visits they host or
+ * raised (unit admins too — only their own, never the whole unit's). A visit where
+ * the staff member is the visitor themself (employee visit) is left out of their list.
  * Returns the number of people reminded.
  */
 async function remindStaffOfTodaysVisits(db, unit) {
@@ -61,17 +61,17 @@ async function remindStaffOfTodaysVisits(db, unit) {
   if (!visits.length) return 0;
 
   const ids = [...new Set(visits.flatMap(v => [v.host_user_id, v.requester_user_id]).filter(Boolean))];
+  if (!ids.length) return 0;
   const [staff] = await db.query(
-    `SELECT id, full_name, email, phone, role_type FROM users
-     WHERE is_active = 1 AND deleted_at IS NULL AND (role_type = 'unit_admin' OR id IN (?))`,
+    `SELECT id, full_name, email, phone FROM users
+     WHERE is_active = 1 AND deleted_at IS NULL AND id IN (?)`,
     [ids]
   );
 
   let reminded = 0;
   for (const s of staff) {
-    const isAdmin = s.role_type === 'unit_admin';
     const mine = visits.filter(v =>
-      (isAdmin || v.host_user_id === s.id || v.requester_user_id === s.id)
+      (v.host_user_id === s.id || v.requester_user_id === s.id)
       && !(s.email && v.visitor_email && s.email.toLowerCase() === v.visitor_email.toLowerCase()));
     if (!mine.length || (!s.email && !s.phone)) continue;
 
@@ -84,9 +84,7 @@ async function remindStaffOfTodaysVisits(db, unit) {
     const first = list[0];
     const sms = list.length === 1
       ? `VMS reminder: You have a visit today - ${first.visitor}${first.time ? ` at ${first.time}` : ''}${first.pass ? `. Gate Pass: ${first.pass}` : ''}.`
-      : isAdmin
-        ? `VMS reminder: ${list.length} approved visits are scheduled today at ${unit.name}. See VMS for details.`
-        : `VMS reminder: You have ${list.length} visits today: ${list.slice(0, 3).map(v => v.visitor).join(', ')}${list.length > 3 ? ' and more' : ''}. See VMS for details.`;
+      : `VMS reminder: You have ${list.length} visits today: ${list.slice(0, 3).map(v => v.visitor).join(', ')}${list.length > 3 ? ' and more' : ''}. See VMS for details.`;
 
     if (s.phone) {
       await sendNotification({
@@ -94,7 +92,7 @@ async function remindStaffOfTodaysVisits(db, unit) {
         whatsappMessage: whatsappText({
           title: 'Visits today', name: s.full_name,
           intro: list.length === 1 ? 'You have an approved visit today.'
-            : `${list.length} approved visits are scheduled today${isAdmin ? ` at ${unit.name}` : ''}.`,
+            : `${list.length} approved visits are scheduled today.`,
           notes: list.slice(0, 8).map((v) => `${v.time ? `${formatTime(v.time)} — ` : ''}${v.visitor}${v.pass ? ` (${v.pass})` : ''}`)
             .concat(list.length > 8 ? [`and ${list.length - 8} more`] : []),
           link: appUrl('/requests'), linkLabel: 'View in VMS',
@@ -102,7 +100,7 @@ async function remindStaffOfTodaysVisits(db, unit) {
       });
     }
     if (s.email) {
-      const tmpl = emailService.staffVisitsTodayTemplate(s.full_name, unit.name, list, isAdmin);
+      const tmpl = emailService.staffVisitsTodayTemplate(s.full_name, unit.name, list, false);
       await sendNotification({ db, recipientUserId: s.id, recipientEmail: s.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html });
     }
     reminded++;
@@ -125,7 +123,7 @@ async function runDailyReminders() {
       // ── 1. Visitors with an approved visit today ──────────────────────────
       const [visits] = await db.query(
         `SELECT vr.id, vr.visitor_name, vr.company_name, vr.visitor_phone, vr.visitor_email, vr.vendor_email,
-                vr.visit_date, vr.visit_start_time, h.full_name AS host_name, gp.pass_number
+                vr.visit_date, vr.visit_start_time, vr.visit_category, h.full_name AS host_name, gp.pass_number
          FROM visit_requests vr
          JOIN users h ON h.id = vr.host_user_id
          LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
@@ -154,7 +152,7 @@ async function runDailyReminders() {
               intro: 'This is a reminder of your visit scheduled for today.',
               details: [['Office', unit.name], ['To meet', v.host_name], ['Time', formatTime(v.visit_start_time)], ['Gate pass', v.pass_number]],
               notes: VISITOR_NOTES,
-              link: visitorPortalUrl(),
+              link: visitorPortalLink(v.visit_category),   // none for an employee's visit
             }),
           });
         }

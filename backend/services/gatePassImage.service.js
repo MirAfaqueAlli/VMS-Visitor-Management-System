@@ -2,7 +2,8 @@
 'use strict';
 
 /**
- * The gate pass as one picture, sent with the visitor's WhatsApp message: the OHPC
+ * Fallback only — visitors get the gate pass as a PDF (services/gatePassPdf), the pass
+ * security prints. If that can't be made, this picture is sent instead: the OHPC
  * logo, the pass QR, the pass number and the visit details. Drawn as SVG and turned
  * into a PNG with sharp, stored in S3 (gate-passes/<pass number>.png) and shared as
  * a signed link Wishper downloads.
@@ -20,7 +21,7 @@ const { centralPool } = require('./dbManager');
 const { signQRPayload } = require('../utils/qrToken.util');
 const { formatDate, formatTime } = require('../utils/displayFormat.util');
 const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
-const { gatePassMediaUrl, isWhatsAppConfigured, visitorPortalUrl } = require('./whatsapp.service');
+const { gatePassMediaUrl, isWhatsAppConfigured, visitorPortalLink } = require('./whatsapp.service');
 
 const LOGO = fs.readFileSync(path.join(__dirname, '../assets/ohpc-logo.svg'));
 const MEDIA_LINK_HOURS = 12;   // same as the QR link: queued WhatsApp sends may wait
@@ -36,7 +37,7 @@ const clip = (s, n) => { const t = String(s ?? '').trim(); return t.length > n ?
 async function loadPass(db, gatePassId) {
   const [rows] = await db.query(
     `SELECT gp.pass_number, gp.qr_code_data,
-            vr.visit_date, vr.visit_start_time, vr.visit_end_time, vr.purpose, vr.unit_id,
+            vr.visit_date, vr.visit_start_time, vr.visit_end_time, vr.purpose, vr.unit_id, vr.visit_category,
             vr.company_name,
             COALESCE(v.full_name, vr.visitor_name, vr.company_name) AS visitor_name,
             h.full_name AS host_name, d.name AS department_name
@@ -92,7 +93,7 @@ async function renderGatePassPng(pass) {
   const rowH = 58;
   const footY = rowsY + rows.length * rowH + 30;
   const HEIGHT = footY + 150;
-  const portal = visitorPortalUrl();
+  const portal = visitorPortalLink(pass.visit_category);   // none on an employee's pass
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}">
   <rect width="100%" height="100%" fill="#ffffff"/>
@@ -106,8 +107,8 @@ async function renderGatePassPng(pass) {
   <text x="90" y="${rowsY + 42 + i * rowH}" font-family="${FONT}" font-size="30" fill="#5b6b80">${xml(k)}</text>
   <text x="340" y="${rowsY + 42 + i * rowH}" font-family="${FONT}" font-size="32" font-weight="700" fill="#14213d">${xml(v)}</text>`).join('')}
   <rect x="0" y="${footY}" width="${WIDTH}" height="${HEIGHT - footY}" fill="#f2f5f9"/>
-  <text x="${WIDTH / 2}" y="${footY + 58}" text-anchor="middle" font-family="${FONT}" font-size="28" font-weight="700" fill="#14213d">Show this pass at the gate. Valid on the visit date only.</text>
-  <text x="${WIDTH / 2}" y="${footY + 106}" text-anchor="middle" font-family="${FONT}" font-size="26" fill="#5b6b80">Track your visit: ${xml(portal)}</text>
+  <text x="${WIDTH / 2}" y="${footY + (portal ? 58 : 84)}" text-anchor="middle" font-family="${FONT}" font-size="28" font-weight="700" fill="#14213d">Show this pass at the gate. Valid on the visit date only.</text>
+  ${portal ? `<text x="${WIDTH / 2}" y="${footY + 106}" text-anchor="middle" font-family="${FONT}" font-size="26" fill="#5b6b80">Track your visit: ${xml(portal)}</text>` : ''}
 </svg>`;
 
   return sharp(Buffer.from(svg))

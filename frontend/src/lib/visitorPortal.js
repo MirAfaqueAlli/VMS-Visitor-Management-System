@@ -62,5 +62,7 @@ export const portalError = (err, fallback) => err?.response?.data?.message || er
 export const localDay = (d) => (d ? new Date(d).toLocaleDateString("en-CA") : "");
 
 /** Visits still ahead that the visitor may act on. */
+/** Visits still ahead that the visitor may act on — not once they've checked in at the gate. */
 export const isUpcoming = (v) =>
-  localDay(v.visit_date) >= localDay(new Date()) && ["PENDING", "APPROVED", "SCHEDULED"].includes(v.status);
+  localDay(v.visit_date) >= localDay(new Date()) && ["PENDING", "APPROVED", "SCHEDULED"].includes(v.status)
+  && !(v.check_in_at && v.gate_status !== "GATE_REJECTED");

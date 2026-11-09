@@ -64,8 +64,11 @@ async function sendWhatsApp(phone, text, { mediaUrl = null } = {}) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !(data.success === true || data.status === 'success')) {
-      // Service down (5xx) → try again; a rejected message → don't
-      return { success: false, error: `Wishper: ${data.message || data.error || `HTTP ${res.status}`}`, retryable: res.status >= 500 };
+      // The account itself can't send — invalid / deactivated key (401), not allowed (403), no
+      // linked WhatsApp number (404), rate-limited (429) → the queue pauses WhatsApp and keeps
+      // the messages; service down (5xx) → try again; a rejected message → don't
+      const accountBlocked = [401, 403, 404, 429].includes(res.status);
+      return { success: false, error: `Wishper: ${data.message || data.error || `HTTP ${res.status}`}`, retryable: res.status >= 500, accountBlocked };
     }
     return { success: true, messageId: data.queue_id ?? data.data?.queue_id ?? null };
   } catch (err) {
@@ -147,6 +150,13 @@ function whatsappText({ title, name, intro, details = [], notes = [], link = nul
   ].filter(Boolean).join('\n\n');
 }
 
+/** Visits by OHPC employees (visit_requests.visit_category) — they use VMS itself, not the visitor portal. */
+const EMPLOYEE_VISITS = new Set(['EMPLOYEE_VISIT', 'INTER_UNIT_VISIT', 'INTER_UNIT_INVITE']);
+const isEmployeeVisit = (category) => EMPLOYEE_VISITS.has(String(category || '').toUpperCase());
+
+/** The visitor-portal link for a visit's messages — none for an employee's visit. */
+const visitorPortalLink = (category) => (isEmployeeVisit(category) ? null : visitorPortalUrl());
+
 /** The standard layout around an SMS text, for messages without a WhatsApp version of their own. */
 const whatsappFromSms = (sms) => whatsappText({
   intro: String(sms || '').replace(/^\s*(?:OHPC\s+)?VMS(\s+reminder)?\s*:\s*/i, (m, reminder) => (reminder ? 'Reminder: ' : '')),
@@ -154,5 +164,5 @@ const whatsappFromSms = (sms) => whatsappText({
 
 module.exports = {
   sendWhatsApp, gatePassMediaUrl, isWhatsAppConfigured, toRecipient,
-  appUrl, visitorPortalUrl, whatsappText, whatsappFromSms, VISITOR_NOTES,
+  appUrl, visitorPortalUrl, visitorPortalLink, isEmployeeVisit, whatsappText, whatsappFromSms, VISITOR_NOTES,
 };

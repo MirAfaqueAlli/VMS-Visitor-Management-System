@@ -30,8 +30,8 @@ const { enqueueMessage }     = require('./messageQueue.service');
  *                                              qr_code_path } from generateGatePass). Stored as a reference
  *                                              and built when sent: EMAIL attaches the real gate pass (its QR
  *                                              in the body where the HTML has cid:gatepass-qr). On WhatsApp the
- *                                              pass follows the message as a picture of its own, so the message
- *                                              arrives even if the picture can't be delivered.
+ *                                              pass PDF follows the message as a document of its own, so the
+ *                                              message arrives even if the document can't be delivered.
  * @param {object|null}  opts.gatePassDb      — the pool the pass was issued in, when not `db`
  * @param {string|null}  opts.whatsappMedia   — a ready media link for the WhatsApp copy (instead of gatePass)
  * @param {string|null}  opts.whatsappMessage — text for the WhatsApp copy (whatsapp.whatsappText); without

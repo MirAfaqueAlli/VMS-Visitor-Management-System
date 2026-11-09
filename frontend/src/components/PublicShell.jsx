@@ -55,8 +55,6 @@ function HeaderBar({ account, onSignOut }) {
 export default function PublicShell({ children, account, onSignOut }) {
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col">
-      {/* Firebase's invisible reCAPTCHA mounts here (hooks/usePhoneOtp) */}
-      <div id="recaptcha-container" style={{ position: "absolute", bottom: 0, left: 0 }} />
 
       <HeaderBar account={account} onSignOut={onSignOut} />
 

@@ -574,8 +574,9 @@ function EmployeeDashboard() {
   const [myTotal, setMyTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  /** silent: reload in place (live update) — no spinner, no error toast */
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [inboxRes, upcomingRes, totalRes] = await Promise.all([
         apiClient.get("/approvals/inbox"),
@@ -587,9 +588,9 @@ function EmployeeDashboard() {
       setUpcomingTotal(upcomingRes.data?.data?.pagination?.total ?? 0);
       setMyTotal(totalRes.data?.data?.pagination?.total ?? 0);
     } catch (err) {
-      toast.error(err?.response?.data?.message || "Failed to load dashboard.");
+      if (!silent) toast.error(err?.response?.data?.message || "Failed to load dashboard.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -607,10 +608,17 @@ function EmployeeDashboard() {
     toast(`New visit request from ${data.visitor_name || "a visitor"}.`, { duration: 4000 });
   }, []);
 
-  // Socket: I decided from another view → drop it
+  // Socket: I decided from another view → drop it (and an approval may add an upcoming visit)
   useSocketEvent("visit:actioned", (data) => {
     setInbox((prev) => prev.filter((i) => (i.visit_request_id ?? i.id) !== data.visit_request_id));
-  }, []);
+    fetchData(true);
+  }, [fetchData]);
+
+  // Socket: my visitor checked in → already here, no longer upcoming (whatever time was booked)
+  useSocketEvent("visit:checkin", (data) => {
+    setUpcomingVisits((prev) => prev.filter((v) => v._cross_unit_id || v.id !== data.visit_request_id));
+    fetchData(true);
+  }, [fetchData]);
 
   const approvals = useApprovalModal(fetchData);
 

@@ -61,9 +61,17 @@ const htmlToText = (html) => String(html || '')
  * email gets a plain-text copy.
  *
  * @param {{ to: string, subject: string, html?: string, text?: string, attachments?: object[]|null }} options
- * @returns {Promise<{ success: boolean, error?: string, retryable?: boolean }>}
+ * @returns {Promise<{ success: boolean, error?: string, retryable?: boolean, accountBlocked?: boolean }>}
+ *   accountBlocked — the mail provider is refusing the sending account itself (blocked for
+ *   unusual activity, quota reached, login rejected): every email would fail the same way,
+ *   so the message queue pauses email and keeps the messages instead of failing them.
  */
 const sendEmail = async ({ to, subject, html, text, attachments = null }) => {
+  // Test addresses (example.com …) always bounce — and bounces get a sending account blocked
+  const recipients = String(to || '').split(',').map((r) => r.trim()).filter(Boolean);
+  if (recipients.length && recipients.every(isReservedAddress)) {
+    return { success: false, error: `Test address (${recipients.join(', ')}) — not sent.`, retryable: false };
+  }
   try {
     const files = [...(attachments || [])];
     if (logoPng && html?.includes(`cid:${LOGO_CID}`)) {
@@ -80,13 +88,23 @@ const sendEmail = async ({ to, subject, html, text, attachments = null }) => {
     return { success: true };
   } catch (err) {
     console.error('[EmailService] Failed to send email:', err.message);
+    // The account itself refused → the queue pauses email (no point sending the rest now)
+    const accountBlocked = err.code === 'EAUTH' || ACCOUNT_REFUSED.test(String(err.message || ''));
     // Connection trouble or an SMTP 4xx ("try again later") is worth another try;
-    // a rejected address or a login failure is not
+    // a rejected address is not
     const temporary = TEMPORARY_SMTP.has(err.code) || (err.responseCode >= 400 && err.responseCode < 500);
-    return { success: false, error: err.message, retryable: temporary };
+    return { success: false, error: err.message, retryable: temporary, accountBlocked };
   }
 };
 const TEMPORARY_SMTP = new Set(['ETIMEDOUT', 'ECONNECTION', 'ECONNRESET', 'ECONNREFUSED', 'ESOCKET', 'EDNS', 'ETLS']);
+// e.g. Zoho "550 5.4.6 Unusual sending activity detected", Gmail "5.4.5 Daily user sending quota exceeded"
+const ACCOUNT_REFUSED = /unusual sending activity|sending (limit|quota)|quota exceeded|daily (user )?sending|rate limit|too many (messages|emails|mails|recipients)|account (is |has been )?(blocked|suspended|disabled|locked)|temporarily (blocked|suspended)|\b5\.4\.[56]\b/i;
+
+/** Domains reserved for examples and tests (RFC 2606 / 6761) — never real mailboxes. */
+function isReservedAddress(address) {
+  const domain = String(address).split('@')[1]?.toLowerCase().replace(/[>\s]/g, '') || '';
+  return /^(example\.(com|net|org))$/.test(domain) || /\.(example|test|invalid|localhost|local)$/.test(domain) || domain === 'localhost';
+}
 
 // ── Gate-pass QR as an inline attachment ─────────────────────────────────────
 // The S3 bucket is private, and signed links expire within hours, so the QR is

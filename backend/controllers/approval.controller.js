@@ -10,7 +10,7 @@ const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser, emitToUnitAdmins, emitGateChanged } = require('../socket/socketManager');
 const { getSignedFileUrl } = require('../utils/s3.util');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
-const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
+const { whatsappText, appUrl, visitorPortalLink, isEmployeeVisit, VISITOR_NOTES } = require('../services/whatsapp.service');
 const { formatDate, formatTime } = require('../utils/displayFormat.util');
 const { unitLabel } = require('../utils/unitLabel.util');
 const { expireForRequest, visitDay } = require('../services/visitExpiry.service');
@@ -80,17 +80,19 @@ function actionedToOthers(req, request, approver, payload) {
 const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
 
 /**
- * Approval email + SMS to the unit staff connected to the visit: the employee
- * who raised it, the host and the unit admins. Skips the approver, and anyone
- * who already got the visitor's own message (e.g. an employee visiting).
+ * Approval email + SMS to the unit staff on the visit: the employee who raised it
+ * and the host (not unit admins — they follow visits in VMS). Skips the approver,
+ * and anyone who already got the visitor's own message (e.g. an employee visiting).
  */
 async function notifyStaffOfApproval(db, request, { approver, passResult, visitorName, visitorEmail, visitorPhone }) {
+  // Only the people on this visit. Unit admins get no email / SMS / WhatsApp copy for
+  // being admin — they see it in VMS (bell, dashboard) instead.
   const ids = [request.requester_user_id, request.host_user_id].filter(Boolean);
+  if (!ids.length) return;
   const [staff] = await db.query(
     `SELECT id, full_name, email, phone FROM users
-     WHERE is_active = 1 AND deleted_at IS NULL AND id <> ?
-       AND (role_type = 'unit_admin'${ids.length ? ' OR id IN (?)' : ''})`,
-    ids.length ? [approver.id, ids] : [approver.id]
+     WHERE is_active = 1 AND deleted_at IS NULL AND id <> ? AND id IN (?)`,
+    [approver.id, ids]
   );
 
   const who      = visitorName || 'Visitor';
@@ -467,7 +469,7 @@ const approveRequest = async (req, res) => {
             details: [['Gate pass', passResult?.pass_number], ['Date', formatDate(request.visit_date)],
               ['Time', formatTime(request.visit_start_time)], ['To meet', hostFullName], ['Unit', unitText], ['Purpose', request.purpose]],
             notes: passResult?.pass_number ? VISITOR_NOTES : ['Carry a valid government photo ID.'],
-            link: visitorPortalUrl(),
+            link: visitorPortalLink(request.visitor_type_code),   // none for an employee's visit
           }),
         });
       })()] : []),
@@ -625,8 +627,10 @@ const rejectRequest = async (req, res) => {
           intro: 'We regret to inform you that your visit request has been declined.',
           details: [['Date', formatDate(request.visit_date)], ['Time', formatTime(request.visit_start_time)],
             ['To meet', hostInfo.full_name], ['Reason', remarks.trim()]],
-          notes: ['You may submit a fresh request on the visitor portal.'],
-          link: visitorPortalUrl(), linkLabel: 'Visitor portal',
+          notes: [isEmployeeVisit(request.visitor_type_code)
+            ? 'You may raise a fresh request in VMS.'
+            : 'You may submit a fresh request on the visitor portal.'],
+          link: visitorPortalLink(request.visitor_type_code), linkLabel: 'Visitor portal',
         }),
       })] : []),
 

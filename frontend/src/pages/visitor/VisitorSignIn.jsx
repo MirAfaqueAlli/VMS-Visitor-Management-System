@@ -265,8 +265,6 @@ export default function VisitorSignIn({ onSignedIn }) {
 
   return (
     <AuthLayout {...PORTAL_LAYOUT} maxWidth={mode === "register" ? 460 : 400}>
-      {/* Firebase's invisible reCAPTCHA mounts here (hooks/usePhoneOtp) */}
-      <div id="recaptcha-container" style={{ position: "absolute", bottom: 0, left: 0 }} />
 
       {/* ── Identify ── */}
       {mode === "identify" && (

@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import {
   AlertCircle, Calendar, Check, Loader2, Plus, QrCode, RefreshCw, User, Mail, Lock, Clock, Printer, CreditCard, Bell,
+  ChevronRight,
 } from "../../components/icons";
 import PushSetting from "../../components/PushSetting";
 import { VISITOR_PUSH_MESSAGE, visitorPushActive } from "../../lib/push";
@@ -316,14 +317,15 @@ function VisitsTab({ onNew }) {
               <Th sortKey="status" sort={sort} onSort={onSort}>Status</Th>
               <th>Gate</th>
               <th>Pass</th>
+              <th className="w-10"><span className="sr-only">View</span></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <SkeletonRows rows={5} cols={7} />
+              <SkeletonRows rows={5} cols={8} />
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="!p-0">
+                <td colSpan={8} className="!p-0">
                   <Empty
                     icon={Calendar}
                     title={visits.length ? "No visits match these filters" : "No visits yet"}
@@ -350,6 +352,14 @@ function VisitsTab({ onNew }) {
                 <td><Status value={v.status} /></td>
                 <td><GateCell v={v} /></td>
                 <td className="mono whitespace-nowrap">{v.pass_number || <span className="text-muted">—</span>}</td>
+                <td className="text-right">
+                  {/* Opens the visit's details (status, gate times, gate pass) in the side drawer */}
+                  <button type="button" className="btn-icon" title="View details"
+                    aria-label={`View the visit on ${fmtDate(v.visit_date)}`}
+                    onClick={(e) => { e.stopPropagation(); setOpen(v); }}>
+                    <ChevronRight size={15} />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

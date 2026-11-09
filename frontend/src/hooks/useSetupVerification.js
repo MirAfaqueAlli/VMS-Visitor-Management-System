@@ -5,7 +5,8 @@
 //            idToken and returns a proof token.
 // POST /setup needs both proof tokens.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RecaptchaVerifier, signInWithPhoneNumber, signOut } from 'firebase/auth';
+import { signInWithPhoneNumber, signOut } from 'firebase/auth';
+import { freshRecaptcha } from '../lib/recaptcha';
 import apiClient from '../api/axios';
 import { auth, DEV_PHONE_OTP } from '../utils/firebase';
 import { getApiErrorMessage } from '../utils/apiError';
@@ -25,14 +26,10 @@ const FIREBASE_ERRORS = {
 };
 const firebaseMessage = (err, fallback) => FIREBASE_ERRORS[err?.code] || getApiErrorMessage(err, fallback);
 
-/** Removes the invisible reCAPTCHA widget (a fresh one is needed for every SMS). */
+/** Removes the invisible reCAPTCHA (each SMS gets a fresh one on a new element — lib/recaptcha). */
 const clearVerifier = (ref) => {
-  try { ref.current?.clear(); } catch { /* already cleared */ }
+  ref.current?.dispose();
   ref.current = null;
-  // Wipe the DOM container so Firebase can inject a fresh widget on the next call.
-  // Without this, retrying OTP entry causes a RECAPTCHA failure error.
-  const container = document.getElementById('recaptcha-container');
-  if (container) container.innerHTML = '';
 };
 
 export default function useSetupVerification() {
@@ -79,9 +76,8 @@ export default function useSetupVerification() {
     }
 
     try {
-      // #recaptcha-container lives in index.html, outside React
-      verifierRef.current     = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' });
-      confirmationRef.current = await signInWithPhoneNumber(auth, `+91${number}`, verifierRef.current);
+      verifierRef.current     = freshRecaptcha(auth);   // { verifier, dispose } on a new element
+      confirmationRef.current = await signInWithPhoneNumber(auth, `+91${number}`, verifierRef.current.verifier);
       setPhone({ ...EMPTY, target: number, status: 'sent' });
       startPhoneWait();
     } catch (err) {

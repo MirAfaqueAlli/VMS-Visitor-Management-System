@@ -49,8 +49,12 @@ async function postToGateway(number, message) {
     const res  = await fetch(`${API_URL}?${query}`, { signal: AbortSignal.timeout(10_000) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || String(data.responseCode) !== ACCEPTED) {
-      // Gateway down (5xx) → try again; a rejected message → don't
-      return { success: false, error: `iCloudSMS: ${data.response || `HTTP ${res.status}`} (code ${data.responseCode ?? 'none'})`, retryable: res.status >= 500 };
+      const error = `iCloudSMS: ${data.response || `HTTP ${res.status}`} (code ${data.responseCode ?? 'none'})`;
+      // The account itself refused (unauthorised, no balance, blocked) → the queue pauses SMS
+      // and keeps the messages; gateway down (5xx) → try again; a rejected message → don't
+      const accountBlocked = String(data.responseCode) === '3009' || res.status === 401 || res.status === 403
+        || /unauthori[sz]ed|insufficient|balance|credit|blocked|suspend|expired/i.test(String(data.response || ''));
+      return { success: false, error, retryable: res.status >= 500, accountBlocked };
     }
     return { success: true, messageId: data.response };
   } catch (err) {

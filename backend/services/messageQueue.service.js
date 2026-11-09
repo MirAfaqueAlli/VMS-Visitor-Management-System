@@ -17,6 +17,13 @@
  *  Retries    a temporary failure (network, SMTP 4xx, gateway 5xx) is retried with
  *             exponential backoff + jitter (≈30 s, 2 min, 10 min, 30 min); a permanent
  *             one, or the last attempt, ends FAILED with the reason (dead letter).
+ *  Paused     when the provider refuses the *account* (mail blocked for unusual activity,
+ *             quota reached, login rejected, WhatsApp number unlinked…) every message would
+ *             fail the same way: the channel pauses (MESSAGE_PAUSE_MINUTES, 30) and the
+ *             messages stay queued — then one message tries again. Messages held for over
+ *             24 hours that way end FAILED (scripts/queue_retry.js can re-queue them).
+ *  Paced      at most <CHANNEL>_PER_MINUTE starts a minute (email 20, SMS 60, WhatsApp 20)
+ *             per process, so a burst doesn't look like spam to the provider.
  *  Durable    a restart or deploy loses nothing. A message left SENDING by a process that
  *             died is put back after 5 minutes (at-least-once delivery).
  *  Tracking   the unit's notifications row goes PENDING → SENT / FAILED.
@@ -27,7 +34,9 @@
  *  Cleanup    sent rows are deleted after 7 days, failed after 30.
  *
  * Settings (.env): EMAIL_CONCURRENCY (3), SMS_CONCURRENCY (5), WHATSAPP_CONCURRENCY (3),
- * MESSAGE_MAX_ATTEMPTS (5), MESSAGE_WORKERS=false to not send from this process.
+ * EMAIL_PER_MINUTE (20), SMS_PER_MINUTE (60), WHATSAPP_PER_MINUTE (20),
+ * MESSAGE_MAX_ATTEMPTS (5), MESSAGE_PAUSE_MINUTES (30),
+ * MESSAGE_WORKERS=false to not send from this process.
  *
  * OTPs are not queued: the person is waiting and must be told at once if it failed.
  */
@@ -48,17 +57,18 @@ const MAX_ATTEMPTS  = intEnv('MESSAGE_MAX_ATTEMPTS', 5);
 const BACKOFF_S     = [30, 120, 600, 1800];   // after attempt 1, 2, 3, 4+
 const POLL_MS       = 3_000;                  // idle check for messages queued by other processes
 const STALE_MINUTES = 5;                      // SENDING longer than this → the process died; put back
+const PAUSE_MINUTES = intEnv('MESSAGE_PAUSE_MINUTES', 30);   // a channel whose account is refused
+const MAX_HOLD_MIN  = 24 * 60;                 // held longer than this while paused → FAILED
 
 // ── Gate-pass attachments, built at send time from a reference ─────────────────
 
-/** Loads the gate-pass picture (lazy require: gatePassImage pulls in sharp / S3). */
-async function gatePassPng(ref) {
-  const { loadPass, renderGatePassPng } = require('./gatePassImage.service');
-  const pass = await loadPass(getPool(ref.unitDb), ref.gatePassId);
-  return pass?.qr_code_data ? renderGatePassPng(pass) : null;
+/** The gate pass as a PDF — the pass security prints (lazy require: pulls in pdfkit / sharp / S3). */
+async function gatePassPdf(ref) {
+  const { renderGatePassPdf } = require('./gatePassPdf.service');
+  return renderGatePassPdf(getPool(ref.unitDb), ref.gatePassId);
 }
 
-/** The email as sent: the real gate pass attached, its QR in the body. */
+/** The email as sent: the gate pass PDF attached, its QR in the body. */
 async function buildEmail(p) {
   let html = p.html;
   const attachments = [];
@@ -71,8 +81,8 @@ async function buildEmail(p) {
       else html = html.replace(new RegExp(`<img[^>]*${cidRef}[^>]*>`, 'g'), '');   // no broken image
     }
     try {
-      const png = await gatePassPng(ref);
-      if (png) attachments.push({ filename: `Gate pass ${ref.passNumber || ''}.png`.replace(' .png', '.png'), content: png, contentType: 'image/png' });
+      const pdf = await gatePassPdf(ref);
+      if (pdf) attachments.push({ filename: `Gate pass ${pdf.passNumber}.pdf`, content: pdf.buffer, contentType: 'application/pdf' });
     } catch (err) {
       console.warn('[MessageQueue] gate pass not attached (the QR is in the email):', err.message);
     }
@@ -85,30 +95,44 @@ async function buildEmail(p) {
 const CHANNELS = {
   EMAIL: {
     concurrency: intEnv('EMAIL_CONCURRENCY', 3),
+    perMinute: intEnv('EMAIL_PER_MINUTE', 20),
     send: async (p) => emailService.sendEmail(await buildEmail(p)),
   },
   SMS: {
     concurrency: intEnv('SMS_CONCURRENCY', 5),
+    perMinute: intEnv('SMS_PER_MINUTE', 60),
     send: (p) => smsService.sendSms(p.phone, p.message),
   },
   WHATSAPP: {
     concurrency: intEnv('WHATSAPP_CONCURRENCY', 3),
+    perMinute: intEnv('WHATSAPP_PER_MINUTE', 20),
     send: async (p) => {
       let mediaUrl = p.mediaUrl || null;
       if (!mediaUrl && p.gatePass?.unitDb) {
-        const { gatePassWhatsAppMedia } = require('./gatePassImage.service');
-        mediaUrl = await gatePassWhatsAppMedia(getPool(p.gatePass.unitDb), {
-          gate_pass_id: p.gatePass.gatePassId, qr_code_path: p.gatePass.qrCodePath,
-        });
-        // This message *is* the pass — without the picture there's nothing to send yet
-        if (!mediaUrl) return { success: false, error: 'The gate-pass picture could not be made or stored.', retryable: true };
+        const db = getPool(p.gatePass.unitDb);
+        // The gate pass PDF (the pass security prints), sent as a WhatsApp document…
+        try {
+          mediaUrl = await require('./gatePassPdf.service').gatePassPdfUrl(db, p.gatePass.gatePassId);
+        } catch (err) {
+          console.warn('[MessageQueue] gate pass PDF failed — sending the picture instead:', err.message);
+        }
+        // …else the gate-pass picture, else the QR image
+        if (!mediaUrl) {
+          const { gatePassWhatsAppMedia } = require('./gatePassImage.service');
+          mediaUrl = await gatePassWhatsAppMedia(db, { gate_pass_id: p.gatePass.gatePassId, qr_code_path: p.gatePass.qrCodePath });
+        }
+        // This message *is* the pass — without it there's nothing to send yet
+        if (!mediaUrl) return { success: false, error: 'The gate pass could not be made or stored.', retryable: true };
       }
       return whatsapp.sendWhatsApp(p.phone, p.text, { mediaUrl });
     },
   },
 };
 
-const state = Object.fromEntries(Object.keys(CHANNELS).map((c) => [c, { running: 0, pumping: false, again: false }]));
+// running: sends in flight · starts: when sends started (last minute, for pacing) · pausedUntil: account refused
+const state = Object.fromEntries(Object.keys(CHANNELS).map((c) => [c, {
+  running: 0, pumping: false, again: false, starts: [], pausedUntil: 0, probing: false,
+}]));
 let started = false;
 
 // ── Producer ─────────────────────────────────────────────────────────────────
@@ -166,7 +190,8 @@ async function claim(channel, limit) {
       [WORKER_ID, ids]
     );
     const [jobs] = await conn.query(
-      `SELECT id, payload, attempts, max_attempts, unit_db, notification_id
+      `SELECT id, payload, attempts, max_attempts, unit_db, notification_id,
+              TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS age_minutes
        FROM message_queue WHERE id IN (?) ORDER BY priority DESC, id`,
       [ids]
     );
@@ -207,6 +232,7 @@ async function deliver(channel, job) {
 
   try {
     if (result.success) {
+      state[channel].probing = false;   // after a pause: the provider accepts again → full speed
       await centralPool.query(
         "UPDATE message_queue SET status = 'SENT', sent_at = NOW(), locked_by = NULL, last_error = NULL WHERE id = ?", [job.id]
       );
@@ -215,6 +241,19 @@ async function deliver(channel, job) {
     }
 
     const error = String(result.error || 'Delivery failed').slice(0, 1000);
+
+    // The provider refuses the account itself: pause the channel, keep the message
+    // (this attempt doesn't count) — unless it has already waited a day
+    if (result.accountBlocked && job.age_minutes < MAX_HOLD_MIN) {
+      const waitS = pauseChannel(channel, error);
+      await centralPool.query(
+        `UPDATE message_queue SET status = 'QUEUED', locked_by = NULL, last_error = ?,
+           attempts = GREATEST(attempts - 1, 0), available_at = DATE_ADD(NOW(3), INTERVAL ? SECOND) WHERE id = ?`,
+        [error, waitS, job.id]
+      );
+      return;
+    }
+
     if (result.retryable && job.attempts < job.max_attempts) {
       const base  = BACKOFF_S[Math.min(job.attempts - 1, BACKOFF_S.length - 1)];
       const delay = Math.round(base * (0.8 + Math.random() * 0.4));   // jitter: retries don't all land together
@@ -238,6 +277,22 @@ async function deliver(channel, job) {
   }
 }
 
+/**
+ * Pauses a channel whose provider refuses the account; returns the seconds left in the
+ * pause (when the held message is tried again). Logged once per pause.
+ */
+function pauseChannel(channel, error) {
+  const st = state[channel];
+  const now = Date.now();
+  if (st.pausedUntil <= now) {
+    st.pausedUntil = now + PAUSE_MINUTES * 60_000;
+    st.probing = true;   // after the pause, one message at a time until one goes through
+    console.error(`[MessageQueue] ${channel} paused for ${PAUSE_MINUTES} min — the provider is refusing the account: ${error.slice(0, 200)}`
+      + ' Messages stay queued and go out once it accepts them again.');
+  }
+  return Math.max(60, Math.round((st.pausedUntil - now) / 1000));
+}
+
 /** Fills this channel's free slots with due messages. Re-entrant calls just ask for another round. */
 async function pump(channel) {
   const st = state[channel];
@@ -246,11 +301,17 @@ async function pump(channel) {
   try {
     do {
       st.again = false;
-      const free = CHANNELS[channel].concurrency - st.running;
+      if (st.pausedUntil > Date.now()) break;                  // the provider is refusing the account
+      const now = Date.now();
+      st.starts = st.starts.filter((t) => now - t < 60_000);
+      const budget = CHANNELS[channel].perMinute - st.starts.length;   // the poll picks up the rest later
+      const limit = st.probing ? 1 : CHANNELS[channel].concurrency;   // probing: one test message first
+      const free = Math.min(limit - st.running, budget);
       if (free <= 0) break;
       const jobs = await claim(channel, free);
       for (const job of jobs) {
         st.running++;
+        st.starts.push(Date.now());
         deliver(channel, job).finally(() => {
           st.running--;
           pump(channel);
@@ -298,7 +359,9 @@ function startMessageWorkers() {
   setInterval(pumpAll, POLL_MS).unref();
   setTimeout(housekeeping, 15_000).unref();
   setInterval(housekeeping, 60_000).unref();
-  console.log(`[MessageQueue] Workers started — email ${CHANNELS.EMAIL.concurrency}, SMS ${CHANNELS.SMS.concurrency}, WhatsApp ${CHANNELS.WHATSAPP.concurrency} at a time.`);
+  const c = CHANNELS;
+  console.log(`[MessageQueue] Workers started — email ${c.EMAIL.concurrency} at a time / ${c.EMAIL.perMinute} a minute, `
+    + `SMS ${c.SMS.concurrency} / ${c.SMS.perMinute}, WhatsApp ${c.WHATSAPP.concurrency} / ${c.WHATSAPP.perMinute}.`);
 }
 
 /** Queue counts by channel and status (for logs / admin checks). */

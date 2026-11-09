@@ -17,7 +17,7 @@ const { visitorOnRecord, visitorRecordByPhone } = require('../services/visitorRe
 const { getSignedFileUrl, uploadToS3 } = require('../utils/s3.util');
 const { cleanIdNumber } = require('../utils/idProof.util');
 const { squarePhoto } = require('../utils/photo.util');
-const { whatsappText, appUrl, visitorPortalUrl, VISITOR_NOTES } = require('../services/whatsapp.service');
+const { whatsappText, appUrl, visitorPortalUrl, visitorPortalLink, VISITOR_NOTES } = require('../services/whatsapp.service');
 const { formatDate, formatTime, formatDateTime } = require('../utils/displayFormat.util');
 const { unitLabel } = require('../utils/unitLabel.util');
 const { expireForRequest, visitDay } = require('../services/visitExpiry.service');
@@ -745,7 +745,7 @@ const createRequest = async (req, res) => {
                 details: [['Gate pass', passNum], ['Date', formatDate(visit_date)], ['Time', formatTime(visit_start_time)],
                   ['Invited by', hostName], ['Unit', hostUnitName]],
                 notes: passNum ? VISITOR_NOTES : [],
-                link: visitorPortalUrl(),
+                // an employee — no visitor-portal link
               }),
             });
           } catch (smsErr) {
@@ -1388,7 +1388,7 @@ const cancelRequest = async (req, res) => {
       try {
         const [details] = await targetDb.query(
           `SELECT vr.visitor_name, vr.visitor_phone, vr.visitor_email,
-                  vr.visit_date, vr.visit_start_time, vr.purpose,
+                  vr.visit_date, vr.visit_start_time, vr.purpose, vr.visit_category,
                   h.id AS host_id, h.full_name AS host_name,
                   h.email AS host_email, h.phone AS host_phone,
                   d.name AS department_name
@@ -1439,7 +1439,7 @@ const cancelRequest = async (req, res) => {
               intro: `Your visit request has been cancelled by ${canceller}.`,
               details: [['To meet', d.host_name], ['Date', d.visit_date], ['Time', formatTime(d.visit_start_time)]],
               notes: ['If you believe this is an error, please contact the unit administration.'],
-              link: visitorPortalUrl(), linkLabel: 'Visitor portal',
+              link: visitorPortalLink(d.visit_category), linkLabel: 'Visitor portal',   // none for an employee's visit
             }),
           });
         }
@@ -1511,11 +1511,17 @@ const getMyRequests = async (req, res) => {
     const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
     const ahead = upcoming === 'true';
 
-    // upcoming = approved visits from today (IST) on
+    // upcoming = approved visits from today (IST) on whose visitor hasn't arrived yet.
+    // Check-in leaves the request APPROVED until check-out, so a visitor already inside
+    // (e.g. came at 3:15 for a 3:30 visit) is left out by their visit log, not by the time.
     const filters = [];
     const fparams = [];
     if (status) { filters.push('vr.status = ?'); fparams.push(status); }
-    if (ahead)  { filters.push("vr.visit_date >= ? AND vr.status IN ('APPROVED', 'SCHEDULED')"); fparams.push(getISTDateString()); }
+    if (ahead) {
+      filters.push(`vr.visit_date >= ? AND vr.status IN ('APPROVED', 'SCHEDULED')
+        AND NOT EXISTS (SELECT 1 FROM visit_logs vl WHERE vl.visit_request_id = vr.id AND vl.status IN ('ACTIVE', 'COMPLETED'))`);
+      fparams.push(getISTDateString());
+    }
     const extra = filters.length ? ` AND ${filters.join(' AND ')}` : '';
     const order = ahead ? 'ASC' : 'DESC';
     const take  = page * limit;   // enough rows from each source to fill this page after merging

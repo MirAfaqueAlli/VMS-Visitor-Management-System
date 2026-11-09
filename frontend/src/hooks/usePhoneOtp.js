@@ -2,24 +2,24 @@
 // Sends and checks a mobile OTP the way the backend expects it:
 //  - development (DEV_PHONE_OTP): the backend logs a code → proof { otp }
 //  - production: Firebase sends the SMS (invisible reCAPTCHA) → proof { idToken }
-// The page must render <div id="recaptcha-container" /> (PublicShell does).
+// The reCAPTCHA gets a fresh element for every code (lib/recaptcha), so "Resend" and
+// a second sign-in never hit "reCAPTCHA has already been rendered in this element".
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
+import { signInWithPhoneNumber } from "firebase/auth";
 import { auth, DEV_PHONE_OTP } from "../utils/firebase";
+import { freshRecaptcha } from "../lib/recaptcha";
 import apiClient from "../api/axios";
 import useCountdown from "./useCountdown";
 
 export default function usePhoneOtp() {
-  const verifierRef = useRef(null);
+  const recaptchaRef = useRef(null);   // { verifier, dispose } of the last code request
   const [confirmation, setConfirmation] = useState(null);
   const [sentTo, setSentTo] = useState(null);
   const { count: wait, start: startTimer } = useCountdown();
 
   const clear = useCallback(() => {
-    if (verifierRef.current) {
-      try { verifierRef.current.clear(); } catch { /* already gone */ }
-      verifierRef.current = null;
-    }
+    recaptchaRef.current?.dispose();
+    recaptchaRef.current = null;
   }, []);
   useEffect(() => clear, [clear]);
 
@@ -29,9 +29,9 @@ export default function usePhoneOtp() {
       await apiClient.post("/public-auth/send-phone-otp", { phone });
     } else {
       clear();
-      verifierRef.current = new RecaptchaVerifier(auth, "recaptcha-container", { size: "invisible" });
+      recaptchaRef.current = freshRecaptcha(auth);
       try {
-        setConfirmation(await signInWithPhoneNumber(auth, `+91${phone}`, verifierRef.current));
+        setConfirmation(await signInWithPhoneNumber(auth, `+91${phone}`, recaptchaRef.current.verifier));
       } catch (err) {
         clear();
         throw err;
