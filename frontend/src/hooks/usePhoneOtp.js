@@ -16,9 +16,14 @@ export default function usePhoneOtp() {
   const { count: wait, start: startTimer } = useCountdown();
 
   const clear = useCallback(() => {
-    if (verifierRef.current) {
-      try { verifierRef.current.clear(); } catch { /* already gone */ }
+    const verifier = verifierRef.current;
+    if (verifier) {
+      try { verifier.clear(); } catch { /* already gone */ }
       verifierRef.current = null;
+      // Firebase's clear() leaves the invisible widget in the container. Wipe it
+      // so the next send can render a fresh one; otherwise Firebase throws
+      // "reCAPTCHA has already been rendered in this element".
+      try { verifier.container.innerHTML = ""; } catch { /* container gone */ }
     }
   }, []);
   useEffect(() => clear, [clear]);

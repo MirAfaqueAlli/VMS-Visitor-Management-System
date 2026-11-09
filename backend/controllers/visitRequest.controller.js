@@ -1515,7 +1515,11 @@ const getMyRequests = async (req, res) => {
     const filters = [];
     const fparams = [];
     if (status) { filters.push('vr.status = ?'); fparams.push(status); }
-    if (ahead)  { filters.push("vr.visit_date >= ? AND vr.status IN ('APPROVED', 'SCHEDULED')"); fparams.push(getISTDateString()); }
+    if (ahead)  {
+      filters.push("vr.visit_date >= ? AND vr.status IN ('APPROVED', 'SCHEDULED')");
+      filters.push('NOT EXISTS (SELECT 1 FROM visit_logs vl WHERE vl.visit_request_id = vr.id)');
+      fparams.push(getISTDateString());
+    }
     const extra = filters.length ? ` AND ${filters.join(' AND ')}` : '';
     const order = ahead ? 'ASC' : 'DESC';
     const take  = page * limit;   // enough rows from each source to fill this page after merging

@@ -144,6 +144,58 @@ function VisitDrawer({ visit, onClose }) {
   );
 }
 
+/* ── Print a single visit's gate pass, straight from the list ────────────────── */
+function PrintPassButton({ visit }) {
+  const [pass, setPass] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!pass) return undefined;
+    // Let the pass (and its QR/photo) paint before the print dialog opens
+    const t = setTimeout(() => {
+      window.print();
+      setPass(null);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [pass]);
+
+  const onPrint = async (e) => {
+    e.stopPropagation();
+    setBusy(true);
+    try {
+      const { data } = await portalApi.get(`/me/visits/${visit.unit_id}/${visit.id}/pass`);
+      if (!data.data?.qr) {
+        toast.error("Only a valid pass can be printed.");
+        return;
+      }
+      setPass(data.data);
+    } catch (err) {
+      toast.error(portalError(err, "Could not load the gate pass."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        className="btn-icon"
+        onClick={onPrint}
+        disabled={!visit.pass_number || busy}
+        title={visit.pass_number ? "Print the gate pass" : "No gate pass for this visit"}
+        aria-label="Print gate pass"
+      >
+        {busy ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
+      </button>
+      {pass && createPortal(
+        <div className="hidden print:block"><GatePassCard pass={pass} /></div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 /* ── Visits tab ──────────────────────────────────────────────────────────────── */
 /**
  * News about one of the visitor's visits, on screen: a toast (one per visit — a newer
@@ -316,14 +368,15 @@ function VisitsTab({ onNew }) {
               <Th sortKey="status" sort={sort} onSort={onSort}>Status</Th>
               <th>Gate</th>
               <th>Pass</th>
+              <th className="num">Print</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <SkeletonRows rows={5} cols={7} />
+              <SkeletonRows rows={5} cols={8} />
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="!p-0">
+                <td colSpan={8} className="!p-0">
                   <Empty
                     icon={Calendar}
                     title={visits.length ? "No visits match these filters" : "No visits yet"}
@@ -333,7 +386,7 @@ function VisitsTab({ onNew }) {
                 </td>
               </tr>
             ) : rows.map((v) => (
-              <tr key={`${v.unit_id}-${v.id}`} className="is-clickable" onClick={() => setOpen(v)}>
+              <tr key={`${v.unit_id}-${v.id}`}>
                 <td className="tabular whitespace-nowrap">
                   {fmtDate(v.visit_date)}
                   <span className="cell-sub">{timeRange(v) || "Any time"}</span>
@@ -350,6 +403,7 @@ function VisitsTab({ onNew }) {
                 <td><Status value={v.status} /></td>
                 <td><GateCell v={v} /></td>
                 <td className="mono whitespace-nowrap">{v.pass_number || <span className="text-muted">—</span>}</td>
+                <td className="num"><PrintPassButton visit={v} /></td>
               </tr>
             ))}
           </tbody>
