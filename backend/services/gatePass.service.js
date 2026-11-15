@@ -33,7 +33,7 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
 
   // ── 2. Idempotency check ────────────────────────────────────────────────────
   const [existingRows] = await unitDb.query(
-    `SELECT id, pass_number, qr_code_path FROM gate_passes WHERE visit_request_id = ? LIMIT 1`,
+    `SELECT id, pass_number, qr_code_path, qr_code_data FROM gate_passes WHERE visit_request_id = ? LIMIT 1`,
     [visitRequestId]
   );
   if (existingRows && existingRows.length) {
@@ -41,6 +41,7 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
     return {
       pass_number:  ex.pass_number,
       qr_code_path: ex.qr_code_path,
+      qr_code_data: ex.qr_code_data,
       gate_pass_id: ex.id,
     };
   }
@@ -84,16 +85,11 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
       visit_date:       request.visit_date,
       visitor_name:     request.resolved_visitor_name,
     };
-    // The QR image lives in S3. If storage is unavailable (e.g. no AWS credentials
-    // on a dev machine) the pass is still issued — the gate can check the visitor
-    // in by pass number — just without the QR image.
-    let qrCodePath = null;
-    try {
-      qrCodePath = await generateQRCode(qrData, passNumber);
-    } catch (qrErr) {
-      console.warn(`[GatePassService] Pass ${passNumber} issued WITHOUT a QR image — S3 upload failed: ${qrErr.message}. ` +
-        'Check AWS credentials (IAM role on EC2, or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) and AWS_S3_BUCKET.');
-    }
+    // The pass is issued at once; its QR image is stored in S3 just after (below), so
+    // approving doesn't wait for the upload. Until then — or if storage is unavailable —
+    // every screen, email and PDF draws the same QR from qr_code_data (qrImageForPass,
+    // gatePassQrAttachment), and the gate can always check the visitor in by pass number.
+    const qrCodePath = null;
 
     let insertResult;
     try {
@@ -108,15 +104,24 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
       // visit_request_id is UNIQUE too: if a parallel call already created this
       // visit's pass, return that one; otherwise the pass number collided — retry.
       const [existing] = await unitDb.query(
-        'SELECT id, pass_number, qr_code_path FROM gate_passes WHERE visit_request_id = ? LIMIT 1',
+        'SELECT id, pass_number, qr_code_path, qr_code_data FROM gate_passes WHERE visit_request_id = ? LIMIT 1',
         [visitRequestId]
       );
       if (existing.length) {
-        return { pass_number: existing[0].pass_number, qr_code_path: existing[0].qr_code_path, gate_pass_id: existing[0].id };
+        return {
+          pass_number: existing[0].pass_number, qr_code_path: existing[0].qr_code_path,
+          qr_code_data: existing[0].qr_code_data, gate_pass_id: existing[0].id,
+        };
       }
       continue;
     }
     const gate_pass_id = insertResult.insertId;
+
+    // ── QR image → S3 in the background (not awaited) ───────────────────────
+    generateQRCode(qrData, passNumber)
+      .then((path) => unitDb.query('UPDATE gate_passes SET qr_code_path = ? WHERE id = ? AND qr_code_path IS NULL', [path, gate_pass_id]))
+      .catch((qrErr) => console.warn(`[GatePassService] Pass ${passNumber}: QR image not stored (${qrErr.message}) — `
+        + 'it is drawn from the pass data instead. Check AWS credentials and AWS_S3_BUCKET.'));
 
     // ── 7. Audit log (fire-and-forget) ───────────────────────────────────────
     logAudit({
@@ -128,7 +133,7 @@ const generateGatePass = async (visitRequestId, generatedByUserId, db = null) =>
       recordId:  gate_pass_id,
     }).catch(() => {});
 
-    return { pass_number: passNumber, qr_code_path: qrCodePath, gate_pass_id };
+    return { pass_number: passNumber, qr_code_path: qrCodePath, qr_code_data: JSON.stringify(qrData), gate_pass_id };
   }
 
   throw new Error(`Could not allocate a unique gate pass number after ${MAX_ATTEMPTS} attempts.`);

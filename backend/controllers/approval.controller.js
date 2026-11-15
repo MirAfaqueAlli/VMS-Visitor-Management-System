@@ -8,7 +8,7 @@ const { logAudit } = require('../utils/auditLogger.util');
 const { generateGatePass } = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser, emitToUnitAdmins, emitGateChanged } = require('../socket/socketManager');
-const { getSignedFileUrl } = require('../utils/s3.util');
+const { qrImageForPass } = require('../services/qrcode.service');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
 const { whatsappText, appUrl, visitorPortalLink, isEmployeeVisit, VISITOR_NOTES } = require('../services/whatsapp.service');
 const { formatDate, formatTime } = require('../utils/displayFormat.util');
@@ -360,7 +360,7 @@ const approveRequest = async (req, res) => {
 
     // ── Respond immediately — don't make the client wait for emails/SMS ───────
     // Private bucket — the browser gets a short-lived signed link for the QR
-    const gatePass = passResult && { ...passResult, qr_code_path: await getSignedFileUrl(passResult.qr_code_path) };
+    const gatePass = passResult && { ...passResult, qr_code_data: undefined, qr_code_path: await qrImageForPass(passResult) };
     sendSuccess(res, { gate_pass: gatePass }, 'Request approved successfully.');
 
     // ── Socket.IO: push real-time updates ────────────────────────────────────

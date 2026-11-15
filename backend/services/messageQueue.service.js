@@ -76,7 +76,7 @@ async function buildEmail(p) {
   if (ref?.unitDb && ref.gatePassId) {
     const cidRef = `cid:${emailService.GATE_PASS_QR_CID}`;
     if (html?.includes(cidRef)) {
-      const qr = await emailService.gatePassQrAttachment(ref.qrCodePath);
+      const qr = await emailService.gatePassQrAttachment(ref.qrCodePath, ref.qrCodeData);
       if (qr) attachments.push(qr);
       else html = html.replace(new RegExp(`<img[^>]*${cidRef}[^>]*>`, 'g'), '');   // no broken image
     }

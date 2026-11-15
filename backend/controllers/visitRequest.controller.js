@@ -918,7 +918,7 @@ const createRequest = async (req, res) => {
     );
 
     // Private bucket — hand the browser a short-lived signed link for the QR
-    const gatePass = passResult && { ...passResult, qr_code_path: await getSignedFileUrl(passResult.qr_code_path) };
+    const gatePass = passResult && { ...passResult, qr_code_data: undefined, qr_code_path: await qrImageForPass(passResult) };
     return sendSuccess(res, { ...fullRequest[0], id_proof_number: undefined, gate_pass: gatePass }, 'Visit request created successfully.', 201);
   } catch (err) {
     if (conn) {

@@ -9,7 +9,7 @@ const { centralPool, getPool }      = require('../services/dbManager');
 
 /** Last 10 digits, for comparing mobile numbers. */
 const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
-const { getSignedFileUrl, withSignedUrls } = require('../utils/s3.util');
+const { getSignedFileUrl } = require('../utils/s3.util');
 const { qrImageForPass } = require('../services/qrcode.service');
 const { expireForRequest } = require('../services/visitExpiry.service');
 const { loadPassRecord } = require('../services/gatePassPdf.service');
@@ -174,7 +174,7 @@ const listPasses = async (req, res) => {
     );
 
     const [passes] = await req.db.query(
-      `SELECT gp.id, gp.pass_number, gp.status, gp.is_printed, gp.qr_code_path, gp.issued_at,
+      `SELECT gp.id, gp.pass_number, gp.status, gp.is_printed, gp.qr_code_path, gp.qr_code_data, gp.issued_at,
               vr.id AS visit_request_id, vr.visit_date, vr.purpose, vr.status AS request_status,
               vr.visitor_name, vr.visitor_phone, vr.company_name, vr.visit_category,
               COALESCE(v.full_name, vr.visitor_name) AS resolved_visitor_name,
@@ -192,7 +192,8 @@ const listPasses = async (req, res) => {
     );
 
     return sendSuccess(res, {
-      passes: await withSignedUrls(passes, ['qr_code_path']),
+      // stored QR (signed link), else drawn from the pass data — the data itself isn't sent
+      passes: await Promise.all(passes.map(async (p) => ({ ...p, qr_code_data: undefined, qr_code_path: await qrImageForPass(p) }))),
       pagination: { total, page, limit, pages: Math.ceil(total / limit) },
     }, 'Gate passes retrieved successfully.');
   } catch (err) {

@@ -441,7 +441,7 @@ export default function CheckIn() {
 
   return (
     <div className="animate-fade-in">
-      <PageHeader title={`Check in ${visitorName}`} meta={<span className="mono">{request.pass_number}</span>} />
+      <PageHeader title={`Check in ${visitorName}`} />
       {dayBlock && (
         <Note tone={dayBlock.tone} icon={dayBlock.tone === "danger" ? AlertCircle : AlertTriangle} className="mb-5">
           <b>{dayBlock.title}.</b> {dayBlock.text}

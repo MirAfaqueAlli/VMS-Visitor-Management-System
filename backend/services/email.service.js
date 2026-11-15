@@ -112,20 +112,31 @@ function isReservedAddress(address) {
 const GATE_PASS_QR_CID = 'gatepass-qr';
 
 /**
- * Builds the nodemailer attachment for a gate pass QR stored in S3.
- * Returns null (email goes out without the image) if it can't be fetched.
+ * Builds the nodemailer attachment for a gate pass QR: the image stored in S3, else
+ * drawn from the pass data (the S3 copy is stored just after the pass is issued, so an
+ * email sent right away may not find it yet). Null when neither is possible.
  *
  * @param {string|null} qrCodePath - gate_passes.qr_code_path
+ * @param {string|null} [qrCodeData] - gate_passes.qr_code_data (JSON)
  */
-const gatePassQrAttachment = async (qrCodePath) => {
-  if (!qrCodePath) return null;
+const gatePassQrAttachment = async (qrCodePath, qrCodeData = null) => {
+  const attach = (content) => ({ filename: 'gate-pass-qr.png', content, contentType: 'image/png', cid: GATE_PASS_QR_CID });
+  if (qrCodePath) {
+    try {
+      const content = await getFileBuffer(qrCodePath);
+      if (content) return attach(content);
+    } catch (err) {
+      console.error('[EmailService] Could not load gate pass QR for email:', err.message);
+    }
+  }
+  if (!qrCodeData) return null;
   try {
-    const content = await getFileBuffer(qrCodePath);
-    return content
-      ? { filename: 'gate-pass-qr.png', content, contentType: 'image/png', cid: GATE_PASS_QR_CID }
-      : null;
+    const QRCode = require('qrcode');
+    const { signQRPayload } = require('../utils/qrToken.util');
+    const data = typeof qrCodeData === 'string' ? JSON.parse(qrCodeData) : qrCodeData;
+    return attach(await QRCode.toBuffer(signQRPayload(data), { width: 340, margin: 1, errorCorrectionLevel: 'H', type: 'png' }));
   } catch (err) {
-    console.error('[EmailService] Could not load gate pass QR for email:', err.message);
+    console.error('[EmailService] Could not draw the gate pass QR:', err.message);
     return null;
   }
 };

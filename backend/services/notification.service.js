@@ -127,6 +127,7 @@ const sendNotification = async ({
     ? {
         unitDb: dbNameOf(gatePassDb || unitDb), gatePassId: gatePass.gate_pass_id,
         passNumber: gatePass.pass_number || null, qrCodePath: gatePass.qr_code_path || null,
+        qrCodeData: gatePass.qr_code_data || null,   // the QR is drawn from this if not stored yet
       }
     : null;
   let queued = false;
