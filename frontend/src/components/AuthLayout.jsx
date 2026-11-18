@@ -40,7 +40,12 @@ function BrandPanel({ eyebrow, title, description, features, notice }) {
       <div className="relative flex-1 min-h-0 flex flex-col px-12 pt-10 pb-8">
         {/* Organisation */}
         <div className="flex items-center gap-3.5">
-          <img src="/brand/ohpc-emblem-white.svg" alt="OHPC" className="h-12 w-auto" />
+          {/* The original emblem, never recoloured: on a white tile so it reads on the navy
+              panel, the same in light and dark mode (no theme classes on purpose) */}
+          <span className="inline-flex items-center justify-center shrink-0"
+            style={{ background: '#ffffff', borderRadius: 3, padding: 5 }}>
+            <img src="/brand/ohpc-emblem.svg" alt="OHPC" className="h-10 w-auto block" />
+          </span>
           <div>
             <p className="text-[15px] font-semibold text-white leading-tight">{ORG_NAME}</p>
             <p className="text-[11.5px] mt-0.5 tracking-[0.03em]" style={{ color: '#a9bad3' }}>{ORG_TAGLINE}</p>

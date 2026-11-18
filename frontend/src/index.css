@@ -690,17 +690,12 @@
   .border-info-bg { border-color: var(--secondary-soft); }
 }
 
-/* ── Brand wordmark (components/BrandLogo.jsx) ─────────────────────────────── */
-/* Blue on the light theme, white on the dark theme, black on paper.           */
-.brand-on-dark,
-.brand-print { display: none; }
-[data-theme="dark"] .brand-on-light { display: none; }
-[data-theme="dark"] .brand-on-dark  { display: block; }
-/* A section kept light in dark mode (the sign-in / register pages) keeps the light logo */
-[data-theme="dark"] [data-theme="light"] .brand-on-light { display: block; }
-[data-theme="dark"] [data-theme="light"] .brand-on-dark  { display: none; }
+/* ── Brand logo (components/BrandLogo.jsx) ─────────────────────────────────── */
+/* Always the original logo. On the dark theme it sits on a white tile so its   */
+/* navy lettering reads; sections kept light (sign-in form) and paper get none. */
+.brand-tile { display: inline-flex; align-items: center; }
+[data-theme="dark"] .brand-tile { background: #ffffff; padding: 4px 6px; border-radius: 3px; }
+[data-theme="dark"] [data-theme="light"] .brand-tile { background: none; padding: 0; }
 @media print {
-  .brand-on-light,
-  .brand-on-dark { display: none !important; }
-  .brand-print   { display: block !important; }
+  .brand-tile { background: none !important; padding: 0 !important; }
 }

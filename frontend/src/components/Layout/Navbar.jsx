@@ -396,9 +396,9 @@ export default function Navbar({ onMenuToggle }) {
 
       {/* Logo + app name + scope */}
       <button type="button" onClick={() => navigate('/dashboard')} className="flex items-center gap-2.5 min-w-0 text-left">
-        <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--surface)' }}>
-          <img src="/brand/ohpc-emblem.svg" alt="OHPC" className="brand-on-light h-7 w-auto" />
-          <img src="/brand/ohpc-emblem-white.svg" alt="OHPC" className="brand-on-dark h-7 w-auto" />
+        {/* The original emblem on a white tile — the same in light and dark mode */}
+        <span className="w-8 h-8 rounded-[3px] flex items-center justify-center shrink-0 overflow-hidden" style={{ background: '#ffffff' }}>
+          <img src="/brand/ohpc-emblem.svg" alt="OHPC" className="h-7 w-auto" />
         </span>
         <span className="min-w-0">
           <span className="block text-[13.5px] font-semibold leading-tight">OHPC VMS</span>
