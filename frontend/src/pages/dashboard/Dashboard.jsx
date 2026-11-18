@@ -18,6 +18,7 @@ import useSocketEvent from "../../hooks/useSocketEvent";
 import { useSocket } from "../../context/SocketContext";
 import { PageHeader, SectionTitle, Status, Tag, State, Empty, Spinner, Modal, Field, KV, SearchInput, Live } from "../../components/ui";
 import ScheduleConflictModal from "../../components/shared/ScheduleConflictModal";
+import RescheduleApproveModal from "../../components/shared/RescheduleApproveModal";
 import { hostConflictOf } from "../../lib/approvalConflict";
 import Select from "../../components/Select";
 import { fmtDate, fmtTime, fmtClock, fmtNumber, orDash } from "../../lib/format";
@@ -116,16 +117,16 @@ function RemarksModal({ mode, onConfirm, onCancel, loading }) {
 
 const timeOf = (v) => (v.visit_start_time ? fmtTime(v.visit_start_time) : "Any time");
 
-function useApprovalModal(onDone) {
-  // null | { mode, id, loading, remarks?, conflict? } — conflict: the host already has a visit then
+function useApprovalModal(onDone, personal = false) {
+  // null | { mode, id, request, loading, remarks?, conflict? } — conflict: the host already has a visit then
   const [modalState, setModalState] = useState(null);
-  const open = (mode, id) => setModalState({ mode, id, loading: false });
+  const open = (mode, id, request = null) => setModalState({ mode, id, request, loading: false });
   const confirm = async (remarks, force = false) => {
     if (!modalState) return;
     const { mode, id } = modalState;
     setModalState((p) => ({ ...p, loading: true, remarks }));
     try {
-      await apiClient.put(`/approvals/${id}/${mode}`, { remarks: remarks || undefined, force_approve: force || undefined });
+      await apiClient.put(`/approvals/${id}/${mode}${personal ? '?personal=1' : ''}`, { remarks: remarks || undefined, force_approve: force || undefined });
       toast.success(mode === "approve" ? "Request approved — the gate pass has been sent to the visitor." : "Request rejected — the visitor has been told.");
       setModalState(null);
       onDone();
@@ -140,7 +141,45 @@ function useApprovalModal(onDone) {
       setModalState((p) => ({ ...p, loading: false }));
     }
   };
-  const modal = (
+
+  const confirmReschedule = async (values, force = false) => {
+    if (!modalState) return;
+    const { id } = modalState;
+    setModalState((p) => ({ ...p, loading: true }));
+    try {
+      await apiClient.put(`/approvals/${id}/approve${personal ? '?personal=1' : ''}`, {
+        reschedule: true,
+        visit_date: values.date,
+        visit_start_time: values.start,
+        visit_end_time: values.end,
+        remarks: values.remarks || undefined,
+        force_approve: force || undefined,
+      });
+      toast.success("Request rescheduled and approved — the visitor has been notified.");
+      setModalState(null);
+      onDone();
+    } catch (err) {
+      const conflict = !force ? hostConflictOf(err) : null;
+      if (conflict) {
+        setModalState((p) => ({ ...p, loading: false, conflict }));
+        return;
+      }
+      toast.error(err?.response?.data?.message || "Failed to reschedule and approve the request.");
+      setModalState((p) => ({ ...p, loading: false }));
+    }
+  };
+
+  const modal = modalState?.mode === "reschedule" ? (
+    <RescheduleApproveModal
+      open
+      request={modalState.request}
+      busy={modalState.loading}
+      conflict={modalState.conflict}
+      onClose={() => setModalState(null)}
+      onSubmit={confirmReschedule}
+      onResolveConflict={() => setModalState((p) => ({ ...p, conflict: null }))}
+    />
+  ) : (
     <>
       <RemarksModal key={modalState ? `${modalState.mode}-${modalState.id}` : "none"}
         mode={modalState && !modalState.conflict ? modalState.mode : null}
@@ -653,7 +692,8 @@ function EmployeeDashboard() {
                     <td className="tabular whitespace-nowrap">{fmtDate(row.visit_date)}<span className="cell-sub">{timeOf(row)}</span></td>
                     <td className="max-w-[260px] truncate">{orDash(row.purpose)}</td>
                     <td className="num" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex justify-end gap-1.5">
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        <button type="button" onClick={() => approvals.open("reschedule", row.visit_request_id ?? row.id, row)} className="btn-outline btn-sm"><Calendar size={13} /> Reschedule</button>
                         <button type="button" onClick={() => approvals.open("reject", row.visit_request_id ?? row.id)} className="btn-danger btn-sm"><X size={13} /> Reject</button>
                         <button type="button" onClick={() => approvals.open("approve", row.visit_request_id ?? row.id)} className="btn-primary btn-sm"><Check size={13} /> Approve</button>
                       </div>
@@ -816,7 +856,8 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
                       <td className="tabular whitespace-nowrap">{fmtDate(row.visit_date)}</td>
                       <td className="num" onClick={(e) => e.stopPropagation()}>
                         {canApprove ? (
-                          <div className="flex justify-end gap-1.5">
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            <button type="button" onClick={() => approvals.open("reschedule", row.visit_request_id ?? row.id, row)} className="btn-outline btn-sm"><Calendar size={13} /> Reschedule</button>
                             <button type="button" onClick={() => approvals.open("reject", row.visit_request_id ?? row.id)} className="btn-danger btn-sm"><X size={13} /> Reject</button>
                             <button type="button" onClick={() => approvals.open("approve", row.visit_request_id ?? row.id)} className="btn-primary btn-sm"><Check size={13} /> Approve</button>
                           </div>
@@ -843,6 +884,30 @@ function SuperAdminDashboard() {
   const [units, setUnits] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [personalData, setPersonalData] = useState({
+    inbox: [], upcoming: [], upcomingTotal: 0, myTotal: 0, activeVisitors: [],
+  });
+
+  const fetchPersonal = useCallback(async () => {
+    try {
+      const [inboxRes, upcomingRes, totalRes, activeRes] = await Promise.all([
+        apiClient.get("/approvals/inbox", { params: { personal: 1, limit: 5 } }),
+        apiClient.get("/visit-requests/my", { params: { upcoming: true, limit: 5 } }),
+        apiClient.get("/visit-requests/my", { params: { limit: 1 } }),
+        apiClient.get("/visit-requests/my-visitors", { params: { personal: 1, active: 1, limit: 5 } }),
+      ]);
+      setPersonalData({
+        inbox: inboxRes.data?.data?.items ?? [],
+        upcoming: upcomingRes.data?.data?.requests ?? [],
+        upcomingTotal: upcomingRes.data?.data?.pagination?.total ?? 0,
+        myTotal: totalRes.data?.data?.pagination?.total ?? 0,
+        activeVisitors: activeRes.data?.data?.visitors ?? [],
+      });
+    } catch { /* no unit employee profile yet */ }
+  }, []);
+
+  useEffect(() => { if (!isGlobalAuditor) fetchPersonal(); }, [fetchPersonal, isGlobalAuditor]);
+  const approvals = useApprovalModal(fetchPersonal, true);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -877,6 +942,7 @@ function SuperAdminDashboard() {
 
   return (
     <div className="animate-fade-in">
+      {approvals.modal}
       <PageHeader title="Dashboard" meta="All units"
         actions={!isGlobalAuditor && (
           <button type="button" onClick={() => navigate("/super/units")} className="btn-primary"><Plus size={14} /> Add unit</button>
@@ -925,6 +991,82 @@ function SuperAdminDashboard() {
           <button type="button" onClick={() => navigate("/audit-logs")} className="btn-outline">Open audit logs</button>
         </div>
       </section>
+
+      {!isGlobalAuditor && (
+        <>
+          <section className="section">
+            <SectionTitle icon={UserCheck} title="My visits" meta="As a unit employee" />
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              <HeroTile label="Waiting for your approval" value={personalData.inbox.length}
+                tone={personalData.inbox.length ? "warning" : undefined}
+                hint={personalData.inbox.length ? "Visitors asking to meet you" : "Nothing is waiting for you"} />
+              <MetricTile label="Upcoming visits" value={personalData.upcomingTotal}
+                hint="Approved visits ahead" onClick={() => navigate("/my/requests")} />
+              <MetricTile label="Currently with you" value={personalData.activeVisitors.length}
+                hint="Visitors checked in now" onClick={() => navigate("/my/visitors")} />
+            </div>
+          </section>
+
+          <section className="section">
+            <SectionTitle icon={AlertCircle} title="Needs your approval"
+              meta={personalData.inbox.length ? `${personalData.inbox.length} open` : undefined}
+              actions={personalData.inbox.length > 0 && (
+                <button type="button" className="btn-link text-[12px]" onClick={() => navigate("/my/approvals")}>View all</button>
+              )} />
+            {personalData.inbox.length === 0 ? (
+              <Empty icon={Check} title="You’re all caught up" hint="Requests from visitors who want to meet you appear here." />
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead><tr><th>Visitor</th><th>Visit</th><th>Purpose</th><th className="num">Decision</th></tr></thead>
+                  <tbody>
+                    {personalData.inbox.slice(0, 5).map((row, i) => (
+                      <tr key={row.visit_request_id ?? i} className="is-clickable"
+                        onClick={() => navigate(`/requests/${row.visit_request_id}?personal=1`)}>
+                        <td className="font-medium">{orDash(row.visitor_name)}<span className="cell-sub">{describe(row.visit_category).label}</span></td>
+                        <td className="tabular whitespace-nowrap">{fmtDate(row.visit_date)}<span className="cell-sub">{timeOf(row)}</span></td>
+                        <td className="max-w-[260px] truncate">{orDash(row.purpose)}</td>
+                        <td className="num" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            <button type="button" onClick={() => approvals.open("reschedule", row.visit_request_id, row)} className="btn-outline btn-sm"><Calendar size={13} /> Reschedule</button>
+                            <button type="button" onClick={() => approvals.open("reject", row.visit_request_id)} className="btn-danger btn-sm"><X size={13} /> Reject</button>
+                            <button type="button" onClick={() => approvals.open("approve", row.visit_request_id)} className="btn-primary btn-sm"><Check size={13} /> Approve</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="section">
+            <SectionTitle icon={Calendar} title="Upcoming visits"
+              actions={<button type="button" className="btn-link text-[12px]" onClick={() => navigate("/my/requests")}>All my requests</button>} />
+            {personalData.upcoming.length === 0 ? (
+              <Empty icon={Calendar} title="No upcoming visits" hint="Approved visits you host or make appear here." />
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead><tr><th>Visitor</th><th>Type</th><th>Visit</th><th>Purpose</th></tr></thead>
+                  <tbody>
+                    {personalData.upcoming.map((v, i) => (
+                      <tr key={`${v._cross_unit_id ?? "own"}-${v.id ?? i}`} className="is-clickable"
+                        onClick={() => v.id && navigate(v._cross_unit_id ? `/requests/${v.id}?unit_id=${v._cross_unit_id}&personal=1` : `/requests/${v.id}?personal=1`)}>
+                        <td className="font-medium">{orDash(v.visitor_name)}</td>
+                        <td><Status value={v.visit_category || v.visitor_type_code || v.visitor_type} /></td>
+                        <td className="tabular whitespace-nowrap">{fmtDate(v.visit_date)}<span className="cell-sub">{timeOf(v)}</span></td>
+                        <td className="max-w-[280px] truncate">{orDash(v.purpose)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      )}
     </div>
   );
 }

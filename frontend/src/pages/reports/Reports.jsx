@@ -362,6 +362,171 @@ async function exportPDF(rows, columns, title, filename, { metadata } = {}) {
   doc.save(`${cleanFilename}.pdf`);
 }
 
+// ─────────────────────── single-visit detail export ───────────────────────────
+/** Full detail of one visit: visitor, host, gate pass, check-in/out, approvals. */
+async function fetchVisitDetail(id, unitDb) {
+  const params = {};
+  if (unitDb) params.unit_db = unitDb;
+  const res = await apiClient.get(`/reports/visit-detail/${id}`, { params });
+  return res.data?.data ?? null;
+}
+
+const detailVal = (v) => (v === undefined || v === null || v === '' ? '—' : String(v));
+const detailDateTime = (v) => (v ? new Date(v).toLocaleString('en-GB') : '—');
+const detailDateSlug = (v) => {
+  if (!v) return '';
+  const s = typeof v === 'string' ? v.slice(0, 10) : new Date(v).toISOString().slice(0, 10);
+  return s.replace(/[^0-9-]/g, '');
+};
+
+function buildVisitDetailRows(detail) {
+  const rows = [];
+  const add = (section, field, value) => rows.push({ section, field, value: detailVal(value) });
+
+  const v = detail.visit || {};
+  const visitor = detail.visitor || {};
+  const host = detail.host || {};
+
+  add('Unit', 'Unit', detail.unit_name);
+
+  add('Visit', 'Visit ID', v.id);
+  add('Visit', 'Status', v.status);
+  add('Visit', 'Category', CATEGORY_LABELS[v.visit_category] ?? v.visit_category);
+  add('Visit', 'Request Source', v.request_source);
+  add('Visit', 'Purpose', v.purpose);
+  add('Visit', 'Visit Date', fmt(v.visit_date));
+  add('Visit', 'Start Time', fmtTime(v.visit_start_time));
+  add('Visit', 'End Time', fmtTime(v.visit_end_time));
+  add('Visit', 'Company', v.company_name);
+  add('Visit', 'Vendor Email', v.vendor_email);
+  add('Visit', 'Service Type', v.service_type);
+  add('Visit', 'Work Order Ref', v.work_order_ref);
+  add('Visit', 'Accompanying Count', v.accompanying_count);
+  add('Visit', 'Approved At', detailDateTime(v.approved_at));
+  add('Visit', 'Created At', detailDateTime(v.created_at));
+  add('Visit', 'Last Updated', detailDateTime(v.updated_at));
+
+  add('Visitor', 'Name', visitor.full_name);
+  add('Visitor', 'Phone', visitor.phone);
+  add('Visitor', 'Email', visitor.email);
+  add('Visitor', 'Address', visitor.address);
+  add('Visitor', 'Visitor Type', visitor.visitor_type);
+  add('Visitor', 'ID Proof Type', v.id_proof_type);
+  add('Visitor', 'ID Proof Number', v.id_proof_number);
+
+  add('Host', 'Name', host.full_name);
+  add('Host', 'Employee Code', host.employee_code);
+  add('Host', 'Department', host.department);
+  add('Host', 'Designation', host.designation);
+  add('Host', 'Email', host.email);
+  add('Host', 'Phone', host.phone);
+  add('Host', 'Unit', host.unit);
+
+  const gp = detail.gate_pass;
+  if (gp) {
+    add('Gate pass', 'Pass Number', gp.pass_number);
+    add('Gate pass', 'Status', gp.status);
+    add('Gate pass', 'Issued At', detailDateTime(gp.issued_at));
+    add('Gate pass', 'Issued By', gp.issued_by);
+    add('Gate pass', 'Printed', gp.is_printed ? 'Yes' : 'No');
+    add('Gate pass', 'QR Expires At', detailDateTime(gp.qr_expires_at));
+    add('Gate pass', 'Checkout Method', gp.checkout_method);
+  } else {
+    add('Gate pass', 'Pass Number', 'No gate pass issued');
+  }
+
+  (detail.visit_logs || []).forEach((log, i) => {
+    const many = (detail.visit_logs || []).length > 1;
+    const s = many ? `Check-in / out #${i + 1}` : 'Check-in / out';
+    add(s, 'Check-in At', detailDateTime(log.check_in_at));
+    add(s, 'Check-out At', detailDateTime(log.check_out_at));
+    add(s, 'Status', log.status);
+    add(s, 'Checked In By', log.checked_in_by_name);
+    add(s, 'Checked Out By', log.checked_out_by_name);
+    add(s, 'ID Verified Type', log.id_verified_type);
+    add(s, 'ID Verified Number', log.id_verified_number);
+    add(s, 'Remarks', log.remarks);
+  });
+
+  (detail.approvals || []).forEach((a, i) => {
+    const many = (detail.approvals || []).length > 1;
+    const s = many ? `Approval #${i + 1}` : 'Approval';
+    add(s, 'Action', a.action);
+    add(s, 'By', a.acted_by_name);
+    add(s, 'At', detailDateTime(a.created_at));
+    add(s, 'Remarks', a.remarks);
+  });
+
+  (detail.companions || []).forEach((c, i) => {
+    const many = (detail.companions || []).length > 1;
+    const s = many ? `Companion #${i + 1}` : 'Companion';
+    add(s, 'Name', c.full_name);
+    add(s, 'ID Type', c.id_type);
+    add(s, 'ID Number', c.id_number);
+  });
+
+  if (detail.rejection) {
+    add('Rejection', 'Reason', detail.rejection.rejection_reason);
+    add('Rejection', 'By', detail.rejection.rejected_by_name);
+    add('Rejection', 'At', detailDateTime(detail.rejection.rejected_at));
+  }
+
+  return rows;
+}
+
+const VISIT_DETAIL_COLS = [
+  { header: 'Section', accessor: r => r.section },
+  { header: 'Field',   accessor: r => r.field },
+  { header: 'Value',   accessor: r => r.value },
+];
+
+async function exportVisitDetail(row, format) {
+  const detail = await fetchVisitDetail(row.id, row.unit_db);
+  if (!detail) {
+    toast.error('Could not load this visit.');
+    return false;
+  }
+  const visitorName = detail.visitor?.full_name || detail.visit?.visitor_name || 'Visitor';
+  const datePart = detailDateSlug(detail.visit?.visit_date);
+  const filename = `Visit_${detail.id}_${visitorName}_${datePart}`;
+  const title = `Visit Details - ${visitorName}`;
+  const rows = buildVisitDetailRows(detail);
+  const metadata = {
+    'Visit ID': detail.id,
+    'Unit': detail.unit_name,
+    'Visitor': visitorName,
+    'Visit Date': fmt(detail.visit?.visit_date),
+  };
+
+  if (format === 'excel') {
+    await exportExcel(rows, VISIT_DETAIL_COLS, filename, { title, metadata });
+  } else {
+    await exportPDF(rows, VISIT_DETAIL_COLS, title, filename, { metadata });
+  }
+  return true;
+}
+
+/** Per-row download: exports only the visit in that row (never the whole report). */
+async function downloadVisitRow(row, format, setDownloadingKey) {
+  if (!row?.id) {
+    toast.error('This row has no visit to download.');
+    return;
+  }
+  const key = `${format}-${row.id}`;
+  try {
+    setDownloadingKey(key);
+    toast.loading('Preparing visit details...', { id: 'visit-detail-dl' });
+    const ok = await exportVisitDetail(row, format);
+    toast.dismiss('visit-detail-dl');
+    if (ok) toast.success('Visit details downloaded.');
+  } catch (e) {
+    toast.dismiss('visit-detail-dl');
+    toast.error('Failed to download visit details: ' + (e?.message || 'Error'));
+  } finally {
+    setDownloadingKey('');
+  }
+}
+
 // ─────────────────────────── reusable table + pagination ─────────────────────
 function ReportTable({ cols, rows, loading, page, setPage, totalPages, total, emptyMsg = 'No records for these filters.' }) {
   return (
@@ -616,11 +781,11 @@ function EmployeeReport({ isCentral }) {
       label: 'Report',
       render: r => (
         <DownloadPair
-          label={`visits hosted by ${r.host_name || 'this employee'}`}
-          onExcel={() => handleDownloadEmployee(r, 'excel')}
-          onPdf={() => handleDownloadEmployee(r, 'pdf')}
-          busyExcel={downloadingKey === `excel-${r.host_id || r.employee_code || r.host_name}`}
-          busyPdf={downloadingKey === `pdf-${r.host_id || r.employee_code || r.host_name}`}
+          label={`details of ${r.visitor_name || 'this visit'}`}
+          onExcel={() => downloadVisitRow(r, 'excel', setDownloadingKey)}
+          onPdf={() => downloadVisitRow(r, 'pdf', setDownloadingKey)}
+          busyExcel={downloadingKey === `excel-${r.id}`}
+          busyPdf={downloadingKey === `pdf-${r.id}`}
         />
       ),
     },
@@ -820,11 +985,11 @@ function DepartmentReport({ isCentral }) {
       label: 'Report',
       render: r => (
         <DownloadPair
-          label={`visits to ${r.department_name || 'this department'}`}
-          onExcel={() => handleDownloadDept(r, 'excel')}
-          onPdf={() => handleDownloadDept(r, 'pdf')}
-          busyExcel={downloadingKey === `excel-${r.department_id || r.department_name}`}
-          busyPdf={downloadingKey === `pdf-${r.department_id || r.department_name}`}
+          label={`details of ${r.visitor_name || 'this visit'}`}
+          onExcel={() => downloadVisitRow(r, 'excel', setDownloadingKey)}
+          onPdf={() => downloadVisitRow(r, 'pdf', setDownloadingKey)}
+          busyExcel={downloadingKey === `excel-${r.id}`}
+          busyPdf={downloadingKey === `pdf-${r.id}`}
         />
       ),
     },
@@ -1520,47 +1685,6 @@ function VisitHistoryReport({ isCentral }) {
     }
   };
 
-  // Download complete visit history for a specific visitor or host in that row
-  const handleDownloadSingleHistory = async (row, format) => {
-    const visitorPhone = row.visitor_phone;
-    const visitorName = row.visitor_name || 'Visitor';
-    const key = `${format}-${visitorPhone || row.id}`;
-    try {
-      setDownloadingKey(key);
-      toast.loading(`Fetching history for ${visitorName}...`, { id: 'single-hist-dl' });
-      const params = { search: visitorPhone || visitorName };
-      if (row.unit_db || cf.selUnit) params.unit_db = row.unit_db || cf.selUnit;
-
-      const singleRows = await fetchAllReportRows('/reports/visit-history', params);
-      toast.dismiss('single-hist-dl');
-
-      if (!singleRows || singleRows.length === 0) {
-        toast.error(`No history records found for ${visitorName}.`);
-        return;
-      }
-
-      const cleanName = visitorName.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const filename = `Visitor_History_${cleanName}`;
-      const meta = {
-        'Report Type': 'Visitor History Report',
-        'Visitor': `${visitorName} (${visitorPhone || 'N/A'})`,
-        'Total Visits': singleRows.length,
-      };
-
-      if (format === 'excel') {
-        exportExcel(singleRows, expCols, filename, { title: `Visitor History - ${visitorName}`, metadata: meta });
-      } else {
-        exportPDF(singleRows, expCols, `Visitor History - ${visitorName}`, filename, { metadata: meta });
-      }
-      toast.success(`Downloaded ${singleRows.length} visit records for ${visitorName}.`);
-    } catch (e) {
-      toast.dismiss('single-hist-dl');
-      toast.error('Failed to download visitor history: ' + (e?.message || 'Error'));
-    } finally {
-      setDownloadingKey('');
-    }
-  };
-
   const cols = [
     isCentral && { key: 'unit_name', label: 'Unit', render: r => <span className="text-ink-2">{r.unit_name}</span> },
     { key: 'visitor_name',    label: 'Visitor',    render: r => <div><div>{r.visitor_name}</div><div className="cell-sub">{r.visitor_phone}</div></div> },
@@ -1575,11 +1699,11 @@ function VisitHistoryReport({ isCentral }) {
       label: 'History',
       render: r => (
         <DownloadPair
-          label={`all visits of ${r.visitor_name || 'this visitor'}`}
-          onExcel={() => handleDownloadSingleHistory(r, 'excel')}
-          onPdf={() => handleDownloadSingleHistory(r, 'pdf')}
-          busyExcel={downloadingKey === `excel-${r.visitor_phone || r.id}`}
-          busyPdf={downloadingKey === `pdf-${r.visitor_phone || r.id}`}
+          label={`details of ${r.visitor_name || 'this visit'}`}
+          onExcel={() => downloadVisitRow(r, 'excel', setDownloadingKey)}
+          onPdf={() => downloadVisitRow(r, 'pdf', setDownloadingKey)}
+          busyExcel={downloadingKey === `excel-${r.id}`}
+          busyPdf={downloadingKey === `pdf-${r.id}`}
         />
       ),
     },

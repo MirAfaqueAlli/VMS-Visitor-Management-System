@@ -1,5 +1,5 @@
 // frontend/src/context/AuthContext.jsx
-import { createContext, useReducer, useEffect, useCallback } from "react";
+import { createContext, useReducer, useEffect, useCallback, useState } from "react";
 import apiClient from "../api/axios";
 import { unsubscribePush } from "../lib/push";
 
@@ -30,6 +30,21 @@ function authReducer(state, action) {
 
 export function AuthProvider({ children }) {
   const [state, dispatch] = useReducer(authReducer, initialState);
+  const [unitProfile, setUnitProfile] = useState(null);
+
+  // The super admin's unit membership (joined from Profile). null = not in a unit.
+  const loadUnitProfile = useCallback(async (user) => {
+    if (user?.role_type !== "super_admin") { setUnitProfile(null); return null; }
+    try {
+      const res = await apiClient.get("/central-users/me/unit-profile");
+      const profile = res.data?.data ?? null;
+      setUnitProfile(profile);
+      return profile;
+    } catch {
+      setUnitProfile(null);
+      return null;
+    }
+  }, []);
 
   // On mount: restore session from localStorage
   useEffect(() => {
@@ -50,6 +65,7 @@ export function AuthProvider({ children }) {
         if (activeUnit) {
           dispatch({ type: "SET_ACTIVE_UNIT", payload: activeUnit });
         }
+        loadUnitProfile(user);
       } catch {
         localStorage.removeItem("vms_token");
         localStorage.removeItem("vms_user");
@@ -58,7 +74,7 @@ export function AuthProvider({ children }) {
       }
     };
     restoreSession();
-  }, []);
+  }, [loadUnitProfile]);
 
   /**
    * login — signs in with email/phone + password and stores the session.
@@ -72,15 +88,17 @@ export function AuthProvider({ children }) {
     localStorage.setItem("vms_token", token);
     localStorage.setItem("vms_user", JSON.stringify(user));
     dispatch({ type: "LOGIN_SUCCESS", payload: { user, token } });
+    loadUnitProfile(user);
     return response.data;
-  }, []);
+  }, [loadUnitProfile]);
 
   // loginDirect — used by Setup wizard to auto-login without a second API call
   const loginDirect = useCallback((token, user) => {
     localStorage.setItem("vms_token", token);
     localStorage.setItem("vms_user", JSON.stringify(user));
     dispatch({ type: "LOGIN_SUCCESS", payload: { user, token } });
-  }, []);
+    loadUnitProfile(user);
+  }, [loadUnitProfile]);
 
   const logout = useCallback(() => {
     // This browser stops getting this user's system notifications (token passed: it's cleared next)
@@ -88,6 +106,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem("vms_token");
     localStorage.removeItem("vms_user");
     localStorage.removeItem("vms_active_unit");
+    setUnitProfile(null);
     dispatch({ type: "LOGOUT" });
   }, []);
 
@@ -100,6 +119,22 @@ export function AuthProvider({ children }) {
       dispatch({ type: "SET_ACTIVE_UNIT", payload: null });
     }
   }, []);
+
+  /** Re-reads the signed-in user, e.g. after they complete their own profile. */
+  const refreshUser = useCallback(async () => {
+    try {
+      const response = await apiClient.get("/auth/me");
+      const user = response.data?.data || response.data;
+      localStorage.setItem("vms_user", JSON.stringify(user));
+      dispatch({ type: "LOGIN_SUCCESS", payload: { user, token: localStorage.getItem("vms_token") } });
+      return user;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  /** Re-reads the super admin's unit membership (joined / left from Profile). */
+  const refreshUnitProfile = useCallback(() => loadUnitProfile(state.user), [loadUnitProfile, state.user]);
 
   /**
    * hasRole(...roles) — checks if the current user has any of the listed roles.
@@ -126,6 +161,7 @@ export function AuthProvider({ children }) {
   // Composite flags
   const isAnyAdmin   = isSuperAdmin || isUnitAdmin;
   const isAnyAuditor = isGlobalAuditor || isUnitAuditor;
+  const hasUnitProfile = isSuperAdmin && !!unitProfile;
 
   // Backward-compat aliases
   const isOrgAdmin = isUnitAdmin;
@@ -140,6 +176,10 @@ export function AuthProvider({ children }) {
         logout,
         hasRole,
         setActiveUnit,
+        refreshUser,
+        refreshUnitProfile,
+        unitProfile,
+        hasUnitProfile,
         // New role flags
         isSuperAdmin,
         isUnitAdmin,

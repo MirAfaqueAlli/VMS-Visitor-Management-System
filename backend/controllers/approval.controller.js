@@ -10,6 +10,7 @@ const { isSuperAdmin, isUnitAdmin } = require('../middlewares/rbac.middleware');
 const { emitToUnitSecurity, emitToUser, emitToUnitAdmins, emitGateChanged } = require('../socket/socketManager');
 const { qrImageForPass } = require('../services/qrcode.service');
 const { centralPool, getPool, CENTRAL_DB_NAME } = require('../services/dbManager');
+const { unitActorId, findSuperAdminProfile } = require('../services/adminProfile.service');
 const { whatsappText, appUrl, visitorPortalLink, isEmployeeVisit, VISITOR_NOTES } = require('../services/whatsapp.service');
 const { formatDate, formatTime } = require('../utils/displayFormat.util');
 const { unitLabel } = require('../utils/unitLabel.util');
@@ -23,6 +24,10 @@ const textDate = (d) => {
     ? date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
     : String(d ?? '');
 };
+/** HH:MM from a TIME value, or null. */
+const normalizeTime = (t) => (t ? String(t).slice(0, 5) : null);
+/** Minutes since midnight (for start < end checks). */
+const minutesOf = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
 // ── Inline schedule conflict check for the approval flow ─────────────────────
 // Checks if the host already has another APPROVED visit overlapping the given time.
 const checkApprovalConflict = async (db, hostUserId, visitDate, startTime, endTime, excludeRequestId) => {
@@ -70,10 +75,12 @@ const getISTDateString = (d = new Date()) => {
  * unit admins, so the request leaves their approval inboxes and bells at once.
  */
 function actionedToOthers(req, request, approver, payload) {
+  const unitDb = req.unitDbName || req.user.unit_db;
+  const unitId = req.user.unit_id || request.unit_id;
   if (request.host_user_id && Number(request.host_user_id) !== Number(approver.id)) {
-    emitToUser(request.host_user_id, req.user.unit_db, 'visit:actioned', payload);
+    emitToUser(request.host_user_id, unitDb, 'visit:actioned', payload);
   }
-  emitToUnitAdmins(req.user.unit_id, req.user.unit_db, 'visit:actioned', payload, [approver.id, request.host_user_id]);
+  emitToUnitAdmins(unitId, unitDb, 'visit:actioned', payload, [approver.id, request.host_user_id]);
 }
 
 /** Last 10 digits, for comparing mobile numbers. */
@@ -84,7 +91,7 @@ const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
  * and the host (not unit admins — they follow visits in VMS). Skips the approver,
  * and anyone who already got the visitor's own message (e.g. an employee visiting).
  */
-async function notifyStaffOfApproval(db, request, { approver, passResult, visitorName, visitorEmail, visitorPhone }) {
+async function notifyStaffOfApproval(db, request, { approver, passResult, visitorName, visitorEmail, visitorPhone, rescheduled = false }) {
   // Only the people on this visit. Unit admins get no email / SMS / WhatsApp copy for
   // being admin — they see it in VMS (bell, dashboard) instead.
   const ids = [request.requester_user_id, request.host_user_id].filter(Boolean);
@@ -98,14 +105,14 @@ async function notifyStaffOfApproval(db, request, { approver, passResult, visito
   const who      = visitorName || 'Visitor';
   const timeStr  = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
   const passText = passResult?.pass_number ? ` Gate Pass: ${passResult.pass_number}` : '';
-  const sms      = `VMS: Visit of ${who} on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${approver.full_name}.${passText}`;
+  const sms      = `VMS: Visit of ${who} on ${textDate(request.visit_date)}${timeStr} has been ${rescheduled ? 'RESCHEDULED and APPROVED' : 'APPROVED'} by ${approver.full_name}.${passText}`;
 
   await Promise.allSettled(staff.flatMap((s) => {
     const sends = [];
     if (s.email && s.email.toLowerCase() !== String(visitorEmail || '').toLowerCase()) {
       const tmpl = emailService.visitApprovedStaffTemplate(
         s.full_name, who, approver.full_name, request.visit_date, request.visit_start_time || null,
-        passResult?.pass_number || null, request.purpose || null
+        passResult?.pass_number || null, request.purpose || null, rescheduled
       );
       sends.push(sendNotification({ db, visitRequestId: request.id, recipientUserId: s.id, recipientEmail: s.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html }));
     }
@@ -113,8 +120,8 @@ async function notifyStaffOfApproval(db, request, { approver, passResult, visito
       sends.push(sendNotification({
         db, visitRequestId: request.id, recipientUserId: s.id, recipientPhone: s.phone, type: 'SMS', message: sms,
         whatsappMessage: whatsappText({
-          title: 'Visit approved', name: s.full_name,
-          intro: `The visit of ${who} has been approved by ${approver.full_name}.`,
+          title: rescheduled ? 'Visit rescheduled & approved' : 'Visit approved', name: s.full_name,
+          intro: `The visit of ${who} has been ${rescheduled ? 'rescheduled and approved' : 'approved'} by ${approver.full_name}.`,
           details: [['Visitor', who], ['Date', formatDate(request.visit_date)], ['Time', formatTime(request.visit_start_time)],
             ['Purpose', request.purpose], ['Gate pass', passResult?.pass_number]],
           link: appUrl('/requests'), linkLabel: 'View in VMS',
@@ -125,7 +132,7 @@ async function notifyStaffOfApproval(db, request, { approver, passResult, visito
   }));
 }
 
-async function notifyCrossUnitRequester(request, { approved, actorName, remarks = null, passResult = null, passDb = null, unitText = null }) {
+async function notifyCrossUnitRequester(request, { approved, actorName, remarks = null, passResult = null, passDb = null, unitText = null, rescheduled = false }) {
   if (!request.cross_unit_requester_id || !request.requester_unit_id) return;
   try {
     const [units] = await centralPool.query(
@@ -143,7 +150,7 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
 
     const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
     const message = approved
-      ? `Your visit request on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${actorName}.${passResult?.pass_number ? ` Gate pass: ${passResult.pass_number}` : ''}`
+      ? `Your visit request on ${textDate(request.visit_date)}${timeStr} has been ${rescheduled ? 'RESCHEDULED and APPROVED' : 'APPROVED'} by ${actorName}.${passResult?.pass_number ? ` Gate pass: ${passResult.pass_number}` : ''}`
       : `Your visit request on ${textDate(request.visit_date)}${timeStr} has been REJECTED by ${actorName}. Reason: ${remarks}`;
 
     // visit_request_id stays NULL: the request lives in the other unit's DB
@@ -153,7 +160,8 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
       await sendNotification({
         db: requesterDb, recipientUserId: requester.id, recipientPhone: requester.phone, type: 'SMS', message: `VMS: ${message}`,
         whatsappMessage: whatsappText(approved
-          ? { title: 'Visit approved', name: requester.full_name, intro: `Your visit request has been approved by ${actorName}.`,
+          ? { title: rescheduled ? 'Visit rescheduled & approved' : 'Visit approved', name: requester.full_name,
+              intro: `Your visit request has been ${rescheduled ? 'rescheduled and approved' : 'approved'} by ${actorName}.`,
               details: [...when, ['Gate pass', passResult?.pass_number]],
               notes: passResult?.pass_number ? ['Show your gate pass at the security gate.', 'Carry your employee ID card.'] : [],
               link: appUrl('/requests'), linkLabel: 'View in VMS' }
@@ -164,8 +172,10 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
     emitToUser(requester.id, requesterDbName, approved ? 'visit:approved' : 'visit:rejected', {
       visit_request_id: request.id,
       visit_date:       request.visit_date,
+      visit_start_time: request.visit_start_time,
       visit_category:   request.visit_category,
       cross_unit_id:    request.unit_id,
+      rescheduled:      !!rescheduled,
       ...(approved ? { approved_by: actorName, pass_number: passResult?.pass_number || null } : { rejected_by: actorName, remarks }),
     });
 
@@ -174,7 +184,7 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
         // The queue attaches the gate pass when it sends (the pass lives in the host unit's DB)
         const tmpl = emailService.visitApprovedTemplate(
           requester.full_name, actorName, request.visit_date, unitText, passResult?.pass_number || null,
-          passResult?.pass_number ? `cid:${emailService.GATE_PASS_QR_CID}` : null, request.visit_start_time || null
+          passResult?.pass_number ? `cid:${emailService.GATE_PASS_QR_CID}` : null, request.visit_start_time || null, rescheduled
         );
         await sendNotification({ db: requesterDb, recipientUserId: requester.id, recipientEmail: requester.email, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, gatePass: passResult, gatePassDb: passDb });
       } else {
@@ -197,17 +207,23 @@ async function notifyCrossUnitRequester(request, { approved, actorName, remarks 
  */
 const getInbox = async (req, res) => {
   try {
-    await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
+    const personal = req.query.personal === '1' && isSuperAdmin(req.user);
+    const personalProfile = personal ? await findSuperAdminProfile(req.user.id) : null;
+    if (personal && !personalProfile) {
+      return sendSuccess(res, { items: [], pagination: { page: 1, limit: 10, total: 0, pages: 0 } }, 'No unit employee profile.');
+    }
+    if (!personal) await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
+    const dbPool = personalProfile ? getPool(personalProfile.unit_db) : req.db;
     const user = req.user;
 
     // Super admins / global auditors on the central DB have no personal inbox.
     // But when managing a unit (X-Unit-Db or X-Unit-Id header sent by the frontend),
     // req.db is already switched to the unit pool — treat them like a unit_admin.
-    const isManagingUnit =
+    const isManagingUnit = !personal &&
       (user.role_type === 'super_admin' || user.role_type === 'global_auditor') &&
       !!(req.headers['x-unit-db'] || req.headers['x-unit-id']);
 
-    if ((user.role_type === 'super_admin' || user.role_type === 'global_auditor') && !isManagingUnit) {
+    if (!personal && (user.role_type === 'super_admin' || user.role_type === 'global_auditor') && !isManagingUnit) {
       return sendSuccess(res, { items: [], pagination: { page: 1, limit: 10, total: 0, pages: 0 } }, 'Inbox fetched successfully.');
     }
 
@@ -219,7 +235,11 @@ const getInbox = async (req, res) => {
     const conditions = ["vr.status = 'PENDING'"];
     const params = [];
 
-    if (isUnitAdmin(user) || isManagingUnit) {
+    if (personal) {
+      // The super admin's own unit employee profile: requests they host.
+      conditions.push('vr.host_user_id = ?');
+      params.push(personalProfile.id);
+    } else if (isUnitAdmin(user) || isManagingUnit) {
       // See all pending requests in their unit DB
     } else {
       // Regular employees see only requests where they are the host
@@ -230,13 +250,13 @@ const getInbox = async (req, res) => {
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     // Count total matching rows
-    const [[{ total }]] = await req.db.query(
+    const [[{ total }]] = await dbPool.query(
       `SELECT COUNT(*) AS total FROM visit_requests vr ${whereClause}`,
       params
     );
 
-    const [rows] = await req.db.query(
-      `SELECT vr.id AS visit_request_id, vr.visit_date, vr.visit_start_time,
+    const [rows] = await dbPool.query(
+      `SELECT vr.id AS visit_request_id, vr.visit_date, vr.visit_start_time, vr.visit_end_time,
               vr.purpose, vr.status, vr.visit_category, vr.created_at AS assigned_at,
               vr.visitor_name, vr.visitor_phone, vr.company_name,
               h.full_name AS host_name,
@@ -263,11 +283,25 @@ const getInbox = async (req, res) => {
 
 // ── approveRequest ────────────────────────────────────────────────────────────
 const approveRequest = async (req, res) => {
+  const personal = req.query.personal === '1' && isSuperAdmin(req.user);
+  const personalProfile = personal ? await findSuperAdminProfile(req.user.id) : null;
+  if (personal && !personalProfile) {
+    return sendError(res, 'Join a unit as an employee from your Profile page before approving visits.', 403);
+  }
+  if (personalProfile) {
+    req.db = getPool(personalProfile.unit_db);
+    req.unitDbName = personalProfile.unit_db;
+  }
   let conn = await req.db.getConnection();
   try {
     const { id } = req.params; // visit_request_id
-    const { remarks, force_approve } = req.body;
+    const { remarks, force_approve, reschedule, visit_date, visit_start_time, visit_end_time } = req.body;
     const user = req.user;
+    const actorId = isSuperAdmin(user) ? await unitActorId(req.db, user) : user.id;
+    if (isSuperAdmin(user) && !actorId) {
+      conn.release();
+      return sendError(res, 'Join a unit as an employee from your Profile page before approving visits.', 403);
+    }
 
     const [vrRows] = await conn.query(
       `SELECT vr.*, vr.visit_category AS visitor_type_code FROM visit_requests vr WHERE vr.id = ?`,
@@ -278,34 +312,61 @@ const approveRequest = async (req, res) => {
       return sendError(res, 'Visit request not found.', 404);
     }
     const request = vrRows[0];
+    const isReschedule = reschedule === true;
+    const originalVisitDate = request.visit_date;
+    const originalStart = request.visit_start_time;
+    const originalEnd = request.visit_end_time;
 
     // Permission check
-    const isHost = request.host_user_id === user.id;
+    const isHost = request.host_user_id === actorId;
     const canApprove = isHost || isSuperAdmin(user) || isUnitAdmin(user);
 
     if (!canApprove) {
       conn.release();
       return sendError(res, 'You are not authorized to approve this request.', 403);
     }
-    if (request.status === 'PENDING' && visitDay(request.visit_date) === 'past') {
-      conn.release();
-      return sendError(res, `The visit date (${formatDate(request.visit_date)}) has passed — this request can no longer be approved.`, 400);
-    }
     if (request.status !== 'PENDING') {
       conn.release();
       return sendError(res, 'This request has already been actioned.', 400);
     }
 
+    // ── New date/time (reschedule & accept) ──────────────────────────────────
+    const newDate = isReschedule ? (visit_date || null) : originalVisitDate;
+    const newStart = isReschedule
+      ? (visit_start_time === undefined ? normalizeTime(originalStart) : normalizeTime(visit_start_time))
+      : normalizeTime(originalStart);
+    const newEnd = isReschedule
+      ? (visit_end_time === undefined ? normalizeTime(originalEnd) : normalizeTime(visit_end_time))
+      : normalizeTime(originalEnd);
+
+    if (isReschedule) {
+      if (!newDate) {
+        conn.release();
+        return sendError(res, 'Select a new visit date.', 400);
+      }
+      if (visitDay(newDate) === 'past') {
+        conn.release();
+        return sendError(res, `The new visit date (${formatDate(newDate)}) has passed — choose today or a future date.`, 400);
+      }
+      if (newStart && newEnd && minutesOf(newEnd) <= minutesOf(newStart)) {
+        conn.release();
+        return sendError(res, 'The end time must be after the start time.', 400);
+      }
+    } else if (visitDay(originalVisitDate) === 'past') {
+      conn.release();
+      return sendError(res, `The visit date (${formatDate(originalVisitDate)}) has passed — this request can no longer be approved.`, 400);
+    }
+
     // ── Schedule conflict check (only when visit has a time window) ──────────
     // Skip if force_approve:true (host confirmed they want to override)
-    if (!force_approve && request.visit_start_time && request.visit_end_time) {
+    if (!force_approve && newStart && newEnd) {
       try {
         const conflict = await checkApprovalConflict(
           req.db,
           request.host_user_id,
-          request.visit_date,
-          request.visit_start_time,
-          request.visit_end_time,
+          newDate,
+          newStart,
+          newEnd,
           request.id
         );
         if (conflict) {
@@ -327,28 +388,49 @@ const approveRequest = async (req, res) => {
     await conn.beginTransaction();
     // Conditional update first: only one of two simultaneous approve/reject
     // clicks can move the request out of PENDING
-    const [updated] = await conn.query(
-      "UPDATE visit_requests SET status = 'APPROVED', approved_by = ?, approved_at = NOW(), updated_at = NOW() WHERE id = ? AND status = 'PENDING'",
-      [user.id, id]
-    );
+    let updated;
+    if (isReschedule) {
+      [updated] = await conn.query(
+        `UPDATE visit_requests
+         SET status = 'APPROVED', approved_by = ?, approved_at = NOW(),
+             visit_date = ?, visit_start_time = ?, visit_end_time = ?, updated_at = NOW()
+         WHERE id = ? AND status = 'PENDING'`,
+        [actorId, newDate, newStart || null, newEnd || null, id]
+      );
+    } else {
+      [updated] = await conn.query(
+        "UPDATE visit_requests SET status = 'APPROVED', approved_by = ?, approved_at = NOW(), updated_at = NOW() WHERE id = ? AND status = 'PENDING'",
+        [actorId, id]
+      );
+    }
     if (updated.affectedRows === 0) {
       await conn.rollback();
       conn.release();
       return sendError(res, 'This request has already been actioned.', 409);
     }
+    const rescheduleNote = isReschedule
+      ? `Rescheduled to ${formatDate(newDate)}${newStart ? ` at ${formatTime(newStart)}` : ''}`
+      : null;
+    const historyRemarks = [remarks?.trim(), rescheduleNote].filter(Boolean).join(' · ') || null;
     await conn.query(
       `INSERT INTO approval_history (visit_request_id, acted_by_user_id, action, remarks, created_at)
        VALUES (?, ?, 'APPROVED', ?, NOW())`,
-      [id, user.id, remarks || null]
+      [id, actorId, historyRemarks]
     );
     await conn.commit();
     conn.release();
     conn = null;   // released: the catch below must not roll back / release it again (it may be serving another request by then)
 
+    // Keep the in-memory record in sync for the pass, notifications and sockets.
+    request.visit_date = newDate;
+    request.visit_start_time = newStart;
+    request.visit_end_time = newEnd;
+    request.rescheduled = isReschedule;
+
     // ── Auto-generate gate pass (fast — local DB write + QR) ─────────────────
     let passResult = null;
     try {
-      passResult = await generateGatePass(request.id, user.id, req.db);
+      passResult = await generateGatePass(request.id, actorId, req.db);
     } catch (passErr) {
       console.error(
         `[ApprovalController] ⚠ Gate pass auto-generation FAILED for request #${request.id}:`,
@@ -361,7 +443,7 @@ const approveRequest = async (req, res) => {
     // ── Respond immediately — don't make the client wait for emails/SMS ───────
     // Private bucket — the browser gets a short-lived signed link for the QR
     const gatePass = passResult && { ...passResult, qr_code_data: undefined, qr_code_path: await qrImageForPass(passResult) };
-    sendSuccess(res, { gate_pass: gatePass }, 'Request approved successfully.');
+    sendSuccess(res, { gate_pass: gatePass }, isReschedule ? 'Request rescheduled and approved successfully.' : 'Request approved successfully.');
 
     // ── Socket.IO: push real-time updates ────────────────────────────────────
     const today = getISTDateString();
@@ -389,19 +471,22 @@ const approveRequest = async (req, res) => {
     }
 
     // Notify the APPROVER's own other views (dashboard, approval inbox) so they update
-    emitToUser(user.id, req.user.unit_db, 'visit:actioned', {
+    const socketUnitDb = req.unitDbName || req.user.unit_db;
+    const socketUnitId = req.user.unit_id || request.unit_id;
+    emitToUser(actorId, socketUnitDb, 'visit:actioned', {
       visit_request_id: parseInt(id),
       action: 'APPROVED',
+      rescheduled: isReschedule,
     });
     // ...and the host (an admin may approve for them) and the other unit admins, so their inboxes drop it
-    actionedToOthers(req, request, user, { visit_request_id: parseInt(id), action: 'APPROVED' });
-    emitGateChanged(req.user.unit_id, 'approved');   // any day — the gate's upcoming list counts it
+    actionedToOthers(req, request, { ...user, id: actorId }, { visit_request_id: parseInt(id), action: 'APPROVED', rescheduled: isReschedule });
+    emitGateChanged(socketUnitId, 'approved');   // any day — the gate's upcoming list counts it
 
     // Notify security gate room if the approved visit is for today
     // NOTE: visit_requests table has no unit_id column — use req.user.unit_id
     // (the approver belongs to the same unit whose security needs the notification)
     if (visitDateStr === today) {
-      emitToUnitSecurity(req.user.unit_id, 'visit:approved:today', {
+      emitToUnitSecurity(socketUnitId, 'visit:approved:today', {
         id: request.id,
         visitor_name: request.visitor_name,
         visitor_phone: request.visitor_phone,
@@ -419,14 +504,16 @@ const approveRequest = async (req, res) => {
     }
 
     // Notify the requester if different from the approver
-    if (request.requester_user_id && request.requester_user_id !== user.id) {
-      emitToUser(request.requester_user_id, req.user.unit_db, 'visit:approved', {
+    if (request.requester_user_id && request.requester_user_id !== actorId) {
+      emitToUser(request.requester_user_id, socketUnitDb, 'visit:approved', {
         visit_request_id: request.id,
         visitor_name: request.visitor_name || request.company_name || null,
         visit_date: request.visit_date,
+        visit_start_time: request.visit_start_time,
         visit_category: request.visitor_type_code,
         approved_by: user.full_name || user.email,
         pass_number: passResult?.pass_number || null,
+        rescheduled: isReschedule,
       });
     }
 
@@ -438,7 +525,7 @@ const approveRequest = async (req, res) => {
     const visitorEmail = request.visitor_email || request.vendor_email || null;
     const visitorPhone = request.visitor_phone || null;
     const timeStr = request.visit_start_time ? ` at ${request.visit_start_time}` : '';
-    const unitText = await unitLabel(req.user.unit_id);   // "Unit 1, Bhubaneswar" — the unit the visitor goes to
+    const unitText = await unitLabel(socketUnitId);   // "Unit 1, Bhubaneswar" — the unit the visitor goes to
     Promise.allSettled([
       // Email visitor — the queue attaches the real gate pass (and its QR in the body) when it sends
       ...(visitorEmail && ['EMPLOYEE_VISIT', 'SPOT', 'PERSONAL_VISIT', 'VENDOR'].includes(request.visitor_type_code)
@@ -446,26 +533,27 @@ const approveRequest = async (req, res) => {
           const qrCodeSrc = passResult?.pass_number ? `cid:${emailService.GATE_PASS_QR_CID}` : null;
           const tmpl = emailService.visitApprovedTemplate(
             visitorName || 'Visitor', hostFullName || user.full_name, request.visit_date, unitText,
-            passResult?.pass_number || null, qrCodeSrc, request.visit_start_time || null
+            passResult?.pass_number || null, qrCodeSrc, request.visit_start_time || null, isReschedule
           );
           return notify({ visitRequestId: request.id, recipientEmail: visitorEmail, type: 'EMAIL', subject: tmpl.subject, message: tmpl.html, gatePass: passResult });
         })()]
         : []),
       // SMS visitor (+ WhatsApp copy with the gate-pass picture and the portal link)
       ...(visitorPhone ? [(() => {
+        const actionWord = isReschedule ? 'RESCHEDULED and APPROVED' : 'APPROVED';
         const message = passResult?.pass_number
-          ? `VMS: Your visit on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}. Gate Pass: ${passResult.pass_number}`
-          : `VMS: Your visit on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}.`;
+          ? `VMS: Your visit on ${textDate(request.visit_date)}${timeStr} has been ${actionWord} by ${user.full_name}. Gate Pass: ${passResult.pass_number}`
+          : `VMS: Your visit on ${textDate(request.visit_date)}${timeStr} has been ${actionWord} by ${user.full_name}.`;
         return notify({
           visitRequestId: request.id, recipientPhone: visitorPhone, type: 'SMS',
           message, gatePass: passResult,
           push: {
-            title: 'Visit approved',
-            body: `Your visit on ${[formatDate(request.visit_date), formatTime(request.visit_start_time)].filter(Boolean).join(', ')} to meet ${hostFullName || user.full_name} is approved.${passResult?.pass_number ? ` Gate pass ${passResult.pass_number} — show it at the gate.` : ''}`,
+            title: isReschedule ? 'Visit rescheduled & approved' : 'Visit approved',
+            body: `Your visit on ${[formatDate(request.visit_date), formatTime(request.visit_start_time)].filter(Boolean).join(', ')} to meet ${hostFullName || user.full_name} is ${isReschedule ? 'rescheduled and approved' : 'approved'}.${passResult?.pass_number ? ` Gate pass ${passResult.pass_number} — show it at the gate.` : ''}`,
           },
           whatsappMessage: whatsappText({
-            title: 'Visit approved', name: visitorName,
-            intro: `Your visit request has been approved by ${user.full_name}.${passResult?.pass_number ? ' Your gate pass follows in the next message.' : ''}`,
+            title: isReschedule ? 'Visit rescheduled & approved' : 'Visit approved', name: visitorName,
+            intro: `Your visit request has been ${isReschedule ? 'rescheduled and approved' : 'approved'} by ${user.full_name}.${passResult?.pass_number ? ' Your gate pass follows in the next message.' : ''}`,
             details: [['Gate pass', passResult?.pass_number], ['Date', formatDate(request.visit_date)],
               ['Time', formatTime(request.visit_start_time)], ['To meet', hostFullName], ['Unit', unitText], ['Purpose', request.purpose]],
             notes: passResult?.pass_number ? VISITOR_NOTES : ['Carry a valid government photo ID.'],
@@ -474,17 +562,31 @@ const approveRequest = async (req, res) => {
         });
       })()] : []),
       // Dashboard — requester
-      ...(request.requester_user_id && request.requester_user_id !== user.id
-        ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${textDate(request.visit_date)}${timeStr} has been APPROVED by ${user.full_name}.` })]
+      ...(request.requester_user_id && request.requester_user_id !== actorId
+        ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${textDate(request.visit_date)}${timeStr} has been ${isReschedule ? 'RESCHEDULED and APPROVED' : 'APPROVED'} by ${user.full_name}.` })]
         : []),
       // Dashboard — generic
-      notify({ visitRequestId: request.id, type: 'DASHBOARD', message: `Visit request #${request.id} has been APPROVED by ${user.full_name}.` }),
+      notify({ visitRequestId: request.id, type: 'DASHBOARD', message: `Visit request #${request.id} has been ${isReschedule ? 'RESCHEDULED and APPROVED' : 'APPROVED'} by ${user.full_name}.` }),
       // Email + SMS — requester, host and unit admins
-      notifyStaffOfApproval(req.db, request, { approver: user, passResult, visitorName, visitorEmail, visitorPhone }),
+      notifyStaffOfApproval(req.db, request, { approver: user, passResult, visitorName, visitorEmail, visitorPhone, rescheduled: isReschedule }),
       // Cross-unit requester (lives in another unit's DB)
-      notifyCrossUnitRequester(request, { approved: true, actorName: user.full_name, passResult, passDb: req.db, unitText }),
+      notifyCrossUnitRequester(request, { approved: true, actorName: user.full_name, passResult, passDb: req.db, unitText, rescheduled: isReschedule }),
       // Audit log
-      logAudit({ db: req.db, userId: user.id, action: 'APPROVE_REQUEST', module: 'APPROVAL', recordType: 'VISIT_REQUEST', recordId: request.id, ipAddress: req.ip, userAgent: req.headers['user-agent'] || null }),
+      logAudit({
+        db: req.db, userId: actorId,
+        action: isReschedule ? 'RESCHEDULE_APPROVE_REQUEST' : 'APPROVE_REQUEST',
+        module: 'APPROVAL', recordType: 'VISIT_REQUEST', recordId: request.id,
+        newValues: isReschedule ? {
+          rescheduled: true,
+          visit_date: newDate,
+          visit_start_time: newStart,
+          visit_end_time: newEnd,
+          previous_visit_date: originalVisitDate,
+          previous_visit_start_time: originalStart,
+          previous_visit_end_time: originalEnd,
+        } : undefined,
+        ipAddress: req.ip, userAgent: req.headers['user-agent'] || null,
+      }),
     ]).catch(err => console.error('[ApprovalController] Background task error:', err.message));
 
   } catch (err) {
@@ -496,11 +598,25 @@ const approveRequest = async (req, res) => {
 
 // ── rejectRequest ─────────────────────────────────────────────────────────────
 const rejectRequest = async (req, res) => {
+  const personal = req.query.personal === '1' && isSuperAdmin(req.user);
+  const personalProfile = personal ? await findSuperAdminProfile(req.user.id) : null;
+  if (personal && !personalProfile) {
+    return sendError(res, 'Join a unit as an employee from your Profile page before rejecting visits.', 403);
+  }
+  if (personalProfile) {
+    req.db = getPool(personalProfile.unit_db);
+    req.unitDbName = personalProfile.unit_db;
+  }
   let conn = await req.db.getConnection();
   try {
     const { id } = req.params;
     const { remarks } = req.body;
     const user = req.user;
+    const actorId = isSuperAdmin(user) ? await unitActorId(req.db, user) : user.id;
+    if (isSuperAdmin(user) && !actorId) {
+      conn.release();
+      return sendError(res, 'Join a unit as an employee from your Profile page before rejecting visits.', 403);
+    }
 
     if (!remarks || !remarks.trim()) {
       conn.release();
@@ -517,7 +633,7 @@ const rejectRequest = async (req, res) => {
     }
     const request = vrRows[0];
 
-    const isHost = request.host_user_id === user.id;
+    const isHost = request.host_user_id === actorId;
     const canReject = isHost || isSuperAdmin(user) || isUnitAdmin(user);
 
     if (!canReject) {
@@ -543,7 +659,7 @@ const rejectRequest = async (req, res) => {
     await conn.query(
       `INSERT INTO approval_history (visit_request_id, acted_by_user_id, action, remarks, created_at)
        VALUES (?, ?, 'REJECTED', ?, NOW())`,
-      [id, user.id, remarks.trim()]
+      [id, actorId, remarks.trim()]
     );
     await conn.commit();
     conn.release();
@@ -553,17 +669,19 @@ const rejectRequest = async (req, res) => {
     sendSuccess(res, null, 'Request rejected successfully.');
 
     // ── Socket: notify the rejecter's own views ──────────────────────────────
-    emitToUser(user.id, req.user.unit_db, 'visit:actioned', {
+    const socketUnitDb = req.unitDbName || req.user.unit_db;
+    const socketUnitId = req.user.unit_id || request.unit_id;
+    emitToUser(actorId, socketUnitDb, 'visit:actioned', {
       visit_request_id: parseInt(id),
       action: 'REJECTED',
       visit_category: request.visitor_type_code,
     });
-    actionedToOthers(req, request, user, { visit_request_id: parseInt(id), action: 'REJECTED' });
-    emitGateChanged(req.user.unit_id, 'rejected');   // e.g. a walk-in security registered (Spot Visits)
+    actionedToOthers(req, request, { ...user, id: actorId }, { visit_request_id: parseInt(id), action: 'REJECTED' });
+    emitGateChanged(socketUnitId, 'rejected');   // e.g. a walk-in security registered (Spot Visits)
 
     // ── Socket: notify requester of rejection ────────────────────────────────
     if (request.requester_user_id) {
-      emitToUser(request.requester_user_id, req.user.unit_db, 'visit:rejected', {
+      emitToUser(request.requester_user_id, socketUnitDb, 'visit:rejected', {
         visit_request_id: parseInt(id),
         visitor_name: request.visitor_name || request.company_name || null,
         visit_category: request.visitor_type_code,
@@ -635,7 +753,7 @@ const rejectRequest = async (req, res) => {
       })] : []),
 
       // 5. Dashboard — requester
-      ...(request.requester_user_id && request.requester_user_id !== user.id
+      ...(request.requester_user_id && request.requester_user_id !== actorId
         ? [notify({ visitRequestId: request.id, recipientUserId: request.requester_user_id, type: 'DASHBOARD', message: `Your visit request #${request.id} on ${textDate(request.visit_date)}${timeStr} has been REJECTED. Reason: ${remarks.trim()}` })]
         : []),
 
@@ -646,7 +764,7 @@ const rejectRequest = async (req, res) => {
       notifyCrossUnitRequester(request, { approved: false, actorName: user.full_name, remarks: remarks.trim() }),
 
       // 7. Audit log
-      logAudit({ db: req.db, userId: user.id, action: 'REJECT_REQUEST', module: 'APPROVAL', recordType: 'VISIT_REQUEST', recordId: request.id, ipAddress: req.ip, userAgent: req.headers['user-agent'] || null }),
+      logAudit({ db: req.db, userId: actorId, action: 'REJECT_REQUEST', module: 'APPROVAL', recordType: 'VISIT_REQUEST', recordId: request.id, ipAddress: req.ip, userAgent: req.headers['user-agent'] || null }),
     ]).catch(err => console.error('[ApprovalController] Background task error:', err.message));
 
   } catch (err) {
@@ -660,13 +778,24 @@ const rejectRequest = async (req, res) => {
 const getUserNotifications = async (req, res) => {
   try {
     const user = req.user;
-    // Central users (super / global auditor) have no unit notifications. When one
-    // manages a unit, req.db is that unit's DB and their central id would match
-    // some unit user's id — so never look them up there.
-    if (!req.db || !user?.id || user.unit_db === 'central' || user.unit_db === CENTRAL_DB_NAME) {
+    if (!user?.id) return sendSuccess(res, [], 'No notifications.');
+
+    let db = req.db;
+    let targetId = user.id;
+
+    if (user.role_type === 'super_admin') {
+      // Always show the super admin's unit employee-profile notifications,
+      // regardless of which unit is currently being managed.
+      const profile = await findSuperAdminProfile(user.id);
+      if (!profile) return sendSuccess(res, [], 'No unit employee profile.');
+      db = getPool(profile.unit_db);
+      targetId = profile.id;
+    } else if (user.unit_db === 'central' || user.unit_db === CENTRAL_DB_NAME) {
       return sendSuccess(res, [], 'No notifications.');
     }
-    const [rows] = await req.db.query(
+    if (!db) return sendSuccess(res, [], 'No notifications.');
+
+    const [rows] = await db.query(
       `SELECT n.id, n.visit_request_id, n.message, n.subject, n.created_at,
               vr.visit_date, vr.visit_start_time, vr.visit_category, vr.status AS visit_status,
               gp.pass_number
@@ -676,7 +805,7 @@ const getUserNotifications = async (req, res) => {
        WHERE n.recipient_user_id = ? AND n.notification_type = 'DASHBOARD'
        ORDER BY n.created_at DESC
        LIMIT 20`,
-      [user.id]
+      [targetId]
     );
     return sendSuccess(res, rows, 'Notifications fetched successfully.');
   } catch (err) {

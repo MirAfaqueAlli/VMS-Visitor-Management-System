@@ -115,11 +115,11 @@ router.get('/my', protect, ctrl.getMyRequests);
 // Walk-ins this security / reception user registered (today and later) — before /:id
 router.get('/my-walkins', protect, authorize('security', 'receptionist'), ctrl.getMyWalkIns);
 
-// Create authenticated visit request (unit staff only — super_admin is read-only inside units)
+// Create authenticated visit request (unit staff + super admins acting as their unit employee)
 router.post(
   '/',
   protect,
-  authorize('unit_admin', 'employee', 'security', 'receptionist'),
+  authorize('super_admin', 'unit_admin', 'employee', 'security', 'receptionist'),
   validateRequest,
   ctrl.createRequest
 );
@@ -128,7 +128,7 @@ router.post(
 router.post(
   '/:id/photo',
   protect,
-  authorize('unit_admin', 'employee', 'security', 'receptionist'),
+  authorize('super_admin', 'unit_admin', 'employee', 'security', 'receptionist'),
   (req, res, next) => uploadVisitorPhoto(req, res, (err) => (err ? sendError(res, err.message, 400) : next())),
   ctrl.uploadRequestPhoto
 );
@@ -146,7 +146,7 @@ router.get(
 router.get(
   '/my-blocked-visitors',
   protect,
-  authorize('unit_admin', 'employee'),
+  authorize('super_admin', 'unit_admin', 'employee'),
   ctrl.getHostBlacklist
 );
 
@@ -166,7 +166,7 @@ router.put(
 router.delete(
   '/blocked-visitors/:blockId',
   protect,
-  authorize('unit_admin', 'employee'),
+  authorize('super_admin', 'unit_admin', 'employee'),
   ctrl.unblockVisitor
 );
 
@@ -174,7 +174,7 @@ router.delete(
 router.post(
   '/:id/blacklist-visitor',
   protect,
-  authorize('unit_admin', 'employee'),
+  authorize('super_admin', 'unit_admin', 'employee'),
   ctrl.blacklistVisitorFromRequest
 );
 

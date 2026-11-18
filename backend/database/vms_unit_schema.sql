@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS users (
     department_id   INT          NULL,
     designation_id  INT          NULL,
     role_type       ENUM('unit_admin','employee','security','receptionist','unit_auditor') NOT NULL,
+    is_admin_profile    BOOLEAN   DEFAULT FALSE,  -- non-login host profile for a super admin
+    admin_central_user_id INT     NULL,           -- vms_central.users.id that owns this profile
     employee_code   VARCHAR(50)  UNIQUE NOT NULL,
     full_name       VARCHAR(100) NOT NULL,
     email           VARCHAR(100) UNIQUE NOT NULL,

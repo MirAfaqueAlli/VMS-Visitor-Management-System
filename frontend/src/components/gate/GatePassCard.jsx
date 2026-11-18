@@ -120,11 +120,16 @@ export default function GatePassCard({ pass }) {
 
 @media print {
   @page { size: A4 portrait; margin: 10mm; }
+  html, body {
+    margin: 0 !important; padding: 0 !important;
+    overflow: visible !important; background: #fff !important;
+    width: auto !important; height: auto !important;
+  }
   body * { visibility: hidden; }
   .gate-pass, .gate-pass * { visibility: visible; }
   .gate-pass {
     position: absolute; left: 0; top: 0;
-    width: 190mm; max-width: none; height: 138.5mm; margin: 0;
+    width: 190mm !important; max-width: none !important; height: 138.5mm; margin: 0;
     background: #fff; color: #000; border: 1px solid #777;
     page-break-inside: avoid; break-inside: avoid;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;

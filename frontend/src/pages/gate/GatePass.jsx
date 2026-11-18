@@ -14,13 +14,17 @@ export default function GatePass() {
   // ?unit_id= when the pass belongs to another unit (an employee hosted there)
   const [searchParams] = useSearchParams();
   const unitId = searchParams.get("unit_id");
+  const personal = searchParams.get("personal") === "1";
   const [passData, setPassData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchPass = async () => {
       try {
-        const response = await apiClient.get(`/passes/pass/${passNumber}`, { params: unitId ? { unit_id: unitId } : undefined });
+        const params = {};
+        if (unitId) params.unit_id = unitId;
+        if (personal) params.personal = 1;
+        const response = await apiClient.get(`/passes/pass/${passNumber}`, { params: Object.keys(params).length ? params : undefined });
         setPassData(response.data.data);
       } catch {
         toast.error("Failed to load gate pass");
@@ -30,7 +34,7 @@ export default function GatePass() {
       }
     };
     fetchPass();
-  }, [passNumber, unitId, navigate]);
+  }, [passNumber, unitId, personal, navigate]);
 
   if (loading) return <><PageHeader title="Gate pass" /><Spinner label="Loading the pass…" /></>;
   if (!passData) return null;

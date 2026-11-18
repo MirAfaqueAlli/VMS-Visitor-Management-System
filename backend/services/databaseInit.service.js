@@ -240,6 +240,10 @@ async function migrateUnitDatabase(conn, dbName) {
   // Sessions issued before the last password change/reset are rejected (auth.middleware)
   await addColumnIfMissing(conn, dbName, 'users', 'password_changed_at', 'DATETIME NULL AFTER password_hash');
 
+  // Non-login employee/host profile for a super admin — created once, in one unit
+  await addColumnIfMissing(conn, dbName, 'users', 'is_admin_profile', 'BOOLEAN DEFAULT FALSE AFTER role_type');
+  await addColumnIfMissing(conn, dbName, 'users', 'admin_central_user_id', 'INT NULL AFTER is_admin_profile');
+
   // 2. request_source ENUM update (include 'PUBLIC')
   try {
     const [cols] = await conn.query(

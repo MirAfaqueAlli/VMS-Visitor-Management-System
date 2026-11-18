@@ -78,6 +78,19 @@ function VisitDrawer({ visit, onClose }) {
   if (!visit) return null;
   const decided = ["REJECTED", "CANCELLED"].includes(visit.status) && visit.decision_remarks;
 
+  // The drawer locks body scrolling; unlock it so the printed pass keeps its full width.
+  const printPass = () => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "visible";
+    const restore = () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("afterprint", restore);
+    };
+    window.addEventListener("afterprint", restore);
+    window.print();
+    setTimeout(restore, 1500);
+  };
+
   return (
     <Drawer open onClose={onClose} width={560} icon={Calendar}
       title={`${fmtDate(visit.visit_date)}${timeRange(visit) ? ` · ${timeRange(visit)}` : ""}`}
@@ -126,7 +139,7 @@ function VisitDrawer({ visit, onClose }) {
               <Status value={pass.pass_status} />
               {pass.qr && <p className="text-[12px] text-muted pt-1">Show this QR code, or tell the pass number, at the gate.</p>}
               <div className="pt-2">
-                <button type="button" className="btn-outline btn-sm" disabled={!pass.qr} onClick={() => window.print()}
+                <button type="button" className="btn-outline btn-sm" disabled={!pass.qr} onClick={printPass}
                   title={pass.qr ? "Print the gate pass" : "Only a valid pass can be printed"}>
                   <Printer size={13} /> Print pass
                 </button>

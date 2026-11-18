@@ -2,7 +2,8 @@
 'use strict';
 
 const { sendSuccess, sendError } = require('../utils/response.util');
-const { isSuperAdmin, isUnitAdmin, isDeptAdmin, isGlobalAuditor, isAnyAuditor } = require('../middlewares/rbac.middleware');
+const { isSuperAdmin, isUnitAdmin, isDeptAdmin, isGlobalAuditor, isAnyAuditor, canViewFullIdNumbers } = require('../middlewares/rbac.middleware');
+const { decryptRows, decryptField, maskIdNumber } = require('../utils/crypto.util');
 
 const getISTDateString = (d = new Date()) => {
   return new Intl.DateTimeFormat('en-CA', {
@@ -838,7 +839,7 @@ const getMetaEmployees = async (req, res) => {
     }
     if (!db) return sendSuccess(res, []);
 
-    const conditions = [`is_active = 1`, `deleted_at IS NULL`, `role_type = 'employee'`];
+    const conditions = [`is_active = 1`, `deleted_at IS NULL`, `role_type IN ('employee', 'unit_admin')`];
     const params = [];
     if (department_id) { conditions.push('department_id = ?'); params.push(department_id); }
 
@@ -1447,6 +1448,171 @@ const getDetailedVisitHistory = async (req, res) => {
   }
 };
 
+// ── GET /api/reports/visit-detail/:id ────────────────────────────────────────
+/**
+ * Everything about one visit, for its per-row download: visitor, host,
+ * gate pass, check-in/out logs, approval history, companions and gate rejection.
+ * Central users pass ?unit_db= (the row's unit) so the correct unit DB is queried.
+ * Unit-level users read their own unit DB through req.db.
+ */
+const getVisitDetailReport = async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return sendError(res, 'A valid visit id is required.', 400);
+
+    const { unit_db } = req.query;
+    const isCentral = isSuperAdmin(req.user) || isGlobalAuditor(req.user);
+
+    if (isCentral && !unit_db) {
+      return sendError(res, 'Select a unit to view this visit.', 400);
+    }
+
+    let db = req.db;
+    let unitName = req.user.unit_name || null;
+    let unitDb = isCentral ? null : (req.user.unit_db || null);
+
+    if (isCentral && unit_db) {
+      const scoped = await getScopedUnit(unit_db);
+      if (!scoped) return sendError(res, 'Unit not found.', 404);
+      db = scoped.pool;
+      unitName = scoped.unitName;
+      unitDb = unit_db;
+    }
+    if (!db) return sendError(res, 'Unit not found.', 404);
+
+    const [rows] = await db.query(
+      `SELECT vr.*,
+              h.full_name AS host_name, h.email AS host_email, h.phone AS host_phone,
+              h.employee_code, h.designation AS host_designation,
+              d.name AS department_name,
+              gp.id AS gate_pass_id, gp.pass_number, gp.status AS gate_pass_status,
+              gp.is_printed, gp.issued_at AS gate_pass_issued_at,
+              gp.checkout_method, gp.qr_expires_at,
+              iu.full_name AS gate_pass_issued_by
+       FROM visit_requests vr
+       LEFT JOIN users h ON h.id = vr.host_user_id
+       LEFT JOIN departments d ON d.id = vr.department_id
+       LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
+       LEFT JOIN users iu ON iu.id = gp.issued_by
+       WHERE vr.id = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return sendError(res, 'Visit not found.', 404);
+    const visit = rows[0];
+
+    const [rawCompanions] = await db.query(
+      'SELECT full_name, id_type, id_number FROM request_companions WHERE visit_request_id = ? ORDER BY id ASC',
+      [id]
+    );
+    const companions = decryptRows(rawCompanions, ['id_number'], { mask: !canViewFullIdNumbers(req.user) });
+
+    const [approvals] = await db.query(
+      `SELECT ah.action, ah.remarks, ah.created_at, u.full_name AS acted_by_name
+       FROM approval_history ah
+       LEFT JOIN users u ON u.id = ah.acted_by_user_id
+       WHERE ah.visit_request_id = ? ORDER BY ah.created_at ASC`,
+      [id]
+    );
+
+    const [rawLogs] = await db.query(
+      `SELECT vl.check_in_at, vl.check_out_at, vl.status, vl.remarks,
+              ci.full_name AS checked_in_by_name, co.full_name AS checked_out_by_name,
+              vl.id_verified_type, vl.id_verified_number
+       FROM visit_logs vl
+       LEFT JOIN users ci ON ci.id = vl.checked_in_by
+       LEFT JOIN users co ON co.id = vl.checked_out_by
+       WHERE vl.visit_request_id = ? ORDER BY vl.check_in_at DESC`,
+      [id]
+    );
+    const visitLogs = decryptRows(rawLogs, ['id_verified_number'], { mask: !canViewFullIdNumbers(req.user) });
+
+    const [[rejection]] = await db.query(
+      `SELECT gr.rejection_reason, gr.rejected_at, u.full_name AS rejected_by_name
+       FROM gate_rejections gr
+       LEFT JOIN users u ON u.id = gr.rejected_by
+       WHERE gr.visit_request_id = ? ORDER BY gr.rejected_at DESC LIMIT 1`,
+      [id]
+    );
+
+    let visitor = null;
+    if (visit.visitor_id) {
+      const [[v]] = await db.query(
+        'SELECT id, full_name, email, phone, address, visitor_type FROM visitors WHERE id = ? LIMIT 1',
+        [visit.visitor_id]
+      );
+      visitor = v || null;
+    }
+
+    let idProofNumber = null;
+    if (visit.id_proof_number) {
+      const plain = decryptField(visit.id_proof_number);
+      idProofNumber = canViewFullIdNumbers(req.user) ? plain : maskIdNumber(plain);
+    }
+
+    return sendSuccess(res, {
+      id: visit.id,
+      unit_name: unitName,
+      unit_db: unitDb,
+      visit: {
+        id: visit.id,
+        status: visit.status,
+        visit_category: visit.visit_category,
+        request_source: visit.request_source,
+        purpose: visit.purpose,
+        visit_date: visit.visit_date,
+        visit_start_time: visit.visit_start_time,
+        visit_end_time: visit.visit_end_time,
+        company_name: visit.company_name,
+        vendor_email: visit.vendor_email,
+        service_type: visit.service_type,
+        work_order_ref: visit.work_order_ref,
+        accompanying_count: visit.accompanying_count,
+        id_proof_type: visit.id_proof_type,
+        id_proof_number: idProofNumber,
+        approved_at: visit.approved_at,
+        created_at: visit.created_at,
+        updated_at: visit.updated_at,
+        rejection_reason: rejection?.rejection_reason || null,
+        rejected_at: rejection?.rejected_at || null,
+        rejected_by_name: rejection?.rejected_by_name || null,
+      },
+      visitor: visitor || {
+        full_name: visit.visitor_name,
+        email: visit.visitor_email,
+        phone: visit.visitor_phone,
+        address: visit.visitor_address,
+        visitor_type: null,
+      },
+      host: {
+        full_name: visit.host_name,
+        employee_code: visit.employee_code,
+        email: visit.host_email,
+        phone: visit.host_phone,
+        designation: visit.host_designation,
+        department: visit.department_name,
+        unit: unitName,
+      },
+      gate_pass: visit.gate_pass_id ? {
+        id: visit.gate_pass_id,
+        pass_number: visit.pass_number,
+        status: visit.gate_pass_status,
+        is_printed: visit.is_printed,
+        issued_at: visit.gate_pass_issued_at,
+        issued_by: visit.gate_pass_issued_by,
+        checkout_method: visit.checkout_method,
+        qr_expires_at: visit.qr_expires_at,
+      } : null,
+      visit_logs: visitLogs,
+      approvals,
+      companions,
+      rejection: rejection || null,
+    }, 'Visit details fetched.');
+  } catch (err) {
+    console.error('[ReportController] getVisitDetailReport error:', err.message);
+    return sendError(res, 'Failed to fetch visit details.', 500);
+  }
+};
+
 module.exports = {
   getVisitorSummary, getByStatus, getByDepartment,
   getByVisitorType, getDailyTraffic, getTopHosts,
@@ -1457,5 +1623,7 @@ module.exports = {
   // Tabbed data report endpoints
   getEmployeeWiseReport, getDepartmentWiseReport, getUnitWiseReport,
   getRejectedReport, getDebarredReport, getActiveExpectedReport, getDetailedVisitHistory,
+  // Single-visit detail (per-row download)
+  getVisitDetailReport,
 };
 

@@ -37,8 +37,8 @@ const ALL_CATEGORIES = [
 const ROLE_CATEGORIES = {
   security: ["SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
   employee: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR"],
-  unit_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
-  super_admin: ["EMPLOYEE_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
+  unit_admin: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
+  super_admin: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
   receptionist: ["EMPLOYEE_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
   org_admin: ["EMPLOYEE_VISIT", "PERSONAL_VISIT", "VENDOR", "SPOT_INDIVIDUAL", "SPOT_BUSINESS"],
 };
@@ -70,6 +70,7 @@ const RECORD_SOURCE = {
 export default function NewRequest() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const personalMode = searchParams.get("personal") === "1";
   const { user, activeUnit } = useAuth();
   const [loading, setLoading] = useState(false);
   const [hosts, setHosts] = useState([]);
@@ -109,6 +110,8 @@ export default function NewRequest() {
 
   // ── EMPLOYEE_VISIT state ─────────────────────────────────────────────────────
   const [visitMode, setVisitMode] = useState("visiting"); // 'visiting' | 'hosting'
+  const [adminEmpMode, setAdminEmpMode] = useState("arrange"); // admins: 'arrange' (admin workflow) | 'self' (as employee)
+  const [myUnitProfile, setMyUnitProfile] = useState(null);
   const [units, setUnits] = useState([]);
   const [selectedUnitId, setSelectedUnitId] = useState("");
   const [empDepartments, setEmpDepartments] = useState([]);
@@ -116,20 +119,23 @@ export default function NewRequest() {
   const [employees, setEmployees] = useState([]);
   const [selectedEmpId, setSelectedEmpId] = useState("");
 
-  // Current user's own unit ID (or active unit if super admin)
-  const currentUnitId = activeUnit?.id ?? user?.unit_id ?? null;
+  // Current user's own unit ID (or the active unit; personal mode uses the joined unit)
+  const currentUnitId = personalMode
+    ? (myUnitProfile?.unit_id ?? activeUnit?.id ?? user?.unit_id ?? null)
+    : (activeUnit?.id ?? user?.unit_id ?? null);
 
   // Filter out the logged-in user's own unit so only other units are selectable for cross-unit visits
   const otherUnits = useMemo(() => {
     return units.filter((u) => {
       if (currentUnitId != null && String(u.id) === String(currentUnitId)) return false;
+      if (personalMode && myUnitProfile?.unit_id != null && String(u.id) === String(myUnitProfile.unit_id)) return false;
       if (user?.unit_id != null && String(u.id) === String(user.unit_id)) return false;
-      if (activeUnit?.id != null && String(u.id) === String(activeUnit.id)) return false;
+      if (!personalMode && activeUnit?.id != null && String(u.id) === String(activeUnit.id)) return false;
       if (user?.unit_code && u.code && u.code.toLowerCase() === user.unit_code.toLowerCase()) return false;
-      if (activeUnit?.code && u.code && u.code.toLowerCase() === activeUnit.code.toLowerCase()) return false;
+      if (!personalMode && activeUnit?.code && u.code && u.code.toLowerCase() === activeUnit.code.toLowerCase()) return false;
       return true;
     });
-  }, [units, currentUnitId, user?.unit_id, user?.unit_code, activeUnit?.id, activeUnit?.code]);
+  }, [units, currentUnitId, user?.unit_id, user?.unit_code, activeUnit?.id, activeUnit?.code, personalMode, myUnitProfile?.unit_id]);
 
   // ── Unit Admin EMPLOYEE_VISIT state ──────────────────────────────────────────
   const [adminVisitorDeptId, setAdminVisitorDeptId] = useState("");
@@ -148,6 +154,7 @@ export default function NewRequest() {
   // Security and reception can't open Visit Requests: send them back to where they
   // started (dashboard or gate), or to the dashboard on a fresh tab
   const leave = (created = false) => {
+    if (personalMode) { navigate("/my/requests"); return; }
     if (!["security", "receptionist"].includes(role)) navigate("/requests");
     else if (created) navigate("/gate/walk-ins");
     else if (window.history.state?.idx > 0) navigate(-1);
@@ -206,6 +213,13 @@ export default function NewRequest() {
   useEffect(() => {
     const fetchDropdownData = async () => {
       try {
+        if (personalMode) {
+          // Personal super-admin visits belong to their joined unit, not the managed one.
+          if (!myUnitProfile?.unit_id) return;
+          const res = await apiClient.get("/departments/public", { params: { unit_id: myUnitProfile.unit_id } });
+          setDepartments(res.data?.data ?? []);
+          return;
+        }
         // Use the authenticated endpoint  -  the JWT tells the backend which unit DB to query.
         const deptsRes = await apiClient.get("/departments");
         // Departments API is now paginated: { departments: [], pagination: {} }
@@ -216,12 +230,12 @@ export default function NewRequest() {
       }
     };
     fetchDropdownData();
-  }, []);
+  }, [personalMode, myUnitProfile?.unit_id]);
 
   // Fetch all employees of the current unit admin's unit
   useEffect(() => {
     if (user?.role_type === "unit_admin" && formData.visit_category === "EMPLOYEE_VISIT") {
-      apiClient.get("/users/hosts", { params: { include_all: 'true', roles: 'employee', _t: Date.now() } })
+      apiClient.get("/users/hosts", { params: { include_all: 'true', roles: 'employee,unit_admin', _t: Date.now() } })
         .then(res => {
           setAdminVisitorAllEmployees(res.data?.data ?? []);
           setAdminVisitorEmployees(res.data?.data ?? []);
@@ -236,7 +250,7 @@ export default function NewRequest() {
       const _t = Date.now();
       Promise.allSettled([
         apiClient.get("/departments", { params: { _t } }),
-        apiClient.get("/users/hosts", { params: { include_all: 'true', roles: 'employee', _t } }),
+        apiClient.get("/users/hosts", { params: { include_all: 'true', roles: 'employee,unit_admin', _t } }),
       ]).then(([deptRes, empRes]) => {
         if (deptRes.status === 'fulfilled') {
           const dRaw = deptRes.value.data?.data;
@@ -250,6 +264,16 @@ export default function NewRequest() {
     }
   }, [user?.role_type, activeUnit?.id, formData.visit_category]);
 
+  // The super admin's own unit employee profile id (used when acting as an employee)
+  useEffect(() => {
+    if (user?.role_type !== "super_admin") return;
+    let cancelled = false;
+    apiClient.get("/central-users/me/unit-profile")
+      .then(res => { if (!cancelled) setMyUnitProfile(res.data?.data ?? null); })
+      .catch(() => { if (!cancelled) setMyUnitProfile(null); });
+    return () => { cancelled = true; };
+  }, [user?.role_type, activeUnit?.id]);
+
   // ── Visitor phone lookup ───────────────────────────────────────────────────────
   // phoneArg: the number just typed (auto-lookup on the 10th digit); a button click passes an event
   const handleVisitorLookup = async (phoneArg) => {
@@ -261,7 +285,9 @@ export default function NewRequest() {
     setVisitorLookupState("loading");
     setFoundVisitorData(null);
     try {
-      const res = await apiClient.get("/visitors/lookup", { params: { phone } });
+      const params = { phone };
+      if (personalMode && myUnitProfile?.unit_id) params.unit_id = myUnitProfile.unit_id;
+      const res = await apiClient.get("/visitors/lookup", { params });
       const { found, visitor } = res.data.data;
       setOnRecord(visitor?.on_record?.id_proof_type || visitor?.on_record?.photo_url ? visitor.on_record : null);
       if (found && visitor) {
@@ -307,7 +333,9 @@ export default function NewRequest() {
     }
     setVendorLookupState("loading");
     try {
-      const res = await apiClient.get("/visitors/lookup", { params: { phone } });
+      const params = { phone };
+      if (personalMode && myUnitProfile?.unit_id) params.unit_id = myUnitProfile.unit_id;
+      const res = await apiClient.get("/visitors/lookup", { params });
       const { found, visitor } = res.data.data;
       setOnRecord(visitor?.on_record?.id_proof_type || visitor?.on_record?.photo_url ? visitor.on_record : null);
       if (found && visitor) {
@@ -372,10 +400,17 @@ export default function NewRequest() {
 
     if (deptId) {
       try {
-        const hostsRes = await apiClient.get(`/users/hosts`, {
-          params: { department_id: deptId, _t: Date.now() }
-        });
-        setHosts(hostsRes.data.data || []);
+        const params = { department_id: deptId, _t: Date.now() };
+        if (personalMode && myUnitProfile?.unit_id) {
+          params.unit_id = myUnitProfile.unit_id;
+          params.roles = "employee,unit_admin";
+        }
+        const hostsRes = await apiClient.get(`/users/hosts`, { params });
+        const list = hostsRes.data.data || [];
+        // A super admin managing a unit creates for others there; personal visits live in /my/requests.
+        setHosts(list.filter((h) => !(
+          user?.role_type === "super_admin" && !personalMode && String(h.id) === String(myUnitProfile?.id)
+        )));
       } catch (err) {
         toast.error("Failed to load hosts for selected department.");
       }
@@ -443,7 +478,7 @@ export default function NewRequest() {
         const _t = Date.now(); // cache-buster  -  prevents 304 stale responses
         const [deptResult, empResult] = await Promise.allSettled([
           apiClient.get("/departments/public", { params: { unit_id: uId, _t } }),
-          apiClient.get("/users/hosts", { params: { unit_id: uId, include_all: 'true', roles: 'employee', _t } }),
+          apiClient.get("/users/hosts", { params: { unit_id: uId, include_all: 'true', roles: 'employee,unit_admin', _t } }),
         ]);
 
         let hasDepts = false;
@@ -525,7 +560,8 @@ export default function NewRequest() {
         const _t = Date.now();
         const [deptResult, empResult] = await Promise.allSettled([
           apiClient.get("/departments/public", { params: { unit_id: uId, _t } }),
-          apiClient.get("/users/hosts", { params: { unit_id: uId, include_all: 'true', roles: 'employee', _t } }),
+          // Hosts: employees plus unit admins (admins also act as hosts)
+          apiClient.get("/users/hosts", { params: { unit_id: uId, include_all: 'true', roles: 'employee,unit_admin', _t } }),
         ]);
 
         if (deptResult.status === 'fulfilled') {
@@ -658,7 +694,7 @@ export default function NewRequest() {
     }
 
     if (cat === "EMPLOYEE_VISIT") {
-      if (isAdminEmpVisit) {
+      if (isAdminEmpVisit && adminEmpMode === "arrange") {
         const selectedVisitor = adminVisitorAllEmployees.find(emp => String(emp.id) === String(adminVisitorEmpId));
         payload.visitor_name = selectedVisitor?.full_name || null;
         payload.visitor_phone = selectedVisitor?.phone || null;
@@ -710,7 +746,7 @@ export default function NewRequest() {
         payload.visitor_email = formData.visitor_email?.trim() || null;
       }
       payload.visitor_id = null;
-      payload.host_user_id = Number(payload.host_user_id) || user?.id || null;
+      payload.host_user_id = Number(payload.host_user_id) || myUnitProfile?.id || user?.id || null;
       payload.department_id = Number(payload.department_id) || user?.department_id || null;
       payload.organization_id = Number(payload.organization_id) || null;
     }
@@ -793,7 +829,7 @@ export default function NewRequest() {
     setLoading(true);
     try {
       const payload = buildPayload();
-      const res = await apiClient.post("/visit-requests", payload);
+      const res = await apiClient.post("/visit-requests", payload, { params: personalMode ? { personal: 1 } : undefined });
       await savePhoto(res.data?.data?.id);
       toast.success("Visit request created successfully");
       leave(true);
@@ -824,7 +860,10 @@ export default function NewRequest() {
     try {
       const fd = new FormData();
       fd.append("photo", await (await fetch(visitorPhoto)).blob(), "visitor_photo.jpg");
-      await apiClient.post(`/visit-requests/${requestId}/photo`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      await apiClient.post(`/visit-requests/${requestId}/photo`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+        params: personalMode ? { personal: 1 } : undefined,
+      });
     } catch (err) {
       toast.error(getApiErrorMessage(err, "The request is saved, but the photo couldn't be uploaded. Take it at check-in."), { duration: 6000 });
     }
@@ -837,7 +876,7 @@ export default function NewRequest() {
     setConflictModal(null);
     try {
       const payload = { ...conflictModal.pendingPayload, force_create: true };
-      const res = await apiClient.post("/visit-requests", payload);
+      const res = await apiClient.post("/visit-requests", payload, { params: personalMode ? { personal: 1 } : undefined });
       await savePhoto(res.data?.data?.id);
       toast.success("Visit request created (conflict overridden).");
       leave(true);
@@ -851,8 +890,8 @@ export default function NewRequest() {
   // ── Derived booleans ──────────────────────────────────────────────────────────
   const isUnitAdmin = user?.role_type === "unit_admin";
   const isSuperAdminUser = user?.role_type === "super_admin";
-  // Super Admin can create emp-visit only when managing a unit
-  const isAdminEmpVisit = (isUnitAdmin || (isSuperAdminUser && !!activeUnit));
+  // Super Admin can arrange emp-visits only while managing a unit; personal visits use the employee flow.
+  const isAdminEmpVisit = !personalMode && (isUnitAdmin || (isSuperAdminUser && !!activeUnit));
   const cat = formData.visit_category;
   const isVendor = cat === "VENDOR";
   const isSpotBusiness = cat === "SPOT" && spotVisitorType === "business";
@@ -965,7 +1004,31 @@ export default function NewRequest() {
           <SectionTitle icon={Users} title="Visitor and host" />
 
           {/* Employee visit — mode + cascading employee picker */}
-          {isEmpVisit && !isAdminEmpVisit && (
+          {isEmpVisit && isAdminEmpVisit && isUnitAdmin && (
+            <div className="mb-4">
+              <p className="field-label">Employee visit for</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Employee visit for">
+                {[
+                  { mode: "self", label: "Myself", desc: "Act as your unit employee profile." },
+                  { mode: "arrange", label: "Another employee", desc: "Choose a visitor and their host." },
+                ].map(({ mode, label, desc }) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={adminEmpMode === mode}
+                    onClick={() => setAdminEmpMode(mode)}
+                    className={choiceCls(adminEmpMode === mode)}
+                  >
+                    <span className={`block text-[13px] font-medium ${adminEmpMode === mode ? "text-primary-strong" : "text-ink"}`}>{label}</span>
+                    <span className="block text-[12px] text-muted mt-0.5">{desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {isEmpVisit && (!isAdminEmpVisit || adminEmpMode === "self") && (
             <div className="space-y-4">
               <div>
                 <p className="field-label">What are you doing?</p>
@@ -1050,7 +1113,7 @@ export default function NewRequest() {
           )}
 
           {/* Employee visit arranged by a unit admin (or a super admin managing a unit) */}
-          {isEmpVisit && isAdminEmpVisit && (
+          {isEmpVisit && isAdminEmpVisit && adminEmpMode === "arrange" && (
             <div className="space-y-3">
               <Note tone="info" icon={AlertCircle}>
                 <b>Arrange an employee visit.</b>{" "}

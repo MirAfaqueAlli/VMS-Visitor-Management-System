@@ -9,8 +9,9 @@ const UNIT_NAV = [
   { label: 'Dashboard', to: '/dashboard' },
   { group: 'Visits', items: [
     // Security works from Gate Security (walk-ins are registered there), not these lists
-    { label: 'Visit Requests', to: '/requests', roles: ['unit_admin', 'employee', 'receptionist'] },
-    { label: 'Visitors',       to: '/visitors', roles: ['unit_admin', 'employee', 'receptionist'] },
+    { label: 'Requests', to: '/requests', roles: ['unit_admin', 'employee', 'receptionist'] },
+    { label: 'Visitors', to: '/visitors/log', roles: ['unit_admin'] },
+    { label: 'Visitors', to: '/visitors', roles: ['employee', 'receptionist'] },
   ] },
   { group: 'Approval', items: [
     { label: 'Approvals', to: '/approvals', roles: ['unit_admin', 'employee'], countKey: 'approvals' },
@@ -32,6 +33,11 @@ const UNIT_NAV = [
 
 const CENTRAL_NAV = [
   { label: 'Dashboard', to: '/dashboard' },
+  { group: 'My Visits', items: [
+    { label: 'My Requests',  to: '/my/requests',  roles: ['super_admin'] },
+    { label: 'My Visitors',  to: '/my/visitors',  roles: ['super_admin'] },
+    { label: 'My Approvals', to: '/my/approvals', roles: ['super_admin'] },
+  ] },
   { group: 'Masters', items: [
     { label: 'Units',        to: '/super/units' },
     { label: 'Global Users', to: '/super/users' },
@@ -42,12 +48,12 @@ const CENTRAL_NAV = [
   ] },
 ];
 
-// A super admin managing one unit: oversight only (no gate, no approvals)
+// A super admin managing one unit: oversight + can act as their unit employee profile
 const MANAGED_UNIT_NAV = [
   { label: 'Unit Dashboard', to: '/unit-dashboard' },
   { group: 'Visits', items: [
-    { label: 'Visit Requests', to: '/requests' },
-    { label: 'Visitors',       to: '/visitors' },
+    { label: 'Requests', to: '/requests' },
+    { label: 'Visitors', to: '/visitors' },
   ] },
   { group: 'Masters', items: [
     { label: 'Employees',            to: '/admin/employees' },
@@ -70,18 +76,23 @@ const allowed = (item, role) => !item.roles || item.roles.includes(role);
  * The nav sections for the signed-in user: [{ title?, entries: (NavLink|NavGroup)[] }].
  * Entries a role can't open are dropped, and so are groups left empty.
  */
-export function navSections({ role, isSuperAdmin, isGlobalAuditor, activeUnit }) {
+export function navSections({ role, isSuperAdmin, isGlobalAuditor, activeUnit, hasUnitProfile }) {
   const filter = (entries) => entries
     .map((e) => (e.group ? { ...e, items: e.items.filter((i) => allowed(i, role)) } : e))
     .filter((e) => (e.group ? e.items.length > 0 : allowed(e, role)));
 
+  // My Visits is personal: only while the super admin has a unit membership.
+  const centralNav = isSuperAdmin && !hasUnitProfile
+    ? CENTRAL_NAV.filter((entry) => entry.group !== 'My Visits')
+    : CENTRAL_NAV;
+
   if (isSuperAdmin && activeUnit) {
     return [
-      { title: 'Central', entries: filter(CENTRAL_NAV) },
+      { title: 'Central', entries: filter(centralNav) },
       { title: activeUnit.name, entries: filter(MANAGED_UNIT_NAV) },
     ];
   }
-  if (isSuperAdmin) return [{ entries: filter(CENTRAL_NAV) }];
+  if (isSuperAdmin) return [{ entries: filter(centralNav) }];
   if (isGlobalAuditor) return [{ entries: filter(AUDITOR_NAV) }];
   return [{ entries: filter(UNIT_NAV) }];
 }

@@ -4,8 +4,9 @@
 // rows open the request; Approve / Reject is the row's real action.
 import { Fragment, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, X, Loader2, RefreshCw } from "../../components/icons";
+import { Check, X, Loader2, RefreshCw, Calendar } from "../../components/icons";
 import ScheduleConflictModal from "../../components/shared/ScheduleConflictModal";
+import RescheduleApproveModal from "../../components/shared/RescheduleApproveModal";
 import { hostConflictOf } from "../../lib/approvalConflict";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
@@ -30,7 +31,7 @@ const CATEGORY_LABELS = {
 const isToday = (d) => d && new Date(d).toDateString() === new Date().toDateString();
 
 /* ── One request: row + (when deciding) a remarks row under it ──────────────── */
-function ApprovalRow({ item, isUnitAdmin, onActionSuccess, onOpen }) {
+function ApprovalRow({ item, isUnitAdmin, onActionSuccess, onOpen, personal, onReschedule }) {
   const [mode,         setMode]         = useState(null);   // null | 'approve' | 'reject'
   const [remarks,      setRemarks]      = useState("");
   const [remarkError,  setRemarkError]  = useState("");
@@ -42,7 +43,7 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess, onOpen }) {
   const doApprove = async (forceApprove = false) => {
     setSubmitting(true);
     try {
-      await apiClient.put(`/approvals/${item.visit_request_id}/approve`, {
+      await apiClient.put(`/approvals/${item.visit_request_id}/approve${personal ? '?personal=1' : ''}`, {
         remarks: remarks.trim() || undefined,
         force_approve: forceApprove || undefined,
       });
@@ -67,7 +68,7 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess, onOpen }) {
     if (mode === "approve") { await doApprove(false); return; }
     setSubmitting(true);
     try {
-      await apiClient.put(`/approvals/${item.visit_request_id}/reject`, { remarks: remarks.trim() || undefined });
+      await apiClient.put(`/approvals/${item.visit_request_id}/reject${personal ? '?personal=1' : ''}`, { remarks: remarks.trim() || undefined });
       toast.success(`${name}'s visit rejected — the visitor has been told.`);
       onActionSuccess(item.visit_request_id);
     } catch (err) {
@@ -105,7 +106,10 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess, onOpen }) {
         </td>
         <td className="whitespace-nowrap text-muted">{relTime(item.assigned_at)}</td>
         <td onClick={(e) => e.stopPropagation()}>
-          <div className="flex justify-end gap-1.5">
+          <div className="flex flex-wrap justify-end gap-1.5">
+            <button type="button" className="btn-outline btn-sm" onClick={() => onReschedule(item)} disabled={submitting}>
+              <Calendar size={13} /> Reschedule
+            </button>
             <button type="button" className="btn-danger btn-sm" onClick={() => openMode("reject")} disabled={submitting}>
               <X size={13} /> Reject
             </button>
@@ -157,7 +161,7 @@ function ApprovalRow({ item, isUnitAdmin, onActionSuccess, onOpen }) {
 }
 
 /* ── Page ───────────────────────────────────────────────────────────────────── */
-export default function ApprovalInbox() {
+export default function ApprovalInbox({ personal = false } = {}) {
   const { user }    = useAuth();
   const { theme }   = useTheme();
   const navigate    = useNavigate();
@@ -173,7 +177,7 @@ export default function ApprovalInbox() {
   const fetchInbox = useCallback(async () => {
     try {
       setLoading(true);
-      const res  = await apiClient.get("/approvals/inbox", { params: { page, limit } });
+      const res  = await apiClient.get("/approvals/inbox", { params: { page, limit, ...(personal ? { personal: 1 } : {}) } });
       const data = res.data?.data;
       setItems(data?.items || []);
       setTotalPages(data?.pagination?.pages || 1);
@@ -183,13 +187,42 @@ export default function ApprovalInbox() {
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, [page, personal]);
 
   useEffect(() => { fetchInbox(); }, [fetchInbox]);
 
   const handleActionSuccess = (visitRequestId) => {
     setItems((prev) => prev.filter((i) => i.visit_request_id !== visitRequestId));
     setTotalCount((n) => Math.max(0, n - 1));
+  };
+
+  const [rescheduleItem, setRescheduleItem] = useState(null);
+  const [rescheduleBusy, setRescheduleBusy] = useState(false);
+  const [rescheduleConflict, setRescheduleConflict] = useState(null);
+
+  const submitReschedule = async (values, force = false) => {
+    if (!rescheduleItem) return;
+    setRescheduleBusy(true);
+    try {
+      await apiClient.put(`/approvals/${rescheduleItem.visit_request_id}/approve${personal ? '?personal=1' : ''}`, {
+        reschedule: true,
+        visit_date: values.date,
+        visit_start_time: values.start,
+        visit_end_time: values.end,
+        remarks: values.remarks || undefined,
+        force_approve: force || undefined,
+      });
+      toast.success("Request rescheduled and approved — the visitor has been notified.");
+      handleActionSuccess(rescheduleItem.visit_request_id);
+      setRescheduleItem(null);
+      setRescheduleConflict(null);
+    } catch (err) {
+      const conflict = force ? null : hostConflictOf(err);
+      if (conflict) { setRescheduleConflict(conflict); return; }
+      toast.error(err.response?.data?.message || "Failed to reschedule and approve.");
+    } finally {
+      setRescheduleBusy(false);
+    }
   };
 
   /* Socket: new request arrives */
@@ -237,7 +270,7 @@ export default function ApprovalInbox() {
 
   return (
     <div className="animate-fade-in">
-      <PageHeader title="Approvals" actions={refresh} />
+      <PageHeader title={personal ? "My Approvals" : "Approvals"} actions={refresh} />
 
       {/* Nothing pending: the illustrated empty state */}
       {!loading && items.length === 0 ? (
@@ -288,8 +321,10 @@ export default function ApprovalInbox() {
                       key={item.visit_request_id}
                       item={item}
                       isUnitAdmin={isUnitAdmin}
+                      personal={personal}
                       onActionSuccess={handleActionSuccess}
-                      onOpen={() => navigate(`/requests/${item.visit_request_id}`)}
+                      onReschedule={setRescheduleItem}
+                      onOpen={() => navigate(`/requests/${item.visit_request_id}${personal ? '?personal=1' : ''}`)}
                     />
                   ))
                 )}
@@ -300,6 +335,16 @@ export default function ApprovalInbox() {
           {!loading && <Pagination page={page} totalPages={totalPages} totalCount={totalCount} onPageChange={setPage} />}
         </>
       )}
+
+      <RescheduleApproveModal
+        open={!!rescheduleItem}
+        request={rescheduleItem}
+        busy={rescheduleBusy}
+        conflict={rescheduleConflict}
+        onClose={() => { setRescheduleItem(null); setRescheduleConflict(null); }}
+        onSubmit={submitReschedule}
+        onResolveConflict={() => setRescheduleConflict(null)}
+      />
     </div>
   );
 }

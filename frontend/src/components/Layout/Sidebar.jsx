@@ -37,10 +37,10 @@ function Link({ link, rail, sub, counts, onNavigate }) {
 }
 
 export default function Sidebar({ rail, onToggleRail, mobileOpen, onNavigate }) {
-  const { user, isSuperAdmin, isGlobalAuditor, activeUnit, setActiveUnit } = useAuth();
+  const { user, isSuperAdmin, isGlobalAuditor, activeUnit, setActiveUnit, hasUnitProfile } = useAuth();
   const { pathname } = useLocation();
   const role = user?.role_type;
-  const sections = navSections({ role, isSuperAdmin, isGlobalAuditor, activeUnit });
+  const sections = navSections({ role, isSuperAdmin, isGlobalAuditor, activeUnit, hasUnitProfile });
 
   // Groups the user opened / closed; otherwise a group is open when it holds the current page
   const [manual, setManual] = useState({});

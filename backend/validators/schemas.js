@@ -100,7 +100,10 @@ const createUserSchema = z.object({
   designation:    optString.optional(),
   designation_id: maybeNumber.optional(),
   unit_id:        maybeNumber.optional(),
-});
+}).refine(
+  (data) => data.role_type !== 'unit_admin' || (data.phone != null && /^\d{10,15}$/.test(String(data.phone))),
+  { message: 'Phone number is required for unit admins.', path: ['phone'] }
+);
 
 const updateUserSchema = z.object({
   full_name:      z.string().trim().min(2).max(100).optional(),
@@ -151,7 +154,7 @@ const createUnitSchema = z.object({
     email:          emailField,
     password:       passwordField,
     employee_code:  z.string().trim().min(1).optional().default('UA-001'),
-    phone:          phoneFieldOpt.optional(),
+    phone:          phoneField,
   }).optional(),
 });
 
@@ -264,6 +267,11 @@ const rejectAtGateSchema = z.object({
 const approveSchema = z.object({
   remarks:       optString.optional(),
   force_approve: z.boolean().optional().default(false),
+  // Reschedule & accept
+  reschedule:      z.boolean().optional().default(false),
+  visit_date:      z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid visit date.').optional(),
+  visit_start_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Invalid start time.').optional().nullable(),
+  visit_end_time:   z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Invalid end time.').optional().nullable(),
 });
 
 const rejectSchema = z.object({

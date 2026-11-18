@@ -57,7 +57,7 @@ const listUsers = async (req, res) => {
 
     const [rows] = await req.db.query(
       `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
-              u.employee_code, u.role_type, u.department_id, u.unit_id,
+              u.employee_code, u.role_type, u.is_admin_profile, u.department_id, u.unit_id,
               u.is_active, u.created_at, u.last_login_at,
               d.name AS department_name
        FROM users u
@@ -140,7 +140,7 @@ const listHosts = async (req, res) => {
     } else {
       roleFilter = isCrossUnit
         ? `u.role_type IN ('employee', 'unit_admin', 'receptionist', 'security')`
-        : `u.role_type = 'employee'`;
+        : `u.role_type IN ('employee', 'unit_admin')`;
     }
 
     const columns = isPublic
@@ -148,7 +148,7 @@ const listHosts = async (req, res) => {
                 des.name AS designation_name,
                 d.name AS department_name`
       : `u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
-                u.role_type, u.department_id, u.unit_id,
+                u.role_type, u.is_admin_profile, u.department_id, u.unit_id,
                 des.name AS designation_name,
                 d.name AS department_name`;
 
@@ -196,7 +196,7 @@ const getUserById = async (req, res) => {
 
     const [rows] = await req.db.query(
       `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
-              u.employee_code, u.role_type, u.department_id, u.unit_id,
+              u.employee_code, u.role_type, u.is_admin_profile, u.department_id, u.unit_id,
               u.is_active, u.created_at, u.last_login_at,
               d.name AS department_name
        FROM users u
@@ -268,16 +268,40 @@ const createUser = async (req, res) => {
       return sendError(res, 'department_id is required for this role.', 400);
     }
 
+    // ── Existing unit users ──────────────────────────────────────────────────
+    // A unit admin already exists in this unit (dual-role), so they must not be
+    // added again. No existing unit user may be re-added as an employee.
+    const emailKey = String(email || '').trim().toLowerCase();
+    const phoneDigits = phoneKey(phone);
+    const contactSql = `((? <> '' AND LOWER(email) = ?) OR (? <> '' AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', ''), 10) = ?))`;
+
+    const selfIsUnitAdmin = isUnitAdmin(req.user);
+    const selfEmailHit = selfIsUnitAdmin && emailKey && emailKey === String(req.user.email || '').trim().toLowerCase();
+    const selfPhoneHit = selfIsUnitAdmin && phoneDigits && phoneDigits === phoneKey(req.user.phone);
+    if (selfEmailHit || selfPhoneHit) {
+      return sendError(res,
+        'Your admin profile already exists in this unit. Set a department on your own profile to host visits — you do not need to add yourself as an employee.',
+        409);
+    }
+
+    const [localContact] = await req.db.query(
+      `SELECT id FROM users WHERE deleted_at IS NULL AND ${contactSql} LIMIT 1`,
+      [emailKey, emailKey, phoneDigits, phoneDigits]
+    );
+    if (localContact.length > 0) {
+      return sendError(res, 'This email or mobile already belongs to a unit user in this unit. Use a different email or mobile for the employee.', 409);
+    }
+
     // Email and mobile are unique across the whole system (central + every unit)
     if (await rejectIfContactTaken(res, sendError, { email, phone })) return;
 
-    // Check for duplicates within this unit DB (also covers the employee code)
+    // Check for duplicate employee code within this unit DB
     const [existing] = await req.db.query(
-      `SELECT id FROM users WHERE (email = ? OR phone = ? OR employee_code = ?) AND deleted_at IS NULL LIMIT 1`,
-      [email, phone || '', employee_code]
+      `SELECT id FROM users WHERE employee_code = ? AND deleted_at IS NULL LIMIT 1`,
+      [employee_code]
     );
     if (existing.length > 0) {
-      return sendError(res, 'A user with this email, phone, or employee code already exists in this unit.', 409);
+      return sendError(res, 'A user with this employee code already exists in this unit.', 409);
     }
 
     // Enforce password policy
@@ -298,7 +322,7 @@ const createUser = async (req, res) => {
 
     const [newUser] = await req.db.query(
       `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
-              u.employee_code, u.role_type, u.department_id, u.unit_id,
+              u.employee_code, u.role_type, u.is_admin_profile, u.department_id, u.unit_id,
               u.is_active, u.created_at, d.name AS department_name
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id
@@ -339,10 +363,17 @@ const updateUser = async (req, res) => {
     if (existing.length === 0) return sendError(res, 'User not found.', 404);
 
     const targetUser = existing[0];
+    const isSelf = Number(id) === Number(req.user.id);
 
-    // Unit admins cannot edit their own details or unit admin details from user management
-    if (req.user.role_type === 'unit_admin' && (Number(id) === Number(req.user.id) || targetUser.role_type === 'unit_admin')) {
-      return sendError(res, 'Unit admins cannot edit their own details from user management.', 403);
+    // A super admin's unit profile is managed from their own Profile page.
+    if (targetUser.is_admin_profile) {
+      return sendError(res, "This super admin profile is managed from the super admin's own profile page.", 403);
+    }
+
+    // Unit admins may complete/edit their own profile (e.g. add a department),
+    // but never another unit admin account.
+    if (req.user.role_type === 'unit_admin' && !isSelf && targetUser.role_type === 'unit_admin') {
+      return sendError(res, 'Unit admins cannot edit other unit admins.', 403);
     }
 
     // Validate email format if provided
@@ -363,6 +394,16 @@ const updateUser = async (req, res) => {
 
     if (role_type && !UNIT_MANAGEABLE_ROLES.includes(role_type)) {
       return sendError(res, `role_type must be one of: ${UNIT_MANAGEABLE_ROLES.join(', ')}.`, 400);
+    }
+
+    // A unit admin keeps their admin role on self-edit.
+    let effectiveRole = role_type || null;
+    if (isSelf && req.user.role_type === 'unit_admin') effectiveRole = 'unit_admin';
+
+    // Unit admins always need a phone number (used for WhatsApp / SMS notifications).
+    const effectivePhone = phone !== undefined ? phone : targetUser.phone;
+    if ((effectiveRole || targetUser.role_type) === 'unit_admin' && !String(effectivePhone || '').trim()) {
+      return sendError(res, 'Phone number is required for unit admins.', 400);
     }
 
     // A changed email / mobile must not belong to any other account in the system.
@@ -391,12 +432,12 @@ const updateUser = async (req, res) => {
        WHERE id = ?`,
       [full_name || null, email || null, phone || null,
        designation || null, designation_id || null,
-       role_type || null, effectiveDeptId, id]
+       effectiveRole, effectiveDeptId, id]
     );
 
     const [updated] = await req.db.query(
       `SELECT u.id, u.full_name, u.email, u.phone, u.designation, u.designation_id,
-              u.employee_code, u.role_type, u.department_id, u.unit_id,
+              u.employee_code, u.role_type, u.is_admin_profile, u.department_id, u.unit_id,
               u.is_active, u.created_at, d.name AS department_name
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id WHERE u.id = ?`,
@@ -435,9 +476,14 @@ const deactivateUser = async (req, res) => {
     }
 
     const [existing] = await req.db.query(
-      `SELECT id, is_active, department_id, role_type FROM users WHERE id = ? AND deleted_at IS NULL`, [id]
+      `SELECT id, is_active, department_id, role_type, is_admin_profile FROM users WHERE id = ? AND deleted_at IS NULL`, [id]
     );
     if (existing.length === 0) return sendError(res, 'User not found.', 404);
+
+    // A super admin's unit profile is managed from their own Profile page.
+    if (existing[0].is_admin_profile) {
+      return sendError(res, "This super admin profile is managed from the super admin's own profile page.", 403);
+    }
 
     // A unit admin can't remove another unit admin (it could lock the unit out) —
     // only a super admin can, the same rule as editing unit admins

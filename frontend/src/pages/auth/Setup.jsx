@@ -356,7 +356,7 @@ export default function Setup() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
             <TextField {...field("admin_phone")} label="Mobile number" icon={Phone} type="tel" required
               autoComplete="tel" placeholder="e.g. 98765 43210"
-              hint="Verified by SMS code." />
+              hint="WhatsApp number preferred · verified by SMS code." />
             <TextField {...field("admin_employee_code")} label="Employee code" icon={Hash} required mono placeholder="SA-001" />
           </div>
 

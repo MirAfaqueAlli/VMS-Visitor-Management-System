@@ -42,7 +42,7 @@ function RoleBadge({ role }) {
 function UserSlideOver({
   isOpen, onClose, onSuccess, editUser,
   departments, isUnitAdmin, lockedDepartmentId, designations,
-  onDepartmentChange, activeTab,
+  onDepartmentChange, activeTab, isSelfEdit,
 }) {
   const isEdit   = !!editUser;
   const noDepts  = !isEdit && departments.length === 0;
@@ -98,6 +98,10 @@ function UserSlideOver({
   // Only block creation when dept is actually required for the selected role
   const deptRequiredForRole = !isNoDeptRole && form.role_type !== 'unit_admin';
   const blockForNoDepts = noDepts && deptRequiredForRole && !isSecurityTab;
+  // Own admin profile: the role is fixed, and a department makes them host-eligible
+  const roleLocked = isSelfEdit;
+  const selfNeedsDepartment = isSelfEdit && form.role_type === 'unit_admin' && departments.length > 0;
+  const departmentRequired = deptRequiredForRole || selfNeedsDepartment;
 
   const set = (field) => (e) => {
     const value = e.target.value;
@@ -143,6 +147,11 @@ function UserSlideOver({
     }
     // ─────────────────────────────────────────────────────────────────────────
 
+    if (selfNeedsDepartment && !form.department_id) {
+      toast.error('Please choose your department to complete your profile and become eligible to host visits.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const payload = {
@@ -174,7 +183,7 @@ function UserSlideOver({
         await apiClient.post("/users", payload);
         toast.success(isSecurityTab ? "Security / reception staff member created." : "Employee created.");
       }
-      onSuccess();
+      await onSuccess();
       onClose();
     } catch (err) {
       toast.error(getApiErrorMessage(err, "Failed to save user."));
@@ -239,7 +248,7 @@ function UserSlideOver({
           <p className="group-heading">Role</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Role" required>
-              <Select value={form.role_type} onChange={set("role_type")} required aria-label="Role">
+              <Select value={form.role_type} onChange={set("role_type")} required disabled={roleLocked} aria-label="Role">
                 {isSecurityTab ? (
                   <>
                     <option value="security">Security guard / officer</option>
@@ -267,7 +276,7 @@ function UserSlideOver({
             ) : <div className="hidden sm:block" />}
 
             {!isSecurityTab && (<>
-            <Field label="Department" required={!isNoDeptRole && form.role_type !== 'unit_admin'}>
+            <Field label="Department" required={departmentRequired}>
               {isNoDeptRole ? (
                 // Security / receptionist / auditor have no department
                 <div className="control flex items-center bg-surface-alt text-muted cursor-not-allowed select-none">
@@ -281,7 +290,7 @@ function UserSlideOver({
                 <Select searchable
                   value={form.department_id}
                   onChange={set("department_id")}
-                  required={!isNoDeptRole && form.role_type !== 'unit_admin'}
+                  required={departmentRequired}
                   aria-label="Department"
                 >
                   <option value="">Select department</option>
@@ -330,10 +339,13 @@ function UserSlideOver({
 
 // ── Main Page ───────────────────────────────────────────────────────────────
 export default function UserManagement({ initialTab = "employees" }) {
-  const { user: currentUser, isUnitAdmin } = useAuth();
+  const { user: currentUser, isUnitAdmin, refreshUser } = useAuth();
   // The route decides which page this is (App.jsx keys each one, so state never leaks)
   const activeTab = initialTab === "security" ? "security" : "employees";
   const isSecurity = activeTab === "security";
+  // A unit admin is also a host — but only after they set a department on their own profile
+  const adminProfileIncomplete = isUnitAdmin && !currentUser?.department_id;
+  const isSuperAdminUser = currentUser?.role_type === "super_admin";
 
   const [users,          setUsers]          = useState([]);
   const [departments,    setDepartments]    = useState([]);
@@ -419,11 +431,21 @@ export default function UserManagement({ initialTab = "employees" }) {
     setEditUser(null); setDesignations([]); setPanelOpen(true);
   };
   const openEdit = (u) => {
-    if (u.role_type === "unit_admin" || u.id === currentUser?.id) {
+    if (u.is_admin_profile) {
+      toast.error("This super admin profile is managed from the super admin's own profile page.");
+      return;
+    }
+    // Unit admins can edit their own profile, but not other unit admin accounts.
+    // A super admin can edit any unit admin.
+    if (u.role_type === "unit_admin" && u.id !== currentUser?.id && !isSuperAdminUser) {
       toast.error("Unit Admin details cannot be edited here.");
       return;
     }
     setEditUser(u);
+    setPanelOpen(true);
+  };
+  const completeOwnProfile = () => {
+    setEditUser(currentUser);
     setPanelOpen(true);
   };
 
@@ -449,7 +471,10 @@ export default function UserManagement({ initialTab = "employees" }) {
     status: (u) => (u.is_active ? 0 : 1),
   });
 
-  const canEdit = (u) => !(u.role_type === "unit_admin" || u.id === currentUser?.id);
+  const canEdit = (u) => {
+    if (u.is_admin_profile) return false;
+    return u.id === currentUser?.id || u.role_type !== "unit_admin" || isSuperAdminUser;
+  };
   const deactivating = users.find(u => u.id === deactivatingId);
   const [deactivateBusy, setDeactivateBusy] = useState(false);
   const confirmDeactivate = async () => {
@@ -473,6 +498,19 @@ export default function UserManagement({ initialTab = "employees" }) {
         <Note tone="warning" icon={AlertTriangle} className="mb-4">
           <b>No departments yet.</b> Employees need a department; unit auditors don&apos;t.{" "}
           <Link to="/admin/departments" className="text-link font-medium">Create a department</Link>
+        </Note>
+      )}
+
+      {!isSecurity && !loading && departments.length > 0 && adminProfileIncomplete && (
+        <Note tone="warning" icon={AlertTriangle} className="mb-4">
+          <b>Fill your details to be eligible to make visits and requests.</b> Add a department to your own admin profile so it can act as a host.{" "}
+          <button type="button" onClick={completeOwnProfile} className="text-link font-medium">Complete my profile</button>
+        </Note>
+      )}
+
+      {!isSecurity && !loading && (isUnitAdmin || isSuperAdminUser) && (
+        <Note tone="info" className="mb-4">
+          A super admin joins a unit from <b>their own Profile page</b>. Their employee profile appears here as <b>Admin host</b> and can only be changed or removed by them.
         </Note>
       )}
 
@@ -522,11 +560,12 @@ export default function UserManagement({ initialTab = "employees" }) {
                   key={u.id}
                   className={editable ? "is-clickable" : undefined}
                   onClick={editable ? () => openEdit(u) : undefined}
-                  title={editable ? undefined : "Unit admin details can't be edited here"}
+                  title={editable ? undefined : (u.is_admin_profile ? "Managed from the super admin's own profile page" : "Unit admin details can't be edited here")}
                 >
                   <td>
                     <span className={`font-medium ${u.is_active ? "" : "text-muted"}`}>{u.full_name}</span>
                     {u.id === currentUser?.id && <span className="ml-1.5"><Tag tone="brand">You</Tag></span>}
+                    {u.is_admin_profile && <span className="ml-1.5"><Tag tone="info">Admin host</Tag></span>}
                     <span className="cell-sub">{u.email}</span>
                   </td>
                   <td className="mono">{u.employee_code}</td>
@@ -541,7 +580,7 @@ export default function UserManagement({ initialTab = "employees" }) {
                   )}
                   <td>{u.is_active ? <State tone="success">Active</State> : <State tone="neutral">Inactive</State>}</td>
                   <td>
-                    {u.is_active && u.id !== currentUser?.id && (u.role_type !== "unit_admin" || currentUser?.role_type === "super_admin") && (
+                    {u.is_active && u.id !== currentUser?.id && !u.is_admin_profile && (u.role_type !== "unit_admin" || currentUser?.role_type === "super_admin") && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setDeactivatingId(u.id); }}
@@ -565,7 +604,10 @@ export default function UserManagement({ initialTab = "employees" }) {
       <UserSlideOver
         isOpen={panelOpen}
         onClose={() => { setPanelOpen(false); setEditUser(null); }}
-        onSuccess={fetchData}
+        onSuccess={async () => {
+          await fetchData();
+          if (editUser && editUser.id === currentUser?.id) await refreshUser();
+        }}
         editUser={editUser}
         departments={departments}
         isUnitAdmin={isUnitAdmin}
@@ -573,6 +615,7 @@ export default function UserManagement({ initialTab = "employees" }) {
         designations={designations}
         onDepartmentChange={fetchDesignations}
         activeTab={activeTab}
+        isSelfEdit={!!editUser && editUser.id === currentUser?.id}
       />
 
       <Modal

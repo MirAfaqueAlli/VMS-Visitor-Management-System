@@ -182,7 +182,7 @@ export default function RegisterOrganization() {
             <Field label="Email" htmlFor="ro-admin-email" required>
               <input id="ro-admin-email" type="email" name="email" required value={adminData.email} onChange={handleAdminChange} className="control" placeholder="admin@ohpc.co.in" />
             </Field>
-            <Field label="Phone" htmlFor="ro-admin-phone" required>
+            <Field label="Phone" htmlFor="ro-admin-phone" required hint="WhatsApp number preferred">
               <input id="ro-admin-phone" type="tel" name="phone" required value={adminData.phone} onChange={handleAdminChange} className="control tabular" placeholder="Mobile number" />
             </Field>
             <Field label="Employee code" htmlFor="ro-admin-code" required>

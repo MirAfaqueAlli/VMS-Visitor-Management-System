@@ -5,7 +5,7 @@
  * The gate pass as a PDF — the same pass security prints from the Gate pass page
  * (frontend/src/components/gate/GatePassCard.jsx, print layout): OHPC letterhead, the
  * visitor's photo (or initials), visitor / host, QR, purpose, validity and the faint OHPC
- * watermark, 190 × 138.5 mm on half an A4 sheet (A5 landscape).
+ * watermark, 190 × 138.5 mm at the top of an A4 sheet — exactly like the browser print.
  *
  * Sent to visitors as a WhatsApp document and attached to their approval email. The fonts
  * are embedded (assets/fonts — Liberation Sans), so it reads the same on every device.
@@ -150,7 +150,7 @@ async function renderGatePassPdf(db, passId) {
   const [{ logo, emblem }, qr, photo] = await Promise.all([loadArtwork(), qrPng(rec), photoSquare(rec.photo_path)]);
 
   const doc = new PDFDocument({
-    size: 'A5', layout: 'landscape', margin: 0,
+    size: 'A4', layout: 'portrait', margin: 0,
     info: { Title: `Gate pass ${rec.pass_number}`, Author: 'Odisha Hydro Power Corporation Ltd.', Subject: 'Visitor gate pass' },
   });
   doc.registerFont('sans', SANS);
@@ -159,11 +159,11 @@ async function renderGatePassPdf(db, passId) {
   doc.on('data', (c) => chunks.push(c));
   const done = new Promise((resolve, reject) => { doc.on('end', resolve); doc.on('error', reject); });
 
-  // The card: 190 × 138.5 mm, centred on the half-A4 sheet
+  // The card: 190 × 138.5 mm at the top-left of A4 (10 mm margins), matching the HTML print
   const W = 190 * MM;
   const H = 138.5 * MM;
-  const X = (doc.page.width - W) / 2;
-  const Y = (doc.page.height - H) / 2;
+  const X = 10 * MM;
+  const Y = 10 * MM;
   const padX = 24 * PX;
   const L = X + padX;
   const R = X + W - padX;

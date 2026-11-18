@@ -6,6 +6,7 @@ const { logAudit }               = require('../utils/auditLogger.util');
 const { generateGatePass }       = require('../services/gatePass.service');
 const { isSuperAdmin, isUnitAdmin, isEmployee } = require('../middlewares/rbac.middleware');
 const { centralPool, getPool }      = require('../services/dbManager');
+const { findSuperAdminProfile }     = require('../services/adminProfile.service');
 
 /** Last 10 digits, for comparing mobile numbers. */
 const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
@@ -80,6 +81,13 @@ const generatePass = async (req, res) => {
  */
 const getPass = async (req, res) => {
   try {
+    const personal = req.query.personal === '1' && isSuperAdmin(req.user);
+    if (personal) {
+      const profile = await findSuperAdminProfile(req.user.id);
+      if (!profile) return sendError(res, 'Gate pass not found.', 404);
+      req.db = getPool(profile.unit_db);
+      req.unitDbName = profile.unit_db;
+    }
     await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
     const { passNumber } = req.params;
     const employee = isEmployee(req.user);

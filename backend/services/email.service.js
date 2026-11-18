@@ -355,11 +355,15 @@ const visitRequestTemplate = (visitorName, hostName, visitDate, purpose, orgName
 /**
  * Template: Approval confirmation sent to visitor.
  */
-const visitApprovedTemplate = (visitorName, hostName, visitDate, unitName, passNumber = null, qrCodeUrl = null, visitTime = null) => {
+const visitApprovedTemplate = (visitorName, hostName, visitDate, unitName, passNumber = null, qrCodeUrl = null, visitTime = null, rescheduled = false) => {
   const when = displayDateTime(visitDate, visitTime);
-  const title = passNumber ? 'Visit approved – gate pass issued' : 'Visit approved';
+  const title = rescheduled
+    ? (passNumber ? 'Visit rescheduled & approved – gate pass issued' : 'Visit rescheduled & approved')
+    : (passNumber ? 'Visit approved – gate pass issued' : 'Visit approved');
   const body = greeting(visitorName)
-    + para(`Your visit request has been <strong style="color:${C.success};">approved</strong>. The details of your visit are given below.`)
+    + para(rescheduled
+      ? `Your visit request has been <strong style="color:${C.success};">rescheduled and approved</strong>. The host changed the date and time; the new details are below.`
+      : `Your visit request has been <strong style="color:${C.success};">approved</strong>. The details of your visit are given below.`)
     + detailsTable([
       ['To meet', hostName],
       ['Unit', unitName],
@@ -371,8 +375,15 @@ const visitApprovedTemplate = (visitorName, hostName, visitDate, unitName, passN
     + instructions('Instructions for the visitor', VISITOR_INSTRUCTIONS)
     + para(`You can see your gate pass and track the status of your visit on the <a href="${escapeHtml(appUrl('/public-request'))}" style="color:${C.link};">OHPC visitor portal</a>.`);
   return {
-    subject: subjectOf(passNumber ? `Visit approved – Gate pass ${passNumber}` : 'Your visit request has been approved'),
-    html: letter({ title, preheader: `Your visit on ${when} to meet ${hostName} is approved.`, ref: passNumber, body }),
+    subject: subjectOf(rescheduled
+      ? (passNumber ? `Visit rescheduled & approved – Gate pass ${passNumber}` : 'Your visit has been rescheduled and approved')
+      : (passNumber ? `Visit approved – Gate pass ${passNumber}` : 'Your visit request has been approved')),
+    html: letter({
+      title,
+      preheader: rescheduled ? `Your visit has been rescheduled to ${when} and approved.` : `Your visit on ${when} to meet ${hostName} is approved.`,
+      ref: passNumber,
+      body,
+    }),
   };
 };
 
@@ -380,11 +391,13 @@ const visitApprovedTemplate = (visitorName, hostName, visitDate, unitName, passN
  * Template: approval notice to unit staff (the employee who raised the request,
  * the host and the unit admins).
  */
-const visitApprovedStaffTemplate = (staffName, visitorName, approverName, visitDate, visitTime = null, passNumber = null, purpose = null) => {
+const visitApprovedStaffTemplate = (staffName, visitorName, approverName, visitDate, visitTime = null, passNumber = null, purpose = null, rescheduled = false) => {
   const when = displayDateTime(visitDate, visitTime);
-  const title = 'Visit approved';
+  const title = rescheduled ? 'Visit rescheduled & approved' : 'Visit approved';
   const body = greeting(staffName)
-    + para(`The following visit has been <strong style="color:${C.success};">approved</strong> by ${escapeHtml(approverName)}.`)
+    + para(rescheduled
+      ? `The following visit has been <strong style="color:${C.success};">rescheduled and approved</strong> by ${escapeHtml(approverName)}.`
+      : `The following visit has been <strong style="color:${C.success};">approved</strong> by ${escapeHtml(approverName)}.`)
     + detailsTable([
       ['Visitor', visitorName],
       ['Date and time', when],
@@ -395,8 +408,8 @@ const visitApprovedStaffTemplate = (staffName, visitorName, approverName, visitD
     ])
     + button(appUrl('/requests'), 'View in VMS');
   return {
-    subject: subjectOf(`Visit approved: ${visitorName} on ${when}`),
-    html: letter({ title, preheader: `${visitorName}'s visit on ${when} is approved.`, ref: passNumber, body }),
+    subject: subjectOf(`${rescheduled ? 'Visit rescheduled & approved' : 'Visit approved'}: ${visitorName} on ${when}`),
+    html: letter({ title, preheader: `${visitorName}'s visit on ${when} is ${rescheduled ? 'rescheduled and approved' : 'approved'}.`, ref: passNumber, body }),
   };
 };
 

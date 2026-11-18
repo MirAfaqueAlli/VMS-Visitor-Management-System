@@ -175,7 +175,8 @@ const login = async (req, res) => {
                 d.name AS department_name
          FROM users u
          LEFT JOIN departments d ON d.id = u.department_id
-         WHERE (u.email = ? OR u.phone = ?) AND u.deleted_at IS NULL`,
+         WHERE (u.email = ? OR u.phone = ?) AND u.deleted_at IS NULL
+           AND COALESCE(u.is_admin_profile, 0) = 0`,
         [email, email]
       );
 
@@ -393,7 +394,7 @@ const forgotPassword = async (req, res) => {
       if (unitRows.length > 0) {
         unitDb = unitRows[0].db_name;
         const [rows] = await getPool(unitDb).query(
-          'SELECT id, email, is_active FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1', [email]
+          'SELECT id, email, is_active FROM users WHERE email = ? AND deleted_at IS NULL AND COALESCE(is_admin_profile, 0) = 0 LIMIT 1', [email]
         );
         user = rows[0] || null;
       }

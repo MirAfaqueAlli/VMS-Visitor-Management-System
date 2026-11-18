@@ -116,13 +116,19 @@ export default function UnitManagement() {
     if (includeAdmin) {
       const nameVal = adminForm.full_name.trim();
       const emailVal = adminForm.email.trim();
+      const phoneVal = adminForm.phone.trim();
       const passVal = adminForm.password.trim();
       const codeVal = adminForm.employee_code.trim();
-      if (nameVal || emailVal || passVal || codeVal) {
+      if (nameVal || emailVal || phoneVal || passVal || codeVal) {
         if (!nameVal)  { return toast.error('Admin full name is required.'); }
         if (!emailVal) { return toast.error('Admin email address is required.'); }
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) {
           return toast.error('Admin email is not a valid email address.');
+        }
+        if (!phoneVal) { return toast.error('Admin phone number is required.'); }
+        const phoneDigits = phoneVal.replace(/\D/g, '');
+        if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+          return toast.error('Admin phone number must contain 10–15 digits.');
         }
         if (!codeVal)  { return toast.error('Admin employee code is required.'); }
         if (!passVal)  { return toast.error('Admin password is required.'); }
@@ -384,8 +390,8 @@ export default function UnitManagement() {
                 <Field label="Email" htmlFor="adm-email" required>
                   <input id="adm-email" className="control" type="email" value={adminForm.email} onChange={setAdmin('email')} placeholder="admin@ohpc.co.in" />
                 </Field>
-                <Field label="Phone" htmlFor="adm-phone">
-                  <input id="adm-phone" className="control tabular" value={adminForm.phone} onChange={setAdmin('phone')} placeholder="+91 90000 00001" />
+                <Field label="Phone" htmlFor="adm-phone" required hint="WhatsApp number preferred">
+                  <input id="adm-phone" className="control tabular" value={adminForm.phone} onChange={setAdmin('phone')} placeholder="+91 90000 00001" required />
                 </Field>
                 <Field label="Employee code" htmlFor="adm-code" required>
                   <input id="adm-code" className="control mono" value={adminForm.employee_code}

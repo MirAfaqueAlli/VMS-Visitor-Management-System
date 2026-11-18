@@ -29,6 +29,7 @@ const UnitDashboard = lazyWithReload(() =>
 );
 
 const VisitorList            = lazyWithReload(() => import("./pages/visitors/VisitorList"));
+const VisitorLog             = lazyWithReload(() => import("./pages/visitors/VisitorLog"));
 const VisitorDetail          = lazyWithReload(() => import("./pages/visitors/VisitorDetail"));
 const VisitorForm            = lazyWithReload(() => import("./pages/visitors/VisitorForm"));
 const NewRequest             = lazyWithReload(() => import("./pages/requests/NewRequest"));
@@ -70,14 +71,13 @@ function S({ children }) {
 }
 
 // ── Role groups ───────────────────────────────────────────────────────────────
-// super_admin oversees units (view + user/department setup) but doesn't perform
-// operational actions inside them — gate, approvals and creating requests/visitors
-// are unit staff only (the backend enforces the same).
+// super_admin oversees units (view + user/department setup) and, when joined to a
+// unit from their Profile page, can also create requests and approve as its employee.
 const ADMIN_ROLES    = ["super_admin", "unit_admin"];
 const GATE_ROLES     = ["security", "receptionist", "unit_admin"];
-const APPROVAL_ROLES = ["unit_admin", "employee"];
+const APPROVAL_ROLES = ["super_admin", "unit_admin", "employee"];
 const REPORT_ROLES   = ["unit_admin", "unit_auditor", "global_auditor", "super_admin"];
-const CREATE_ROLES   = ["unit_admin", "employee", "security", "receptionist"];
+const CREATE_ROLES   = ["super_admin", "unit_admin", "employee", "security", "receptionist"];
 
 const router = createBrowserRouter([
   // Every route: a missing page file after a deployment reloads for the new version
@@ -111,6 +111,11 @@ const router = createBrowserRouter([
               // Visitors
               { path: "visitors",     element: <S><VisitorList /></S> },
               {
+                path: "visitors/log",
+                element: <ProtectedRoute roles={["unit_admin"]} />,
+                children: [{ index: true, element: <S><VisitorLog unitWide /></S> }],
+              },
+              {
                 path: "visitors/new",
                 element: <ProtectedRoute roles={CREATE_ROLES} />,
                 children: [{ index: true, element: <S><VisitorForm /></S> }],
@@ -127,6 +132,17 @@ const router = createBrowserRouter([
               { path: "requests/:id", element: <S><RequestDetail /></S> },
               { path: "gate/pass/:passNumber",   element: <S><GatePass /></S> },
               { path: "passes/pass/:passNumber", element: <S><GatePass /></S> },
+
+              // Super admin's personal employee area
+              {
+                path: "my",
+                element: <ProtectedRoute roles={["super_admin"]} />,
+                children: [
+                  { path: "requests",  element: <S><RequestList personal /></S> },
+                  { path: "visitors",  element: <S><VisitorLog personal /></S> },
+                  { path: "approvals", element: <S><ApprovalInbox personal /></S> },
+                ],
+              },
 
               // Approvals
               {

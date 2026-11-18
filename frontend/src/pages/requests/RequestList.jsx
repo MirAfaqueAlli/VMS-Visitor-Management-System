@@ -45,6 +45,7 @@ function relationTo(r, user) {
   // Rows from another unit's database: ids there aren't ours, so only contact details tell.
   // (A unit admin also gets their unit's employees' cross-unit visits — not "mine".)
   if (r._cross_unit_id) return emailMatch || phoneMatch ? "visitor" : null;
+  if (r.my_role === "HOST") return "host";
   if (isMe(r.host_user_id)) return "host";
   if (emailMatch || phoneMatch || (isMe(r.requester_user_id) && r.visit_category === "EMPLOYEE_VISIT")) return "visitor";
   return null;
@@ -55,32 +56,50 @@ const todayIso = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-const TAB_IDS = ["as_host", "as_visitor", "all"];
+const PERSONAL_TAB_IDS = ["as_host", "as_visitor", "all"];
+const UNIT_TAB_IDS = ["to_unit", "from_unit"];
 const tabKey = (userId) => `vms_requests_tab:${userId || "anon"}`;
 
-export default function RequestList() {
-  const { user } = useAuth();
+export default function RequestList({ personal = false } = {}) {
+  const { user, activeUnit } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const isSuperAdmin = user?.role_type === "super_admin";
+  const isUnitScopedAdmin = !personal && (user?.role_type === "unit_admin" || (isSuperAdmin && !!activeUnit));
+  const validTabs = isUnitScopedAdmin ? UNIT_TAB_IDS : PERSONAL_TAB_IDS;
+  const defaultTab = isUnitScopedAdmin ? "to_unit" : (personal || user?.role_type === "employee" ? "as_host" : "all");
 
-  const canViewPass = ["security", "unit_admin", "receptionist"].includes(user?.role_type);
-  const canCreate   = ["unit_admin", "employee", "security", "receptionist"].includes(user?.role_type);
+  const canViewPass = ["security", "unit_admin", "receptionist", "super_admin"].includes(user?.role_type);
+  const canCreate   = ["super_admin", "unit_admin", "employee", "security", "receptionist"].includes(user?.role_type);
 
-  // Tabs: 'as_host' (visitors to me), 'as_visitor' (my visits), 'all'
-  // The chosen tab survives leaving the page: ?tab= in the address, else the last one used here
+  // Unit admins: requests TO this unit / FROM this unit, with an employee filter.
+  // Everyone else: request-centric personal tabs.
   const [activeTab, setActiveTab] = useState(() => {
     const fromUrl = searchParams.get("tab");
-    if (TAB_IDS.includes(fromUrl)) return fromUrl;
+    if (validTabs.includes(fromUrl)) return fromUrl;
     try {
       const saved = localStorage.getItem(tabKey(user?.id));
-      if (TAB_IDS.includes(saved)) return saved;
+      if (validTabs.includes(saved)) return saved;
     } catch { /* storage blocked */ }
-    return user?.role_type === "employee" ? "as_host" : "all";
+    return defaultTab;
   });
+
+  const [employeeFilter, setEmployeeFilter] = useState("");
+  const [unitEmployees, setUnitEmployees] = useState([]);
+
+  useEffect(() => {
+    if (!isUnitScopedAdmin) { setUnitEmployees([]); setEmployeeFilter(""); return; }
+    setEmployeeFilter("");
+    let cancelled = false;
+    apiClient.get("/users/hosts", { params: { include_all: "true", roles: "employee,unit_admin" } })
+      .then((res) => { if (!cancelled) setUnitEmployees(res.data?.data ?? []); })
+      .catch(() => { if (!cancelled) setUnitEmployees([]); });
+    return () => { cancelled = true; };
+  }, [isUnitScopedAdmin, activeUnit?.id]);
 
   // Filters (the top bar's quick search opens this page with ?search=)
   const [statusFilter, setStatusFilter] = useState("");
@@ -94,6 +113,15 @@ export default function RequestList() {
   const [totalCount, setTotalCount] = useState(0);
   const limit = 10;
 
+  // If the role/unit context changes (e.g. a super admin picks a unit), reset to a valid tab.
+  useEffect(() => {
+    if (!validTabs.includes(activeTab)) {
+      setActiveTab(defaultTab);
+      setPage(1);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUnitScopedAdmin, activeTab, defaultTab]);
+
   // Stat strip (counts for the current tab)
   const [stats, setStats] = useState({ total: null, pending: null, today: null, approved: null });
 
@@ -104,9 +132,15 @@ export default function RequestList() {
 
   const baseParams = useCallback(() => {
     const params = {};
-    if (activeTab && activeTab !== "all") params.tab = activeTab;
+    if (personal) params.personal = 1;
+    if (isUnitScopedAdmin) {
+      params.scope = activeTab === "from_unit" ? "from_unit" : "to_unit";
+      if (employeeFilter) params.employee_id = employeeFilter;
+    } else if (activeTab && activeTab !== "all") {
+      params.tab = activeTab;
+    }
     return params;
-  }, [activeTab]);
+  }, [activeTab, isUnitScopedAdmin, employeeFilter, personal]);
 
   const fetchRequests = useCallback(async ({ silent = false } = {}) => {
     try {
@@ -170,8 +204,18 @@ export default function RequestList() {
     pass: (r) => r.pass_number,
   });
 
-  const detailLink = (r) => (r._cross_unit_id ? `/requests/${r.id}?unit_id=${r._cross_unit_id}` : `/requests/${r.id}`);
-  const passLink   = (r) => `/passes/pass/${r.pass_number}${r._cross_unit_id ? `?unit_id=${r._cross_unit_id}` : ""}`;
+  const detailLink = (r) => {
+    const q = [];
+    if (r._cross_unit_id) q.push(`unit_id=${r._cross_unit_id}`);
+    if (personal) q.push('personal=1');
+    return `/requests/${r.id}${q.length ? `?${q.join('&')}` : ''}`;
+  };
+  const passLink = (r) => {
+    const q = [];
+    if (r._cross_unit_id) q.push(`unit_id=${r._cross_unit_id}`);
+    if (personal) q.push('personal=1');
+    return `/passes/pass/${r.pass_number}${q.length ? `?${q.join('&')}` : ''}`;
+  };
 
   const onExport = async () => {
     setExporting(true);
@@ -211,14 +255,14 @@ export default function RequestList() {
     try { localStorage.setItem(tabKey(user?.id), id); } catch { /* storage blocked */ }
     setSearchParams((p) => { const next = new URLSearchParams(p); next.set("tab", id); return next; }, { replace: true });
   };
-  const hasFilters = !!(statusFilter || dateFilter || search);
+  const hasFilters = !!(statusFilter || dateFilter || search || employeeFilter);
 
   return (
     <div className="animate-fade-in">
       <PageHeader
-        title="Visit Requests"
+        title={personal ? "My Requests" : "Requests"}
         actions={canCreate && (
-          <Link to="/requests/new" className="btn-primary"><Plus size={14} /> New request</Link>
+          <Link to={personal ? "/requests/new?personal=1" : "/requests/new"} className="btn-primary"><Plus size={14} /> New request</Link>
         )}
       />
 
@@ -226,10 +270,13 @@ export default function RequestList() {
         className="mb-5"
         value={activeTab}
         onChange={switchTab}
-        tabs={[
-          { id: "as_host", label: "Visitors to me" },
-          { id: "as_visitor", label: "My visits" },
-          { id: "all", label: "All requests" },
+        tabs={isUnitScopedAdmin ? [
+          { id: "to_unit", label: "To this unit" },
+          { id: "from_unit", label: "From this unit" },
+        ] : [
+          { id: "as_host", label: "Requests to me" },
+          { id: "as_visitor", label: "My requests" },
+          { id: "all", label: "All my requests" },
         ]}
       />
 
@@ -237,7 +284,7 @@ export default function RequestList() {
         <Stat label="Requests" value={stats.total ?? "—"} loading={stats.total === null} hint="In this view" />
         <Stat label="Waiting for approval" value={stats.pending ?? "—"} loading={stats.pending === null}
           tone={stats.pending > 0 ? "warning" : undefined} hint="Pending a host's decision" />
-        <Stat label="Visiting today" value={stats.today ?? "—"} loading={stats.today === null} hint={fmtDate(new Date())} />
+        <Stat label="Requests today" value={stats.today ?? "—"} loading={stats.today === null} hint={fmtDate(new Date())} />
         <Stat label="Approved" value={stats.approved ?? "—"} loading={stats.approved === null} hint="Gate pass issued" />
       </StatStrip>
 
@@ -248,6 +295,20 @@ export default function RequestList() {
           placeholder="Search visitor, phone, host or pass"
           width={260}
         />
+        {isUnitScopedAdmin && (
+          <Select value={employeeFilter} onChange={(e) => { setEmployeeFilter(e.target.value); setPage(1); }}
+            aria-label="Employee" style={{ width: 210 }}>
+            <option value="">All employees</option>
+            {unitEmployees.map((emp) => {
+              const isMe = emp.id === user?.id || (emp.email && user?.email && emp.email.toLowerCase() === user.email.toLowerCase());
+              return (
+                <option key={emp.id} value={emp.id}>
+                  {emp.full_name}{isMe ? " (you)" : ""}{emp.department_name ? ` · ${emp.department_name}` : ""}
+                </option>
+              );
+            })}
+          </Select>
+        )}
         <Select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
           aria-label="Status" style={{ width: 160 }}>
           <option value="">All statuses</option>
@@ -268,7 +329,7 @@ export default function RequestList() {
           title="Visit date"
         />
         {hasFilters && (
-          <button type="button" className="btn-ghost" onClick={() => { setStatusFilter(""); setDateFilter(""); setSearch(""); setPage(1); }}>
+          <button type="button" className="btn-ghost" onClick={() => { setStatusFilter(""); setDateFilter(""); setSearch(""); setEmployeeFilter(""); setPage(1); }}>
             Clear
           </button>
         )}
@@ -294,12 +355,18 @@ export default function RequestList() {
                 <td colSpan={5} className="!p-0">
                   <Empty
                     icon={ClipboardList}
-                    title={hasFilters ? "No requests match these filters" : "No visit requests yet"}
+                    title={hasFilters ? "No requests match these filters" : "No requests yet"}
                     hint={hasFilters
-                      ? "Try another status or date, or clear the filters."
-                      : activeTab === "as_visitor"
-                        ? "Visits you make to other people appear here once they are requested."
-                        : "Requests appear here when a visitor is registered or asks to visit."}
+                      ? "Try another employee, status or date, or clear the filters."
+                      : isUnitScopedAdmin
+                        ? (activeTab === "from_unit"
+                          ? "Requests raised by this unit's employees appear here."
+                          : "Requests to people in this unit appear here.")
+                        : activeTab === "as_visitor"
+                          ? "Requests you raise appear here once submitted."
+                          : activeTab === "as_host"
+                            ? "Requests from visitors coming to see you appear here."
+                            : "Your requests appear here when a visitor is registered or asks to visit."}
                   />
                 </td>
               </tr>
@@ -313,9 +380,14 @@ export default function RequestList() {
                       <span className="inline-flex items-center gap-1.5 flex-wrap">
                         <span className="font-medium">{r.visitor_name || r.company_name || "—"}</span>
                         {rel === "visitor" && <Tag tone="success">You</Tag>}
-                        {r._cross_unit_id && <Tag tone="info">Other unit</Tag>}
+
                       </span>
                       <span className="cell-sub">{categoryLabel(r)}{r.visitor_phone ? ` · ${r.visitor_phone}` : ""}</span>
+                      {isUnitScopedAdmin && activeTab === "from_unit" && (
+                        <span className="cell-sub">
+                          Raised by {r.requester_name || (r._cross_unit_id && r.visit_category === "EMPLOYEE_VISIT" ? r.visitor_name : "—")}
+                        </span>
+                      )}
                     </td>
                     <td>
                       <span className="inline-flex items-center gap-1.5">

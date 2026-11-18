@@ -71,12 +71,17 @@ export default function NotificationManager() {
   useSocketEvent('visit:approved', useCallback((data) => {
     const isSpot   = data.visit_category === 'SPOT';
     const isHosted = data.is_hosted;
-    const title  = isHosted ? 'You were hosted for a visit' : isSpot ? 'Walk-in approved' : 'Visit approved';
-    const body   = isHosted
-      ? `${data.approved_by || data.host_name || 'A colleague'} has hosted you as a visitor for a visit on ${data.visit_date ?? ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`
-      : isSpot
-        ? `${data.visitor_name ?? 'The walk-in visitor'} was approved${data.approved_by ? ` by ${data.approved_by}` : ''}${data.pass_number ? ` · Gate pass ${data.pass_number}` : ''} — they can be checked in now.`
-        : `Your visit on ${data.visit_date ?? ''} has been approved${data.approved_by ? ` by ${data.approved_by}` : ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`;
+    const rescheduled = !!data.rescheduled;
+    const title  = rescheduled
+      ? 'Visit rescheduled & approved'
+      : (isHosted ? 'You were hosted for a visit' : isSpot ? 'Walk-in approved' : 'Visit approved');
+    const body   = rescheduled
+      ? `${data.visitor_name ? `${data.visitor_name}'s visit` : 'Your visit'} has been rescheduled and approved${data.approved_by ? ` by ${data.approved_by}` : ''} for ${data.visit_date ?? 'the new date'}${data.visit_start_time ? ` at ${String(data.visit_start_time).slice(0, 5)}` : ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`
+      : isHosted
+        ? `${data.approved_by || data.host_name || 'A colleague'} has hosted you as a visitor for a visit on ${data.visit_date ?? ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`
+        : isSpot
+          ? `${data.visitor_name ?? 'The walk-in visitor'} was approved${data.approved_by ? ` by ${data.approved_by}` : ''}${data.pass_number ? ` · Gate pass ${data.pass_number}` : ''} — they can be checked in now.`
+          : `Your visit on ${data.visit_date ?? ''} has been approved${data.approved_by ? ` by ${data.approved_by}` : ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`;
     const targetUrl = data.pass_number ? `/passes/pass/${data.pass_number}` : requestLink(data);
     notify(title, body, makeOpts('visit-approved', targetUrl));
   }, [notify]), [notify]);

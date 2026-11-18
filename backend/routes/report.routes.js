@@ -116,5 +116,13 @@ router.get(
   ctrl.getDetailedVisitHistory
 );
 
+// Single-visit detail — full details of one row (gate pass, visitor, logs, approvals)
+router.get(
+  '/visit-detail/:id',
+  protect,
+  authorize(...adminOrAuditor),
+  ctrl.getVisitDetailReport
+);
+
 module.exports = router;
 

@@ -3,6 +3,7 @@
 
 const jwt = require('jsonwebtoken');
 const { centralPool, getPool } = require('../services/dbManager');
+const { findSuperAdminProfile, unitActorId } = require('../services/adminProfile.service');
 const { sendSuccess, sendError } = require('../utils/response.util');
 const { sendNotification }       = require('../services/notification.service');
 const emailService               = require('../services/email.service');
@@ -199,7 +200,11 @@ const createRequest = async (req, res) => {
     } = req.body;
     let { id_proof_type, id_proof_number } = req.body;
 
-    const requester_user_id = req.user ? req.user.id : null;
+    const superAdminProfile = isSuperAdmin(req.user) ? await findSuperAdminProfile(req.user.id) : null;
+    const personalMode = req.query.personal === '1' && isSuperAdmin(req.user);
+    const requester_user_id = isSuperAdmin(req.user)
+      ? (superAdminProfile?.id || null)
+      : (req.user ? req.user.id : null);
     const typeCode = visit_category;
 
     if (!typeCode || !purpose || !visit_date) {
@@ -216,12 +221,21 @@ const createRequest = async (req, res) => {
     let db = req.db;
     let isCrossUnit    = false;  // true when EMPLOYEE_VISIT routes to a different unit's DB
     let crossUnitDbName = null;  // db_name of the target unit (cross-unit only)
-    const requesterUnitId = await ownUnitId(req);
+    const requesterUnitId = isSuperAdmin(req.user)
+      ? (superAdminProfile?.unit_id || null)
+      : await ownUnitId(req);
+    if (isSuperAdmin(req.user) && (!requester_user_id || !requesterUnitId)) {
+      return sendError(res, 'Join a unit as an employee from your Profile page before creating visits.', 400);
+    }
+    // Acting as an employee must happen in the unit they joined.
+    if (isSuperAdmin(req.user) && superAdminProfile && !target_unit_id && !personalMode
+        && (!req.unitDbName || req.unitDbName !== superAdminProfile.unit_db)) {
+      return sendError(res, `Switch to ${superAdminProfile.unit_name} to create visits as its employee.`, 400);
+    }
     if (typeCode === 'EMPLOYEE_VISIT' && target_unit_id) {
       if (requesterUnitId && parseInt(target_unit_id) === requesterUnitId) {
         return sendError(res, 'Target unit cannot be your own unit for an inter-unit employee visit.', 400);
       }
-      const { centralPool, getPool } = require('../services/dbManager');
       const [unitRows] = await centralPool.query(
         'SELECT db_name FROM units WHERE id = ? AND is_active = 1 AND db_status = "ACTIVE"',
         [parseInt(target_unit_id)]
@@ -233,6 +247,12 @@ const createRequest = async (req, res) => {
       } else {
         return sendError(res, 'Target unit not found or inactive.', 404);
       }
+    }
+
+    // Personal super-admin actions always use their joined unit's DB, even when a
+    // different unit is being managed in the header.
+    if (personalMode && superAdminProfile && !isCrossUnit) {
+      db = getPool(superAdminProfile.unit_db);
     }
 
     conn = await db.getConnection();
@@ -259,9 +279,12 @@ const createRequest = async (req, res) => {
         const src = (req.body.request_source || 'SELF').toUpperCase();
         request_source  = src === 'HOST' ? 'HOST' : 'SELF';
         status          = (src === 'HOST' && !isCrossUnit) ? 'APPROVED' : 'PENDING'; // host-creates → auto-approved
-        effectiveHostId = (src === 'HOST' && !(isSuperAdmin(req.user) || isUnitAdmin(req.user)))
-          ? req.user.id                // Host = me
-          : (host_user_id || null);    // Host = selected employee
+        // Employees hosting always host themselves; admins may host themselves
+        // (no host_user_id) or arrange the visit for a selected host.
+        const isAdminActor = isSuperAdmin(req.user) || isUnitAdmin(req.user);
+        effectiveHostId = (src === 'HOST' && (!isAdminActor || !host_user_id))
+          ? requester_user_id
+          : (host_user_id || null);
         break;
       }
       case 'VENDOR':
@@ -428,7 +451,11 @@ const createRequest = async (req, res) => {
 
     // ── ID proof already on record for this mobile (the form shows it locked) ──
     if (id_proof_from_record && ['PERSONAL_VISIT', 'SPOT', 'VENDOR'].includes(typeCode)) {
-      const rec = await visitorRecordByPhone(resolvedVisitorPhone || visitor_phone, db, req.unitDbName || req.user?.unit_db);
+      const rec = await visitorRecordByPhone(
+        resolvedVisitorPhone || visitor_phone,
+        db,
+        personalMode && superAdminProfile ? superAdminProfile.unit_db : (req.unitDbName || req.user?.unit_db)
+      );
       if (!rec.id_proof_type) {
         conn.release();
         return sendError(res, "No ID proof is on record for this mobile number — enter the visitor's ID.", 400);
@@ -865,7 +892,9 @@ const createRequest = async (req, res) => {
     // Use the already-resolved DB name — cross-unit uses crossUnitDbName,
     // same-unit uses req.user.unit_db (mirrors gate.controller check-in approach).
     if (status === 'PENDING' && effectiveHostId) {
-      const hostSocketDb = isCrossUnit ? crossUnitDbName : req.user.unit_db;
+      const hostSocketDb = isCrossUnit
+        ? crossUnitDbName
+        : (personalMode && superAdminProfile ? superAdminProfile.unit_db : (req.unitDbName || req.user.unit_db));
       if (hostSocketDb) {
         try {
           const newRequest = {
@@ -881,7 +910,7 @@ const createRequest = async (req, res) => {
           emitToUser(effectiveHostId, hostSocketDb, 'visit:request:new', newRequest);
           // The host unit's admins can approve it too
           emitToUnitAdmins(effectiveUnitId, hostSocketDb, 'visit:request:new', newRequest,
-            [effectiveHostId, ...(isCrossUnit ? [] : [req.user.id])]);
+            [effectiveHostId, ...(isCrossUnit ? [] : [requester_user_id])]);
 
         } catch (socketErr) {
           console.error('[VisitRequestController] Failed to emit socket notification:', socketErr.message);
@@ -892,10 +921,13 @@ const createRequest = async (req, res) => {
     }
 
     // ── Audit log ─────────────────────────────────────────────────────────────
-    // Logged in the requester's own unit (req.db) — their user id means nothing in
-    // another unit's audit_logs. Cross-unit requests note which unit holds the record.
+    // Logged in the requester's own unit; a super admin's requester identity is
+    // their unit employee profile, not their central account.
+    const auditDb = isSuperAdmin(req.user) && superAdminProfile
+      ? getPool(superAdminProfile.unit_db)
+      : req.db;
     await logAudit({
-      db:         req.db,
+      db:         auditDb,
       userId:     requester_user_id,
       action:     'CREATE_REQUEST',
       module:     'VISIT_REQUEST',
@@ -940,12 +972,18 @@ const uploadRequestPhoto = async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!id || !req.file) return sendError(res, 'Attach the visitor photo.', 400);
-    const [rows] = await req.db.query(
+    const personal = req.query.personal === '1' && isSuperAdmin(req.user);
+    const personalProfile = personal ? await findSuperAdminProfile(req.user.id) : null;
+    const dbPool = personalProfile ? getPool(personalProfile.unit_db) : req.db;
+    const [rows] = await dbPool.query(
       'SELECT id, status, requester_user_id, host_user_id FROM visit_requests WHERE id = ? LIMIT 1', [id]
     );
     if (!rows.length) return sendError(res, 'Visit request not found.', 404);
     const r = rows[0];
-    if (!isUnitAdmin(req.user) && ![r.requester_user_id, r.host_user_id].includes(req.user.id)
+    const actorId = personalProfile
+      ? personalProfile.id
+      : (isSuperAdmin(req.user) ? await unitActorId(dbPool, req.user) : req.user.id);
+    if (!isUnitAdmin(req.user) && !isSuperAdmin(req.user) && ![r.requester_user_id, r.host_user_id].includes(actorId)
         && !['security', 'receptionist'].includes(req.user.role_type)) {
       return sendError(res, 'You can add a photo only to a request you raised or host.', 403);
     }
@@ -956,7 +994,7 @@ const uploadRequestPhoto = async (req, res) => {
     const stored = await uploadToS3({
       buffer: photo.buffer, mimeType: photo.mimeType, folder: 'visitor-photos', filename: `request-${id}-${Date.now()}.${photo.ext}`,
     });
-    await req.db.query('UPDATE visit_requests SET visitor_photo_path = ?, updated_at = NOW() WHERE id = ?', [stored, id]);
+    await dbPool.query('UPDATE visit_requests SET visitor_photo_path = ?, updated_at = NOW() WHERE id = ?', [stored, id]);
     return sendSuccess(res, { visitor_photo_path: await getSignedFileUrl(stored) }, 'Photo saved.');
   } catch (err) {
     console.error('[VisitRequestController] uploadRequestPhoto error:', err.message);
@@ -966,22 +1004,26 @@ const uploadRequestPhoto = async (req, res) => {
 
 const getRequest = async (req, res) => {
   try {
-    await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
+    const personal = req.query.personal === '1' && isSuperAdmin(req.user);
+    if (!personal) await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
     const { id } = req.params;
 
     // ?unit_id=<other unit> → an EMPLOYEE_VISIT the caller raised in another unit.
     // Only that requester may open it (matched on cross_unit_requester_id + requester_unit_id).
-    const myUnitId = await ownUnitId(req);
+    const superProfile = isSuperAdmin(req.user) ? await findSuperAdminProfile(req.user.id) : null;
+    if (personal && !superProfile) return sendError(res, 'Visit request not found.', 404);
+    const actorId = isSuperAdmin(req.user) ? (superProfile?.id || null) : req.user.id;
+    const myUnitId = isSuperAdmin(req.user) ? (superProfile?.unit_id || null) : await ownUnitId(req);
     const askedUnit = parseInt(req.query.unit_id, 10);
     const crossUnitId = askedUnit && askedUnit !== myUnitId ? askedUnit : null;
-    let db = req.db;
+    let db = personal && superProfile ? getPool(superProfile.unit_db) : req.db;
     let crossUnitScope = '';
     const params = [id];
     if (crossUnitId) {
       db = await getActiveUnitPool(crossUnitId);
       if (!db) return sendError(res, 'Visit request not found.', 404);
       const xScopeOr = ['(vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?)'];
-      params.push(req.user.id, myUnitId);
+      params.push(actorId, myUnitId);
       // The requesting unit's admin sees every visit raised from their unit
       if (isUnitLevelAdmin(req) && myUnitId) {
         xScopeOr.push("(vr.requester_unit_id = ? AND vr.visit_category = 'EMPLOYEE_VISIT')");
@@ -1016,13 +1058,13 @@ const getRequest = async (req, res) => {
 
     // Employees may only open requests they host, raised, or where they are the visitor (404 so IDs can't be probed)
     const isVisitor = (
-      (!crossUnitId && request.requester_user_id === req.user.id && request.host_user_id !== req.user.id) ||
+      (!crossUnitId && request.requester_user_id === actorId && request.host_user_id !== actorId) ||
       (req.user.email && request.visitor_email && request.visitor_email.toLowerCase() === req.user.email.toLowerCase()) ||
       (req.user.phone && request.visitor_phone && request.visitor_phone === req.user.phone)
     );
-    const isHost = !crossUnitId && request.host_user_id === req.user.id;
+    const isHost = !crossUnitId && request.host_user_id === actorId;
 
-    if (!crossUnitId && isEmployee(req.user) && !isHost && !isVisitor && request.requester_user_id !== req.user.id) {
+    if (!crossUnitId && isEmployee(req.user) && !isHost && !isVisitor && request.requester_user_id !== actorId) {
       return sendError(res, 'Visit request not found.', 404);
     }
 
@@ -1132,7 +1174,14 @@ const getRequest = async (req, res) => {
 // ── listRequests ──────────────────────────────────────────────────────────────
 const listRequests = async (req, res) => {
   try {
-    await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
+    const personalSuper = req.query.personal === '1' && isSuperAdmin(req.user);
+    const personalProfile = personalSuper ? await findSuperAdminProfile(req.user.id) : null;
+    if (personalSuper && !personalProfile) {
+      return sendSuccess(res, { requests: [], pagination: { page: 1, limit: 20, total: 0, pages: 0 } }, 'No unit employee profile.');
+    }
+    if (!personalSuper) await expireForRequest(req);   // past-dated visits / passes → EXPIRED (once a day)
+    const dbPool = personalProfile ? getPool(personalProfile.unit_db) : req.db;
+
     const { status, visit_date, department_id, visitor_phone, search, tab } = req.query;
     const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
@@ -1141,31 +1190,50 @@ const listRequests = async (req, res) => {
     const conditions = [];
     const params     = [];
     const isEmployee = req.user.role_type === 'employee';
+    const actorId = personalProfile
+      ? personalProfile.id
+      : (isSuperAdmin(req.user) ? await unitActorId(dbPool, req.user) : req.user.id);
+    const employeeId = req.query.employee_id ? parseInt(req.query.employee_id, 10) : null;
+    const isUnitScopedAdmin = !personalSuper && (isUnitAdmin(req.user) || (isSuperAdmin(req.user) && isUnitLevelAdmin(req)));
+    const scope = isUnitScopedAdmin && req.query.scope
+      ? (req.query.scope === 'from_unit' ? 'from_unit' : 'to_unit')
+      : null;
 
+    // Unit admins see unit-level views: requests TO this unit (host here) or
+    // FROM this unit (visitors from here going to another unit's host).
+    if (isUnitScopedAdmin && scope) {
+      if (scope === 'from_unit') {
+        // These live in the host unit's DB; the cross-unit fan-out below supplies them.
+        conditions.push('1 = 0');
+      } else if (employeeId) {
+        conditions.push('vr.host_user_id = ?');
+        params.push(employeeId);
+      }
     // Scope by role & tab ('as_host' = visits to me, 'as_visitor' = visits where I am the visitor)
-    if (tab === 'as_host') {
+    } else if (tab === 'as_host') {
       conditions.push('vr.host_user_id = ?');
-      params.push(req.user.id);
+      params.push(actorId || -1);
     } else if (tab === 'as_visitor') {
       const visOr = ['(vr.requester_user_id = ? AND vr.host_user_id != ?)' ];
-      const visParams = [req.user.id, req.user.id];
+      const visParams = [actorId, actorId];
       if (req.user.email) {
         visOr.push('(vr.visitor_email = ? AND vr.host_user_id != ?)');
-        visParams.push(req.user.email, req.user.id);
+        visParams.push(req.user.email, actorId);
       }
       if (req.user.phone) {
         visOr.push('(vr.visitor_phone = ? AND vr.host_user_id != ?)');
-        visParams.push(req.user.phone, req.user.id);
+        visParams.push(req.user.phone, actorId);
       }
       conditions.push(`(${visOr.join(' OR ')})`);
       params.push(...visParams);
-    } else if (isEmployee) {
-      // Default / 'all' for employees: both hosted visits and visitor visits
+    } else if (isEmployee || personalSuper) {
+      // Default / 'all' for employees and a super admin's personal view:
+      // both hosted visits and visitor visits.
       const empOr = [
         'vr.host_user_id = ?',
         'vr.requester_user_id = ?'
       ];
-      const empParams = [req.user.id, req.user.id];
+      const empParams = [actorId, actorId];
       if (req.user.email) {
         empOr.push('vr.visitor_email = ?');
         empParams.push(req.user.email);
@@ -1198,24 +1266,27 @@ const listRequests = async (req, res) => {
       vr.visitor_name, vr.visitor_phone, vr.visitor_email, vr.company_name, vr.force_created,
       vr.host_user_id, vr.requester_user_id,
       h.full_name AS host_name,
+      ru.full_name AS requester_name,
       d.name      AS department_name,
       gp.pass_number`;
 
     // Employees' lists merge rows from several unit DBs (see fan-out below). To page
     // the merged list correctly, fetch the first offset+limit rows from every source,
     // merge-sort them, then slice out the requested page.
-    // Unit admins (and super admins managing a unit) on the default tab also get the
-    // EMPLOYEE_VISITs raised from their unit but stored in the host unit's database
-    const myUnitId    = await ownUnitId(req);
-    const adminFanOut = isUnitLevelAdmin(req) && (!tab || tab === 'all');
-    const shouldFanOut = (isEmployee || tab === 'as_visitor' || adminFanOut) && tab !== 'as_host' && !!myUnitId;
+    // "From this unit" also includes EMPLOYEE_VISITs raised here but stored in the host unit's DB.
+    const myUnitId    = personalProfile ? personalProfile.unit_id : await ownUnitId(req);
+    const adminFanOut = isUnitScopedAdmin
+      ? (scope ? scope === 'from_unit' : (!tab || tab === 'all'))
+      : false;
+    const shouldFanOut = (isEmployee || personalSuper || tab === 'as_visitor' || adminFanOut) && tab !== 'as_host' && !!myUnitId;
     const fetchLimit  = shouldFanOut ? offset + limit : limit;
     const fetchOffset = shouldFanOut ? 0 : offset;
 
-    const [rows] = await req.db.query(
+    const [rows] = await dbPool.query(
       `SELECT ${SELECT_COLS}
        FROM visit_requests vr
        JOIN users h ON h.id = vr.host_user_id
+       LEFT JOIN users ru ON ru.id = vr.requester_user_id
        LEFT JOIN departments d  ON d.id  = vr.department_id
        LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
        ${whereClause}
@@ -1223,7 +1294,7 @@ const listRequests = async (req, res) => {
       [...params, fetchLimit, fetchOffset]
     );
 
-    const [[{ total: ownTotal }]] = await req.db.query(
+    const [[{ total: ownTotal }]] = await dbPool.query(
       `SELECT COUNT(*) AS total FROM visit_requests vr LEFT JOIN users h ON h.id = vr.host_user_id LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id ${whereClause}`, params
     );
 
@@ -1240,25 +1311,34 @@ const listRequests = async (req, res) => {
         await Promise.all(activeUnits.map(async (unit) => {
           try {
             const otherDb  = getPool(unit.db_name);
-            const xOr = ['(vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?)'];
-            const xOrParams = [req.user.id, myUnitId];
-            if (adminFanOut) {
-              xOr.push('vr.requester_unit_id = ?');
-              xOrParams.push(myUnitId);
+            const xConds   = [`vr.visit_category = 'EMPLOYEE_VISIT'`];
+            const xParams  = [];
+            if (isUnitScopedAdmin && scope === 'from_unit') {
+              // Requests raised from this unit and stored in another unit's host DB.
+              xConds.push('vr.requester_unit_id = ?');
+              xParams.push(myUnitId);
+              if (employeeId) {
+                xConds.push('vr.cross_unit_requester_id = ?');
+                xParams.push(employeeId);
+              }
+            } else {
+              const xOr = ['(vr.cross_unit_requester_id = ? AND vr.requester_unit_id = ?)'];
+              const xOrParams = [actorId, myUnitId];
+              if (adminFanOut) {
+                xOr.push('vr.requester_unit_id = ?');
+                xOrParams.push(myUnitId);
+              }
+              if (req.user.email) {
+                xOr.push('vr.visitor_email = ?');
+                xOrParams.push(req.user.email);
+              }
+              if (req.user.phone) {
+                xOr.push('vr.visitor_phone = ?');
+                xOrParams.push(req.user.phone);
+              }
+              xConds.push(`(${xOr.join(' OR ')})`);
+              xParams.push(...xOrParams);
             }
-            if (req.user.email) {
-              xOr.push('vr.visitor_email = ?');
-              xOrParams.push(req.user.email);
-            }
-            if (req.user.phone) {
-              xOr.push('vr.visitor_phone = ?');
-              xOrParams.push(req.user.phone);
-            }
-            const xConds   = [
-              `(${xOr.join(' OR ')})`,
-              `vr.visit_category = 'EMPLOYEE_VISIT'`,
-            ];
-            const xParams  = [...xOrParams];
             if (status)     { xConds.push('vr.status = ?');     xParams.push(status); }
             if (visit_date) { xConds.push('vr.visit_date = ?'); xParams.push(visit_date); }
             if (search && search.trim()) {
@@ -1271,6 +1351,7 @@ const listRequests = async (req, res) => {
               `SELECT ${SELECT_COLS}
                FROM visit_requests vr
                JOIN users h ON h.id = vr.host_user_id
+               LEFT JOIN users ru ON ru.id = vr.requester_user_id
                LEFT JOIN departments d  ON d.id  = vr.department_id
                LEFT JOIN gate_passes gp ON gp.visit_request_id = vr.id
                ${xWhere}
@@ -1296,7 +1377,7 @@ const listRequests = async (req, res) => {
 
     // Attach `my_role` ('HOST' or 'VISITOR') so frontend can display role badges and actions
     const pageRows = rawPageRows.map(r => {
-      const isHost = !r._cross_unit_id && Number(r.host_user_id) === Number(req.user.id);
+      const isHost = !r._cross_unit_id && Number(r.host_user_id) === Number(actorId);
       return {
         ...r,
         my_role: isHost ? 'HOST' : 'VISITOR',
@@ -1323,7 +1404,13 @@ const cancelRequest = async (req, res) => {
     // unit; only that requester may (matched on cross_unit_requester_id + requester_unit_id).
     // Without it, only the caller's own unit DB is searched — never fan out by id alone,
     // since ids repeat across unit DBs.
-    const myUnitId = await ownUnitId(req);
+    const superProfile = isSuperAdmin(user) ? await findSuperAdminProfile(user.id) : null;
+    const myUnitId = isSuperAdmin(user)
+      ? (superProfile?.unit_id || null)
+      : await ownUnitId(req);
+    const actorId = isSuperAdmin(user)
+      ? (superProfile?.id || null)
+      : user.id;
     const askedUnit = parseInt(req.query.unit_id, 10);
     const crossUnitId = askedUnit && askedUnit !== myUnitId ? askedUnit : null;
     let targetDb = req.db;
@@ -1334,7 +1421,7 @@ const cancelRequest = async (req, res) => {
       [rows] = await targetDb.query(
         `SELECT id, status FROM visit_requests
          WHERE id = ? AND cross_unit_requester_id = ? AND requester_unit_id = ?`,
-        [id, user.id, myUnitId]
+        [id, actorId, myUnitId]
       );
     } else {
       [rows] = await req.db.query(
@@ -1352,7 +1439,7 @@ const cancelRequest = async (req, res) => {
     // Cross-unit rows were already scoped to the requester in the query above
     if (!crossUnitId) {
       const isAdmin    = isSuperAdmin(user) || isUnitAdmin(user);
-      const isInvolved = request.requester_user_id === user.id || request.host_user_id === user.id;
+      const isInvolved = request.requester_user_id === actorId || request.host_user_id === actorId;
       if (!isAdmin && !isInvolved) {
         return sendError(res, 'You do not have permission to cancel this request.', 403);
       }
@@ -1400,7 +1487,7 @@ const cancelRequest = async (req, res) => {
         if (!details || details.length === 0) return;
         const d = details[0];
         // Live: out of the host's / admins' inboxes, off the gate's "expected today"
-        announceCancelled(crossUnitId || myUnitId, user.id, {
+        announceCancelled(crossUnitId || myUnitId, actorId, {
           visit_request_id: Number(id), action: 'CANCELLED', host_user_id: d.host_id,
           visitor_name: d.visitor_name, visit_date: d.visit_date, host_name: d.host_name,
         });
@@ -1484,8 +1571,8 @@ const cancelRequest = async (req, res) => {
 
     // Logged in the canceller's own unit (see createRequest audit note)
     await logAudit({
-      db:        req.db,
-      userId:    user.id,
+      db:        superProfile ? getPool(superProfile.unit_db) : req.db,
+      userId:    actorId,
       action:    'CANCEL_REQUEST',
       module:    'VISIT_REQUEST',
       recordType: 'VISIT',
@@ -1505,11 +1592,17 @@ const cancelRequest = async (req, res) => {
 // ── getMyRequests ─────────────────────────────────────────────────────────────
 const getMyRequests = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const superProfile = isSuperAdmin(req.user) ? await findSuperAdminProfile(req.user.id) : null;
+    const userId = isSuperAdmin(req.user) ? (superProfile?.id || null) : req.user.id;
+    const ownPool = superProfile ? getPool(superProfile.unit_db) : req.db;
     const { status, upcoming } = req.query;
     const limit = Math.min(50, parseInt(req.query.limit, 10) || 10);
     const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
     const ahead = upcoming === 'true';
+
+    if (!userId) {
+      return sendSuccess(res, { requests: [], pagination: { page, limit, total: 0, pages: 0 } }, 'No unit employee profile.');
+    }
 
     // upcoming = approved visits from today (IST) on whose visitor hasn't arrived yet.
     // Check-in leaves the request APPROVED until check-out, so a visitor already inside
@@ -1548,13 +1641,13 @@ const getMyRequests = async (req, res) => {
     const orVisitor = asVisitor.length ? ` OR ${asVisitor.join(' OR ')}` : '';
 
     // 1. This unit: visits they host, raised, or are the visitor in
-    const own = await fetch(req.db, `WHERE (vr.host_user_id = ? OR vr.requester_user_id = ?${orVisitor})${extra}`,
+    const own = await fetch(ownPool, `WHERE (vr.host_user_id = ? OR vr.requester_user_id = ?${orVisitor})${extra}`,
       [userId, userId, ...asVisitorParams, ...fparams]);
     let rows  = own.rows;
     let total = own.n;
 
     // 2. Other units: visits they raised there (stored in the host unit's DB) or are the visitor in
-    const myUnit = await ownUnitId(req);
+    const myUnit = superProfile ? superProfile.unit_id : await ownUnitId(req);
     if (myUnit) {
       const [units] = await centralPool.query(
         "SELECT id, db_name FROM units WHERE is_active = 1 AND db_status = 'ACTIVE' AND id <> ?", [myUnit]
@@ -1938,35 +2031,65 @@ const createPublicRequest = async (req, res) => {
  */
 const getMyVisitors = async (req, res) => {
   try {
-    const { from, to, limit = 20, page = 1 } = req.query;
+    const { from, to, limit = 20, page = 1, personal, all, employee_id, active } = req.query;
     const parsedLimit  = Math.min(100, parseInt(limit, 10) || 20);
     const parsedOffset = (Math.max(1, parseInt(page, 10) || 1) - 1) * parsedLimit;
 
-    const conditions = ['evl.host_user_id = ?'];
-    const params     = [req.user.id];
+    const personalSuper = personal === '1' && isSuperAdmin(req.user);
+    const personalProfile = personalSuper ? await findSuperAdminProfile(req.user.id) : null;
+    if (personalSuper && !personalProfile) {
+      return sendSuccess(res, { visitors: [], pagination: { page: 1, limit: parsedLimit, total: 0, pages: 0 } }, 'No unit employee profile.');
+    }
+    const dbPool = personalProfile ? getPool(personalProfile.unit_db) : req.db;
+    const actorId = personalProfile
+      ? personalProfile.id
+      : (isSuperAdmin(req.user) ? await unitActorId(dbPool, req.user) : req.user.id);
+    const unitWide = !personalSuper && isUnitAdmin(req.user) && (all === '1' || all === 'true');
+
+    const conditions = [];
+    const params = [];
+    if (personalSuper) {
+      conditions.push('evl.host_user_id = ?');
+      params.push(actorId);
+    } else if (unitWide) {
+      if (employee_id) {
+        conditions.push('evl.host_user_id = ?');
+        params.push(parseInt(employee_id, 10));
+      }
+    } else {
+      conditions.push('evl.host_user_id = ?');
+      params.push(actorId || -1);
+    }
 
     if (from) { conditions.push('DATE(evl.checked_in_at) >= ?'); params.push(from); }
     if (to)   { conditions.push('DATE(evl.checked_in_at) <= ?'); params.push(to); }
+    if (active === '1') conditions.push("vl.check_out_at IS NULL AND vl.status = 'ACTIVE'");
 
-    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const [rows] = await req.db.query(
-      `SELECT evl.id, evl.checked_in_at,
+    const [rows] = await dbPool.query(
+      `SELECT evl.id, evl.checked_in_at, vl.check_out_at, vl.status AS log_status,
+              h.full_name AS host_name,
               v.full_name AS visitor_name, v.phone AS visitor_phone, v.email AS visitor_email,
               d.name AS department_name,
               vr.visit_category, vr.purpose, vr.visit_date
        FROM employee_visitor_log evl
        JOIN visitors    v  ON v.id  = evl.visitor_id
-       JOIN departments d  ON d.id  = evl.department_id
+       LEFT JOIN departments d  ON d.id  = evl.department_id
        JOIN visit_requests vr ON vr.id = evl.visit_request_id
+       LEFT JOIN visit_logs vl ON vl.id = evl.visit_log_id
+       LEFT JOIN users h ON h.id = evl.host_user_id
        ${whereClause}
        ORDER BY evl.checked_in_at DESC
        LIMIT ? OFFSET ?`,
       [...params, parsedLimit, parsedOffset]
     );
 
-    const [[{ total }]] = await req.db.query(
-      `SELECT COUNT(*) AS total FROM employee_visitor_log evl ${whereClause}`, params
+    const [[{ total }]] = await dbPool.query(
+      `SELECT COUNT(*) AS total
+       FROM employee_visitor_log evl
+       LEFT JOIN visit_logs vl ON vl.id = evl.visit_log_id
+       ${whereClause}`, params
     );
 
     return sendSuccess(res, {
@@ -1994,8 +2117,13 @@ const blacklistVisitorFromRequest = async (req, res) => {
       return sendError(res, 'A reason is required to block this visitor.', 400);
     }
 
+    const personal = req.query.personal === '1' && isSuperAdmin(req.user);
+    const personalProfile = personal ? await findSuperAdminProfile(req.user.id) : null;
+    if (personal && !personalProfile) return sendError(res, 'Visit request not found.', 404);
+    const dbPool = personalProfile ? getPool(personalProfile.unit_db) : req.db;
+
     // Fetch the visit request
-    const [rows] = await req.db.query(
+    const [rows] = await dbPool.query(
       'SELECT id, host_user_id, visitor_phone, visitor_name FROM visit_requests WHERE id = ? LIMIT 1',
       [id]
     );
@@ -2004,7 +2132,10 @@ const blacklistVisitorFromRequest = async (req, res) => {
 
     // Only the host or an admin can blacklist
     const isAdmin = ['super_admin', 'unit_admin'].includes(req.user.role_type);
-    const isHost  = String(vr.host_user_id) === String(req.user.id);
+    const actorId = personalProfile
+      ? personalProfile.id
+      : (isSuperAdmin(req.user) ? await unitActorId(dbPool, req.user) : req.user.id);
+    const isHost  = String(vr.host_user_id) === String(actorId);
     if (!isAdmin && !isHost) {
       return sendError(res, 'Only the host or an administrator can block this visitor.', 403);
     }
@@ -2022,11 +2153,11 @@ const blacklistVisitorFromRequest = async (req, res) => {
       return sendError(res, 'This visitor is already blocked by this host.', 409);
     }
 
-    await req.db.query(
+    await dbPool.query(
       `INSERT INTO host_phone_blacklist
          (host_user_id, visitor_phone, visitor_name, reason, blocked_by, is_active, created_at)
        VALUES (?, ?, ?, ?, ?, TRUE, NOW())`,
-      [vr.host_user_id, vr.visitor_phone, vr.visitor_name || null, reason.trim(), req.user.id]
+      [vr.host_user_id, vr.visitor_phone, vr.visitor_name || null, reason.trim(), actorId]
     );
 
     return sendSuccess(res, null, 'Visitor blocked successfully. Future requests from this visitor will be automatically declined.');
@@ -2048,7 +2179,7 @@ const getHostBlacklist = async (req, res) => {
        FROM host_phone_blacklist
        WHERE host_user_id = ? AND is_active = TRUE
        ORDER BY created_at DESC`,
-      [req.user.id]
+      [isSuperAdmin(req.user) ? (await unitActorId(req.db, req.user)) || -1 : req.user.id]
     );
     return sendSuccess(res, rows, 'Blocked visitors fetched.');
   } catch (err) {
@@ -2065,11 +2196,15 @@ const getHostBlacklist = async (req, res) => {
 const unblockVisitor = async (req, res) => {
   try {
     const { blockId } = req.params;
+    const personal = req.query.personal === '1' && isSuperAdmin(req.user);
+    const personalProfile = personal ? await findSuperAdminProfile(req.user.id) : null;
+    if (personal && !personalProfile) return sendError(res, 'Block entry not found.', 404);
+    const dbPool = personalProfile ? getPool(personalProfile.unit_db) : req.db;
     const isAdmin = ['super_admin', 'unit_admin'].includes(req.user.role_type);
     const whereExtra = isAdmin ? '' : 'AND host_user_id = ?';
     const params = isAdmin ? [blockId] : [blockId, req.user.id];
 
-    const [result] = await req.db.query(
+    const [result] = await dbPool.query(
       `UPDATE host_phone_blacklist SET is_active = FALSE WHERE id = ? ${whereExtra} AND is_active = TRUE`,
       params
     );

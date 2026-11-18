@@ -12,6 +12,11 @@ const { createCentralUserSchema, updateCentralUserSchema } = require('../validat
 // All central-user routes require super_admin only
 router.use(protect, authorize('super_admin'));
 
+// The signed-in super admin's own unit membership (join one unit as an employee/host)
+router.get('/me/unit-profile',    ctrl.getMyUnitProfile);
+router.put('/me/unit-profile',    ctrl.updateMyUnitProfile);
+router.delete('/me/unit-profile', ctrl.removeMyUnitProfile);
+
 router.get('/',        ctrl.listCentralUsers);
 router.post('/',       validate(createCentralUserSchema), ctrl.createCentralUser);
 router.put('/:id',     validate(updateCentralUserSchema), ctrl.updateCentralUser);

@@ -4,11 +4,12 @@
 // host · visit), vendor details, companions, the timeline and the gate pass.
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2, Briefcase, Clock, ClipboardList } from '../../components/icons';
+import { QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2, Briefcase, Clock, ClipboardList, Calendar } from '../../components/icons';
 import { toast } from 'react-hot-toast';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
 import { PageHeader, SectionTitle, KV, Status, State, Tag, Empty, Spinner, Modal, Field, Note } from '../../components/ui';
+import RescheduleApproveModal from '../../components/shared/RescheduleApproveModal';
 import { fmtDate, fmtDateTime, fmtTime, orDash } from '../../lib/format';
 import { describe } from '../../lib/status';
 import { idProofLabel } from '../../lib/idProof';
@@ -118,6 +119,7 @@ export default function RequestDetail() {
   // Set when opening a cross-unit request (stored in another unit's DB) from the list
   const [searchParams] = useSearchParams();
   const crossUnitId = searchParams.get('unit_id');
+  const personal = searchParams.get('personal') === '1';
   const navigate = useNavigate();
   const { user } = useAuth();
 
@@ -127,6 +129,9 @@ export default function RequestDetail() {
   const [remarks, setRemarks]             = useState('');
   const [remarksError, setRemarksError]   = useState('');
   const [actionMode, setActionMode]       = useState(null); // null | 'approve' | 'reject'
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleBusy, setRescheduleBusy] = useState(false);
+  const [rescheduleConflict, setRescheduleConflict] = useState(null);
 
   const [blockModal, setBlockModal]     = useState(false);
   const [blockReason, setBlockReason]   = useState('');
@@ -139,7 +144,10 @@ export default function RequestDetail() {
     setLoading(true);
     try {
       const res = await apiClient.get(`/visit-requests/${id}`, {
-        params: crossUnitId ? { unit_id: crossUnitId } : undefined,
+        params: {
+          ...(crossUnitId ? { unit_id: crossUnitId } : {}),
+          ...(personal ? { personal: 1 } : {}),
+        },
       });
       setRequest(res.data?.data ?? res.data);
     } catch (err) {
@@ -155,11 +163,11 @@ export default function RequestDetail() {
     setActionLoading(true);
     try {
       if (type === 'approve') {
-        await apiClient.put(`/approvals/${id}/approve`, { remarks, force_approve: forceApprove || undefined });
+        await apiClient.put(`/approvals/${id}/approve${personal ? '?personal=1' : ''}`, { remarks, force_approve: forceApprove || undefined });
         toast.success(`Request #${id} approved — the gate pass has been sent to the visitor.`);
         setApprovalConflict(null);
       } else {
-        await apiClient.put(`/approvals/${id}/reject`, { remarks });
+        await apiClient.put(`/approvals/${id}/reject${personal ? '?personal=1' : ''}`, { remarks });
         toast.success(`Request #${id} rejected — the visitor has been told.`);
       }
       setActionMode(null);
@@ -175,12 +183,40 @@ export default function RequestDetail() {
     } finally { setActionLoading(false); }
   };
 
+  // ── Reschedule & accept ────────────────────────────────────────────────────
+  const submitReschedule = async (values, force = false) => {
+    setRescheduleBusy(true);
+    try {
+      await apiClient.put(`/approvals/${id}/approve${personal ? '?personal=1' : ''}`, {
+        reschedule: true,
+        visit_date: values.date,
+        visit_start_time: values.start,
+        visit_end_time: values.end,
+        remarks: values.remarks || undefined,
+        force_approve: force || undefined,
+      });
+      toast.success(`Request #${id} rescheduled and approved — the visitor has been notified.`);
+      setRescheduleOpen(false);
+      setRescheduleConflict(null);
+      fetchRequest();
+    } catch (err) {
+      const data = err?.response?.data;
+      if (!force && err?.response?.status === 409 && data?.conflict) {
+        setRescheduleConflict(data.host_conflict);
+        return;
+      }
+      toast.error(data?.message || 'Could not reschedule and approve the request.');
+    } finally {
+      setRescheduleBusy(false);
+    }
+  };
+
   // ── Block / unblock visitor ────────────────────────────────────────────────
   const handleBlockVisitor = async () => {
     if (!blockReason.trim()) return;
     setBlocking(true);
     try {
-      await apiClient.post(`/visit-requests/${id}/blacklist-visitor`, { reason: blockReason.trim() });
+      await apiClient.post(`/visit-requests/${id}/blacklist-visitor${personal ? '?personal=1' : ''}`, { reason: blockReason.trim() });
       toast.success(`${request.visitor_name || 'Visitor'} blocked — their future requests to you are declined automatically.`);
       setBlockModal(false);
       setBlockReason('');
@@ -193,7 +229,7 @@ export default function RequestDetail() {
   const handleUnblockVisitor = async () => {
     setUnblocking(true);
     try {
-      await apiClient.delete(`/visit-requests/blocked-visitors/${request.host_block_id}`);
+      await apiClient.delete(`/visit-requests/blocked-visitors/${request.host_block_id}${personal ? '?personal=1' : ''}`);
       toast.success(`${request.visitor_name || 'Visitor'} unblocked.`);
       setUnblockModal(false);
       fetchRequest();
@@ -264,6 +300,9 @@ export default function RequestDetail() {
             )}
             {canApprove && (
               <>
+                <button type="button" className="btn-outline" onClick={() => { setRescheduleOpen(true); setRescheduleConflict(null); }}>
+                  <Calendar size={14} /> Reschedule
+                </button>
                 <button type="button" className="btn-danger" onClick={() => { setActionMode('reject'); setRemarks(''); setRemarksError(''); }}><X size={14} /> Reject</button>
                 <button type="button" className="btn-primary" onClick={() => { setActionMode('approve'); setRemarks(''); setRemarksError(''); }}><Check size={14} /> Approve</button>
               </>
@@ -462,6 +501,16 @@ export default function RequestDetail() {
           </Note>
         )}
       </Modal>
+
+      <RescheduleApproveModal
+        open={rescheduleOpen}
+        request={{ ...request, id: request.id }}
+        busy={rescheduleBusy}
+        conflict={rescheduleConflict}
+        onClose={() => { setRescheduleOpen(false); setRescheduleConflict(null); }}
+        onSubmit={submitReschedule}
+        onResolveConflict={() => setRescheduleConflict(null)}
+      />
 
       {/* ── Block visitor ────────────────────────────────────────────────────── */}
       <Modal
