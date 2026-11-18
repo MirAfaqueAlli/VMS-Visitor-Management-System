@@ -8,6 +8,10 @@ const { protect }   = require('../middlewares/auth.middleware');
 const { authorize } = require('../middlewares/rbac.middleware');
 const ctrl          = require('../controllers/gatePass.controller');
 
+// GET /api/passes/document/:token/:file — the gate pass PDF, for WhatsApp to download.
+// No sign-in: the signed token (24 h, one pass) is the permission (services/gatePassPdf).
+router.get('/document/:token/:file', ctrl.passDocument);
+
 // POST /api/passes/generate/:requestId — manually generate/re-fetch a gate pass
 // (unit staff only — super_admin is read-only inside units)
 router.post(

@@ -296,12 +296,49 @@ async function renderGatePassPdf(db, passId) {
   return { buffer: Buffer.concat(chunks), passNumber: rec.pass_number };
 }
 
+// ── A link to the PDF, for WhatsApp ──────────────────────────────────────────
+
+const DOC_PURPOSE = 'GATE_PASS_DOC';
+const DOC_LINK_HOURS = 24;   // Wishper's anti-ban queue may send a while after it is queued
+
+/** Signed token naming one pass (no user id in it, so it can never pass as a sign-in token). */
+function gatePassDocToken(unitDb, passId) {
+  const jwt = require('jsonwebtoken');
+  return jwt.sign({ purpose: DOC_PURPOSE, db: unitDb, pid: Number(passId) }, process.env.JWT_SECRET, { expiresIn: `${DOC_LINK_HOURS}h` });
+}
+
+/** { unitDb, passId } from a document token, or null when invalid / expired. */
+function readGatePassDocToken(token) {
+  try {
+    const jwt = require('jsonwebtoken');
+    const t = jwt.verify(String(token || ''), process.env.JWT_SECRET);
+    if (t.purpose !== DOC_PURPOSE || !t.db || !t.pid) return null;
+    return { unitDb: String(t.db), passId: Number(t.pid) };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * A link Wishper can download the gate-pass PDF from, to send it as a WhatsApp document:
- * stored in S3 (gate-passes/<pass number>.pdf) and shared as a 12-hour signed link.
+ * A link Wishper can download the gate-pass PDF from, to send it as a WhatsApp document.
+ *  - API_PUBLIC_URL set (e.g. https://vmsapi.sobeit.in): our own API serves it —
+ *    /api/passes/document/<signed token>/Gate-pass-<number>.pdf, valid 24 hours, drawn
+ *    when opened. Needs no file storage.
+ *  - otherwise: stored in S3 (gate-passes/<number>.pdf) and shared as a 12-hour signed link.
  * Null when it can't be made.
+ *
+ * @param {object} db       — the unit pool the pass was issued in
+ * @param {number} passId
+ * @param {string} [unitDb] — that unit's DB name (needed for the API link)
  */
-async function gatePassPdfUrl(db, passId) {
+async function gatePassPdfUrl(db, passId, unitDb = null) {
+  const base = String(process.env.API_PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  if (base && unitDb) {
+    const [[row]] = await db.query('SELECT pass_number FROM gate_passes WHERE id = ? LIMIT 1', [passId]);
+    if (!row) return null;
+    const file = `Gate-pass-${String(row.pass_number).replace(/[^A-Za-z0-9-]/g, '')}.pdf`;
+    return `${base}/api/passes/document/${gatePassDocToken(unitDb, passId)}/${file}`;
+  }
   const { uploadToS3, getSignedFileUrl } = require('../utils/s3.util');
   const out = await renderGatePassPdf(db, passId);
   if (!out) return null;
@@ -309,4 +346,4 @@ async function gatePassPdfUrl(db, passId) {
   return getSignedFileUrl(stored, 12 * 60 * 60);
 }
 
-module.exports = { loadPassRecord, renderGatePassPdf, gatePassPdfUrl };
+module.exports = { loadPassRecord, renderGatePassPdf, gatePassPdfUrl, readGatePassDocToken };

@@ -317,9 +317,10 @@ const approveRequest = async (req, res) => {
     const originalStart = request.visit_start_time;
     const originalEnd = request.visit_end_time;
 
-    // Permission check
+    // Permission check: the host, or a unit admin. A super admin acts only as their
+    // unit employee profile — they decide requests that profile hosts, nothing else.
     const isHost = request.host_user_id === actorId;
-    const canApprove = isHost || isSuperAdmin(user) || isUnitAdmin(user);
+    const canApprove = isHost || isUnitAdmin(user);
 
     if (!canApprove) {
       conn.release();
@@ -633,8 +634,9 @@ const rejectRequest = async (req, res) => {
     }
     const request = vrRows[0];
 
+    // The host, or a unit admin — a super admin only as the host (their unit profile)
     const isHost = request.host_user_id === actorId;
-    const canReject = isHost || isSuperAdmin(user) || isUnitAdmin(user);
+    const canReject = isHost || isUnitAdmin(user);
 
     if (!canReject) {
       conn.release();

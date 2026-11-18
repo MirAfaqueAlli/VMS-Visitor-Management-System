@@ -13,7 +13,7 @@ const last10 = (phone) => String(phone || '').replace(/\D/g, '').slice(-10);
 const { getSignedFileUrl } = require('../utils/s3.util');
 const { qrImageForPass } = require('../services/qrcode.service');
 const { expireForRequest } = require('../services/visitExpiry.service');
-const { loadPassRecord } = require('../services/gatePassPdf.service');
+const { loadPassRecord, renderGatePassPdf, readGatePassDocToken } = require('../services/gatePassPdf.service');
 const { ownUnitId, isUnitLevelAdmin } = require('../utils/unitScope.util');
 
 // ── Helper: fetch a full gate pass row with joins ─────────────────────────────
@@ -247,4 +247,35 @@ const cancelPass = async (req, res) => {
   }
 };
 
-module.exports = { generatePass, getPass, listPasses, cancelPass };
+// ── passDocument ──────────────────────────────────────────────────────────────
+/**
+ * GET /api/passes/document/:token/:file — the gate pass PDF (the pass security prints),
+ * for WhatsApp to download and send as a document. No sign-in: the signed token names
+ * one pass in one unit and expires in 24 hours. Drawn on request — needs no file storage.
+ */
+const passDocument = async (req, res) => {
+  try {
+    const doc = readGatePassDocToken(req.params.token);
+    if (!doc) return sendError(res, 'This gate pass link has expired.', 404);
+    // Only a real, active unit's database — never a name taken from the token alone
+    const [[unit]] = await centralPool.query(
+      "SELECT db_name FROM units WHERE db_name = ? AND is_active = 1 AND db_status = 'ACTIVE' LIMIT 1", [doc.unitDb]
+    );
+    if (!unit) return sendError(res, 'Gate pass not found.', 404);
+    const out = await renderGatePassPdf(getPool(unit.db_name), doc.passId);
+    if (!out) return sendError(res, 'Gate pass not found.', 404);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Length': out.buffer.length,
+      'Content-Disposition': `inline; filename="Gate-pass-${String(out.passNumber).replace(/[^A-Za-z0-9-]/g, '')}.pdf"`,
+      'Cache-Control': 'private, no-store',
+      'Cross-Origin-Resource-Policy': 'cross-origin',
+    });
+    return res.end(out.buffer);
+  } catch (err) {
+    console.error('[GatePassController] passDocument error:', err.message);
+    return sendError(res, 'Could not make the gate pass.', 500);
+  }
+};
+
+module.exports = { generatePass, getPass, listPasses, cancelPass, passDocument };

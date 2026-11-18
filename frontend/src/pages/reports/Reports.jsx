@@ -375,8 +375,12 @@ const detailVal = (v) => (v === undefined || v === null || v === '' ? '—' : St
 const detailDateTime = (v) => (v ? new Date(v).toLocaleString('en-GB') : '—');
 const detailDateSlug = (v) => {
   if (!v) return '';
-  const s = typeof v === 'string' ? v.slice(0, 10) : new Date(v).toISOString().slice(0, 10);
-  return s.replace(/[^0-9-]/g, '');
+  // The visit's day in India time (the API sends DATE columns as UTC timestamps:
+  // 15 Nov arrives as 2026-11-14T18:30:00Z — slicing it would name the file 14 Nov)
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 };
 
 function buildVisitDetailRows(detail) {

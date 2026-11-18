@@ -112,7 +112,7 @@ const CHANNELS = {
         const db = getPool(p.gatePass.unitDb);
         // The gate pass PDF (the pass security prints), sent as a WhatsApp document…
         try {
-          mediaUrl = await require('./gatePassPdf.service').gatePassPdfUrl(db, p.gatePass.gatePassId);
+          mediaUrl = await require('./gatePassPdf.service').gatePassPdfUrl(db, p.gatePass.gatePassId, p.gatePass.unitDb);
         } catch (err) {
           console.warn('[MessageQueue] gate pass PDF failed — sending the picture instead:', err.message);
         }

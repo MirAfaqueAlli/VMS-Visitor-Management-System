@@ -3,18 +3,16 @@
 // The visitor is notified through the normal approval pipeline (email, SMS,
 // WhatsApp, push, gate pass).
 import { useEffect, useState } from "react";
-import { Calendar, Check, Loader2 } from "../icons";
-import { Field, Modal, Note } from "../ui";
+import { Check, Loader2 } from "../icons";
+import { Field, Modal } from "../ui";
 import ScheduleConflictModal from "./ScheduleConflictModal";
 
 const dateInput = (v) => {
   if (!v) return "";
-  // If it's already a plain YYYY-MM-DD string (from DB), use it directly.
-  // Avoid passing through new Date() — UTC midnight shifts to the previous
-  // day in IST (+5:30), which is why yesterday's date was showing.
-  if (typeof v === "string") return v.slice(0, 10);
-  // For actual Date objects, format in IST to avoid the same UTC offset issue.
-  const p = (n) => String(n).padStart(2, "0");
+  // A plain YYYY-MM-DD is the day itself. Anything else — the API sends DATE columns as
+  // UTC timestamps, e.g. 15 Nov arrives as "2026-11-14T18:30:00.000Z" — is read in
+  // India time; slicing it would give the day before.
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(v));

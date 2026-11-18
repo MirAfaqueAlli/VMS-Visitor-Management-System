@@ -153,7 +153,7 @@ export default function RequestDetail() {
     } catch (err) {
       toast.error(err?.response?.data?.message || 'Failed to load request.');
     } finally { setLoading(false); }
-  }, [id, crossUnitId]);
+  }, [id, crossUnitId, personal]);
 
   useEffect(() => { fetchRequest(); }, [fetchRequest]);
 

@@ -983,7 +983,8 @@ const uploadRequestPhoto = async (req, res) => {
     const actorId = personalProfile
       ? personalProfile.id
       : (isSuperAdmin(req.user) ? await unitActorId(dbPool, req.user) : req.user.id);
-    if (!isUnitAdmin(req.user) && !isSuperAdmin(req.user) && ![r.requester_user_id, r.host_user_id].includes(actorId)
+    // A super admin only on a request their unit profile raised or hosts
+    if (!isUnitAdmin(req.user) && ![r.requester_user_id, r.host_user_id].includes(actorId)
         && !['security', 'receptionist'].includes(req.user.role_type)) {
       return sendError(res, 'You can add a photo only to a request you raised or host.', 403);
     }
@@ -2130,8 +2131,8 @@ const blacklistVisitorFromRequest = async (req, res) => {
     if (!rows.length) return sendError(res, 'Visit request not found.', 404);
     const vr = rows[0];
 
-    // Only the host or an admin can blacklist
-    const isAdmin = ['super_admin', 'unit_admin'].includes(req.user.role_type);
+    // Only the host or a unit admin can blacklist (a super admin only as the host — their unit profile)
+    const isAdmin = req.user.role_type === 'unit_admin';
     const actorId = personalProfile
       ? personalProfile.id
       : (isSuperAdmin(req.user) ? await unitActorId(dbPool, req.user) : req.user.id);
@@ -2200,9 +2201,15 @@ const unblockVisitor = async (req, res) => {
     const personalProfile = personal ? await findSuperAdminProfile(req.user.id) : null;
     if (personal && !personalProfile) return sendError(res, 'Block entry not found.', 404);
     const dbPool = personalProfile ? getPool(personalProfile.unit_db) : req.db;
-    const isAdmin = ['super_admin', 'unit_admin'].includes(req.user.role_type);
+    // A unit admin may lift any block in the unit; everyone else (a super admin as their
+    // unit profile) only blocks on visits they host
+    const isAdmin = req.user.role_type === 'unit_admin';
+    const ownerId = isSuperAdmin(req.user)
+      ? (personalProfile ? personalProfile.id : await unitActorId(dbPool, req.user))
+      : req.user.id;
+    if (!isAdmin && !ownerId) return sendError(res, 'Block entry not found or already removed.', 404);
     const whereExtra = isAdmin ? '' : 'AND host_user_id = ?';
-    const params = isAdmin ? [blockId] : [blockId, req.user.id];
+    const params = isAdmin ? [blockId] : [blockId, ownerId];
 
     const [result] = await dbPool.query(
       `UPDATE host_phone_blacklist SET is_active = FALSE WHERE id = ? ${whereExtra} AND is_active = TRUE`,
