@@ -16,7 +16,7 @@ import {
   ArrowElbowDownRight, CreditCard as PCreditCard, DownloadSimple, PencilSimple, Eye as PEye, EyeSlash,
   FileXls, FileText as PFileText, Funnel, Globe as PGlobe, Hash as PHash, Question, Key, Keyboard as PKeyboard,
   Stack, SquaresFour, CircleNotch, Lock as PLock, SignOut, Envelope, MapPin as PMapPin, List, Moon as PMoon,
-  Phone as PPhone, Plus as PPlus, Power as PPower, Printer as PPrinter, QrCode as PQrCode, ArrowsClockwise,
+  Phone as PPhone, Plus as PPlus, Minus as PMinus, Power as PPower, Printer as PPrinter, QrCode as PQrCode, ArrowsClockwise,
   ArrowCounterClockwise, Scan as PScan, MagnifyingGlass, Gear, Shield as PShield, ShieldWarning,
   ShieldCheck as PShieldCheck, ShieldSlash, DeviceMobile, Sun as PSun, Tag as PTag, Trash, TrendUp,
   TrendDown as PTrendDown, UploadSimple, User as PUser, UserCheck as PUserCheck, UserCircle as PUserCircle,
@@ -98,6 +98,7 @@ export const MoreHorizontal    = wrap(DotsThree, 'MoreHorizontal');
 export const Paperclip         = wrap(PPaperclip, 'Paperclip');
 export const Phone             = wrap(PPhone, 'Phone');
 export const Plus              = wrap(PPlus, 'Plus');
+export const Minus             = wrap(PMinus, 'Minus');
 export const Power             = wrap(PPower, 'Power');
 export const Printer           = wrap(PPrinter, 'Printer');
 export const QrCode            = wrap(PQrCode, 'QrCode');

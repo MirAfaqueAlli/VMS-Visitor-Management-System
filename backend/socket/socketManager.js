@@ -126,6 +126,26 @@ function initSocket(httpServer) {
       socket.join(`unit:${unit_id}:all`);
     }
 
+    // A super admin who joined a unit as an employee (Profile → Unit membership) gets that
+    // profile's events too — requests to approve, visit updates — like any employee. Asked
+    // again ('rooms:refresh') after they join or leave a unit.
+    if (role_type === 'super_admin') {
+      const syncProfileRoom = async () => {
+        try {
+          const { findSuperAdminProfile } = require('../services/adminProfile.service');
+          const profile = await findSuperAdminProfile(userId);
+          const room = profile ? `user:${profile.unit_db}:${profile.id}` : null;
+          if (socket.data.profileRoom && socket.data.profileRoom !== room) socket.leave(socket.data.profileRoom);
+          if (room) socket.join(room);
+          socket.data.profileRoom = room;
+        } catch (err) {
+          console.warn('[Socket] super admin profile room:', err.message);
+        }
+      };
+      syncProfileRoom();
+      socket.on('rooms:refresh', syncProfileRoom);
+    }
+
 
     socket.on('disconnect', () => {
     });

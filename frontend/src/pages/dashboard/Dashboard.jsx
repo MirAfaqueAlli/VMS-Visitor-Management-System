@@ -880,7 +880,7 @@ function AdminDashboard({ unitName: unitNameProp } = {}) {
 /* ─── D: Super admin / global auditor ───────────────────────────────────── */
 function SuperAdminDashboard() {
   const navigate = useNavigate();
-  const { isGlobalAuditor, setActiveUnit } = useAuth();
+  const { isGlobalAuditor, setActiveUnit, hasUnitProfile } = useAuth();
   const [units, setUnits] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -906,7 +906,8 @@ function SuperAdminDashboard() {
     } catch { /* no unit employee profile yet */ }
   }, []);
 
-  useEffect(() => { if (!isGlobalAuditor) fetchPersonal(); }, [fetchPersonal, isGlobalAuditor]);
+  // Their own visits only once they've joined a unit as an employee (Profile → Unit membership)
+  useEffect(() => { if (!isGlobalAuditor && hasUnitProfile) fetchPersonal(); }, [fetchPersonal, isGlobalAuditor, hasUnitProfile]);
   const approvals = useApprovalModal(fetchPersonal, true);
 
   const fetchAll = useCallback(async () => {
@@ -992,7 +993,7 @@ function SuperAdminDashboard() {
         </div>
       </section>
 
-      {!isGlobalAuditor && (
+      {!isGlobalAuditor && hasUnitProfile && (
         <>
           <section className="section">
             <SectionTitle icon={UserCheck} title="My visits" meta="As a unit employee" />

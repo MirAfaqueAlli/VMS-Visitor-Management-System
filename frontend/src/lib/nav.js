@@ -33,10 +33,11 @@ const UNIT_NAV = [
 
 const CENTRAL_NAV = [
   { label: 'Dashboard', to: '/dashboard' },
-  { group: 'My Visits', items: [
-    { label: 'My Requests',  to: '/my/requests',  roles: ['super_admin'] },
-    { label: 'My Visitors',  to: '/my/visitors',  roles: ['super_admin'] },
-    { label: 'My Approvals', to: '/my/approvals', roles: ['super_admin'] },
+  // A super admin's own visits as an employee of the unit they joined (Profile → Unit membership)
+  { group: 'Visits', personal: true, items: [
+    { label: 'Requests',  to: '/my/requests',  roles: ['super_admin'] },
+    { label: 'Visitors',  to: '/my/visitors',  roles: ['super_admin'] },
+    { label: 'Approvals', to: '/my/approvals', roles: ['super_admin'] },
   ] },
   { group: 'Masters', items: [
     { label: 'Units',        to: '/super/units' },
@@ -81,9 +82,11 @@ export function navSections({ role, isSuperAdmin, isGlobalAuditor, activeUnit, h
     .map((e) => (e.group ? { ...e, items: e.items.filter((i) => allowed(i, role)) } : e))
     .filter((e) => (e.group ? e.items.length > 0 : allowed(e, role)));
 
-  // My Visits is personal: only while the super admin has a unit membership.
+  // Visits is personal: with no unit membership it only points to joining one
   const centralNav = isSuperAdmin && !hasUnitProfile
-    ? CENTRAL_NAV.filter((entry) => entry.group !== 'My Visits')
+    ? CENTRAL_NAV.map((entry) => (entry.personal
+      ? { ...entry, items: [{ label: 'Join a unit', to: '/my/unit', roles: ['super_admin'] }] }
+      : entry))
     : CENTRAL_NAV;
 
   if (isSuperAdmin && activeUnit) {

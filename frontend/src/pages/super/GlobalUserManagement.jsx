@@ -236,7 +236,7 @@ export default function GlobalUserManagement() {
                   <td>{u.is_active ? <State tone="success">Active</State> : <State tone="danger">Inactive</State>}</td>
                   <td className="tabular text-ink-2">{u.last_login_at ? fmtDate(u.last_login_at) : '—'}</td>
                   <td>
-                    {u.is_active && u.role_type !== 'super_admin' && (
+                    {!!u.is_active && u.role_type !== 'super_admin' && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleDeactivate(u); }}

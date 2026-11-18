@@ -21,7 +21,7 @@
  */
 
 const webpush = require('web-push');
-const { centralPool, getPool } = require('./dbManager');
+const { centralPool, getPool, CENTRAL_DB_NAME } = require('./dbManager');
 
 let vapidReady = null;   // Promise<{ publicKey }>
 
@@ -160,6 +160,31 @@ async function pushToUser(userId, unitDb, event, data) {
     const [rows] = await centralPool.query(
       'SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ? AND unit_db = ?', [userId, unitDb || 'central']
     );
+    // A super admin's unit employee profile can't sign in — its devices are the super
+    // admin's own (subscribed under their central account)
+    if (unitDb && unitDb !== 'central' && unitDb !== CENTRAL_DB_NAME) {
+      try {
+        const [[profile]] = await getPool(unitDb).query(
+          'SELECT admin_central_user_id FROM users WHERE id = ? AND is_admin_profile = 1 LIMIT 1', [userId]
+        );
+        if (profile?.admin_central_user_id) {
+          const [central] = await centralPool.query(
+            "SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ? AND unit_db IN ('central', ?)",
+            [profile.admin_central_user_id, CENTRAL_DB_NAME]
+          );
+          if (central.length) {
+            // On the super admin's devices, open their personal pages
+            const url = String(msg.url || '/dashboard');
+            const personalUrl = url === '/approvals' ? '/my/approvals'
+              : /^\/(requests|passes\/pass)\//.test(url) ? `${url}${url.includes('?') ? '&' : '?'}personal=1`
+              : url;
+            await deliver(central, { ...msg, url: personalUrl });
+          }
+          await deliver(rows, msg);
+          return rows.length + central.length;
+        }
+      } catch { /* not an admin profile (or an older unit DB without the column) */ }
+    }
     await deliver(rows, msg);
     return rows.length;
   } catch (err) {

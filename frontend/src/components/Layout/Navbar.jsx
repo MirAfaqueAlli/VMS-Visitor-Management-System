@@ -58,7 +58,7 @@ function NotifyMenuItem({ close }) {
   );
 }
 
-function NotificationPanel({ notifications, loading, onAction, onClose, navigate, canApprove }) {
+function NotificationPanel({ notifications, loading, onAction, onClose, navigate, canApprove, personal = false }) {
   const [activeAction, setActiveAction] = useState(null); // { id, mode, remarks }
 
   const confirmAction = () => {
@@ -75,7 +75,7 @@ function NotificationPanel({ notifications, loading, onAction, onClose, navigate
         <span className="text-[13px] font-semibold">Notifications</span>
         {notifications.length > 0 && <span className="text-[11.5px] text-muted tabular">{notifications.length}</span>}
         {canApprove && (
-          <button type="button" className="btn-link ml-auto text-[12px]" onClick={() => go('/approvals')}>
+          <button type="button" className="btn-link ml-auto text-[12px]" onClick={() => go(personal ? '/my/approvals' : '/approvals')}>
             Open approvals
           </button>
         )}
@@ -122,12 +122,12 @@ function NotificationPanel({ notifications, loading, onAction, onClose, navigate
                           <div className="mt-2">
                             {n.pass_number ? (
                               <button type="button" className="btn-outline btn-sm"
-                                onClick={() => go(`/passes/pass/${n.pass_number}${n.cross_unit_id ? `?unit_id=${n.cross_unit_id}` : ''}`)}>
+                                onClick={() => go(`/passes/pass/${n.pass_number}${n.cross_unit_id ? `?unit_id=${n.cross_unit_id}` : personal ? '?personal=1' : ''}`)}>
                                 <QrCode size={13} /> Open gate pass
                               </button>
                             ) : (
                               <button type="button" className="btn-outline btn-sm"
-                                onClick={() => go(`/requests/${n.visit_request_id}${n.cross_unit_id ? `?unit_id=${n.cross_unit_id}` : ''}`)}>
+                                onClick={() => go(`/requests/${n.visit_request_id}${n.cross_unit_id ? `?unit_id=${n.cross_unit_id}` : personal ? '?personal=1' : ''}`)}>
                                 Open request <ChevronRight size={12} />
                               </button>
                             )}
@@ -183,7 +183,7 @@ function NotificationPanel({ notifications, loading, onAction, onClose, navigate
 
 /* ── Top bar ─────────────────────────────────────────────────────────────── */
 export default function Navbar({ onMenuToggle }) {
-  const { user, logout, isSuperAdmin, activeUnit } = useAuth();
+  const { user, logout, isSuperAdmin, activeUnit, hasUnitProfile } = useAuth();
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
 
@@ -195,8 +195,10 @@ export default function Navbar({ onMenuToggle }) {
   const [query,         setQuery]         = useState('');
 
   const role       = user?.role_type || user?.role;
-  const canApprove = APPROVER_ROLES.includes(role);
-  const hasBell    = !CENTRAL_ROLES.includes(role);   // central users have no unit notifications
+  // A super admin who joined a unit as an employee gets that profile's bell and approvals
+  const personal   = isSuperAdmin && hasUnitProfile;
+  const canApprove = APPROVER_ROLES.includes(role) || personal;
+  const hasBell    = !CENTRAL_ROLES.includes(role) || personal;   // other central users have no unit notifications
   const canSearch  = REQUEST_ROLES.includes(role) || (isSuperAdmin && !!activeUnit);
 
   const scope = isSuperAdmin
@@ -220,7 +222,8 @@ export default function Navbar({ onMenuToggle }) {
     try {
       const promises = [apiClient.get('/approvals/notifications').catch(() => ({ data: { data: [] } }))];
       if (canApprove) {
-        promises.push(apiClient.get('/approvals/inbox').catch(() => ({ data: { data: { items: [] } } })));
+        promises.push(apiClient.get('/approvals/inbox', { params: personal ? { personal: 1 } : undefined })
+          .catch(() => ({ data: { data: { items: [] } } })));
       }
       const results = await Promise.allSettled(promises);
       let notifList = [];
@@ -261,7 +264,7 @@ export default function Navbar({ onMenuToggle }) {
       setNotifications([...inboxList, ...notifList]);
     } catch { /* silent */ }
     finally { if (showLoading) setPanelLoading(false); }
-  }, [canApprove, hasBell, seenKey]);
+  }, [canApprove, hasBell, seenKey, personal]);
 
   /* Initial load only — socket keeps it live after that */
   useEffect(() => { fetchInbox(); }, [fetchInbox]);
@@ -352,10 +355,10 @@ export default function Navbar({ onMenuToggle }) {
   const handleAction = async (id, mode, remarks, force = false) => {
     try {
       if (mode === 'approve') {
-        await apiClient.put(`/approvals/${id}/approve`, { remarks, force_approve: force || undefined });
+        await apiClient.put(`/approvals/${id}/approve${personal ? '?personal=1' : ''}`, { remarks, force_approve: force || undefined });
         toast.success('Request approved — the gate pass has been sent to the visitor.');
       } else {
-        await apiClient.put(`/approvals/${id}/reject`, { remarks });
+        await apiClient.put(`/approvals/${id}/reject${personal ? '?personal=1' : ''}`, { remarks });
         toast.success('Request rejected — the visitor has been told.');
       }
       setConflict(null);
@@ -451,6 +454,7 @@ export default function Navbar({ onMenuToggle }) {
                 onClose={() => setPanelOpen(false)}
                 navigate={navigate}
                 canApprove={canApprove}
+                personal={personal}
               />
             </div>
           )}

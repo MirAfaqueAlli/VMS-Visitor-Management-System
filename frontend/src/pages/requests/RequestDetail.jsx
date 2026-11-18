@@ -253,16 +253,19 @@ export default function RequestDetail() {
   // A cross-unit request lives in another unit's DB: its ids are that unit's and every
   // action endpoint targets the viewer's own unit — so no host/admin actions on it.
   const isCrossUnit = !!request.cross_unit;
-  // super_admin is read-only inside a unit (no approve/reject/block/pass) — API enforces the same
-  const isHost    = !isCrossUnit && role !== 'super_admin' && String(request.host_user_id) === String(user?.id);
+  // A super admin is the host only through their unit employee profile — the API says so
+  // (my_role), since their central id means nothing in a unit DB
+  const isHost    = !isCrossUnit && (role === 'super_admin'
+    ? request.my_role === 'HOST'
+    : String(request.host_user_id) === String(user?.id));
   const isVisitor = !isHost && (
-    (String(request.requester_user_id) === String(user?.id) && request.visit_category === 'EMPLOYEE_VISIT') ||
+    (role !== 'super_admin' && String(request.requester_user_id) === String(user?.id) && request.visit_category === 'EMPLOYEE_VISIT') ||
     (user?.email && request.visitor_email?.toLowerCase() === user.email.toLowerCase()) ||
     (user?.phone && request.visitor_phone && last10(request.visitor_phone) === last10(user.phone)) ||
     (isCrossUnit && request.my_role === 'VISITOR')
   );
   const canViewPass = (!isCrossUnit && ['security', 'receptionist', 'unit_admin'].includes(role)) ||
-                      (request.status === 'APPROVED' && request.pass_number && (isVisitor || role === 'employee'));
+                      (request.status === 'APPROVED' && request.pass_number && (isVisitor || isHost || role === 'employee'));
   const isAdmin    = !isCrossUnit && role === 'unit_admin';
   const canApprove = (isHost || isAdmin) && request.status === 'PENDING';
   const isBlocked  = !!request.host_block_id;

@@ -76,7 +76,9 @@ export default function VisitorLog({ personal = false, unitWide = false } = {}) 
             aria-label="Employee" style={{ width: 220 }}>
             <option value="">All employees</option>
             {unitEmployees.map((emp) => {
-              const isMe = emp.id === user?.id || (emp.email && user?.email && emp.email.toLowerCase() === user.email.toLowerCase());
+              // A super admin's login id means nothing in a unit DB — only their profile's email can match
+              const isMe = (!["super_admin", "global_auditor"].includes(user?.role_type) && emp.id === user?.id)
+                || (emp.email && user?.email && emp.email.toLowerCase() === user.email.toLowerCase());
               return (
                 <option key={emp.id} value={emp.id}>
                   {emp.full_name}{isMe ? " (you)" : ""}{emp.department_name ? ` · ${emp.department_name}` : ""}

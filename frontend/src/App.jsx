@@ -30,6 +30,7 @@ const UnitDashboard = lazyWithReload(() =>
 
 const VisitorList            = lazyWithReload(() => import("./pages/visitors/VisitorList"));
 const VisitorLog             = lazyWithReload(() => import("./pages/visitors/VisitorLog"));
+const JoinUnit               = lazyWithReload(() => import("./pages/profile/JoinUnit"));
 const VisitorDetail          = lazyWithReload(() => import("./pages/visitors/VisitorDetail"));
 const VisitorForm            = lazyWithReload(() => import("./pages/visitors/VisitorForm"));
 const NewRequest             = lazyWithReload(() => import("./pages/requests/NewRequest"));
@@ -141,6 +142,7 @@ const router = createBrowserRouter([
                   { path: "requests",  element: <S><RequestList personal /></S> },
                   { path: "visitors",  element: <S><VisitorLog personal /></S> },
                   { path: "approvals", element: <S><ApprovalInbox personal /></S> },
+                  { path: "unit",      element: <S><JoinUnit /></S> },
                 ],
               },
 

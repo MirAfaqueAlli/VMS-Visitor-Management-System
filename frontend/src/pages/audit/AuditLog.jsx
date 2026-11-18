@@ -2,13 +2,15 @@
 // Audit trail (DESIGN_RULES §6/§8): title + Refresh, toolbar (count · search ·
 // module · unit), a plain sortable table. Actions are hairline tags.
 import { useState, useEffect, useCallback } from "react";
-import { ShieldAlert, RefreshCw } from "../../components/icons";
+import { ShieldAlert, RefreshCw, Loader2, FileText } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import useAuth from "../../hooks/useAuth";
 import Select from "../../components/Select";
 import Pagination from "../../components/shared/Pagination";
-import { PageHeader, Toolbar, SearchInput, Th, SkeletonRows, Tag, Empty } from "../../components/ui";
+import { PageHeader, Toolbar, SearchInput, Th, SkeletonRows, Tag, Empty, ExcelIcon } from "../../components/ui";
+import { exportExcel, exportPDF } from "../../lib/officialReport";
+import { fetchAllPages } from "../../lib/exportXlsx";
 import useSort from "../../lib/useSort";
 import { fmtDate, fmtClock, orDash } from "../../lib/format";
 
@@ -29,6 +31,10 @@ const MODULES = [
   'DEPARTMENT', 'UNIT', 'DESIGNATION', 'REPORT', 'ADMIN',
 ];
 const moduleLabel = (m) => m.charAt(0) + m.slice(1).toLowerCase().replace(/_/g, " ");
+/** Who did it — "Unknown user" when no user is known (e.g. a failed sign-in). */
+const userLabel = (log) => log.user_name ?? (log.user_id ? `#${log.user_id}` : "Unknown user");
+/** The record an entry is about, e.g. "VISIT_REQUEST #12". */
+const recordLabel = (log) => [log.record_type, log.record_id ? `#${log.record_id}` : null].filter(Boolean).join(" ");
 
 export default function AuditLog() {
   const { isSuperAdmin, isGlobalAuditor } = useAuth();
@@ -43,6 +49,7 @@ export default function AuditLog() {
   const [search,     setSearch]     = useState("");
   const [module,     setModule]     = useState("");
   const [unitDb,     setUnitDb]     = useState(""); // super admin only
+  const [exporting,  setExporting]  = useState("");  // "" | "excel" | "pdf"
 
   const limit = 20;
 
@@ -78,6 +85,50 @@ export default function AuditLog() {
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
+  const exportAll = async (format) => {
+    setExporting(format);
+    try {
+      const filters = {};
+      if (search.trim()) filters.search = search.trim();
+      if (module)        filters.module = module;
+      if (unitDb && isCentral) filters.unit_db = unitDb;
+      const all = await fetchAllPages(async (p) => {
+        const res = await apiClient.get(endpoint, { params: { ...filters, page: p, limit: 100 } });
+        const data = res.data?.data;
+        return { rows: data?.logs ?? data ?? [], pages: data?.pagination?.pages ?? 1 };
+      }, 100);
+      if (!all.length) { toast.error("No audit entries to export for these filters."); return; }
+
+      const columns = [
+        { header: "Date",       accessor: (l) => fmtDate(l.created_at) },
+        { header: "Time",       accessor: (l) => (l.created_at ? fmtClock(l.created_at) : "") },
+        { header: "User",       accessor: (l) => userLabel(l) },
+        ...(isCentral ? [{ header: "Unit", accessor: (l) => (l.log_source === "central" ? "Central admin" : (l.unit_name ?? l.unit_db ?? "")) }] : []),
+        { header: "Module",     accessor: (l) => l.module ?? "" },
+        { header: "Action",     accessor: (l) => l.action ?? "" },
+        { header: "Record",     accessor: (l) => recordLabel(l) },
+        { header: "IP address", accessor: (l) => l.ip_address ?? "" },
+      ];
+      const unitName = !isCentral ? "All Units"
+        : unitDb === "central" ? "Central admin"
+        : (units.find((u) => u.db_name === unitDb)?.unit_name || (unitDb ? unitDb : "All Units"));
+      const metadata = {
+        Unit: unitName,
+        Module: module ? moduleLabel(module) : "All modules",
+        Search: search.trim() || undefined,
+        "Total Records": all.length,
+      };
+      const name = `audit_log_${new Date().toISOString().slice(0, 10)}`;
+      if (format === "excel") await exportExcel(all, columns, name, { title: "Audit Log Report", metadata });
+      else await exportPDF(all, columns, "Audit Log Report", name, { metadata });
+      toast.success(`${all.length.toLocaleString("en-IN")} audit entries exported.`);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Could not export the audit log.");
+    } finally {
+      setExporting("");
+    }
+  };
+
   // Reset page when filters change
   const onSearch = (v) => { setSearch(v); setPage(1); };
   const onModule = (v) => { setModule(v); setPage(1); };
@@ -99,9 +150,20 @@ export default function AuditLog() {
       <PageHeader
         title="Audit logs"
         actions={(
-          <button type="button" onClick={fetchLogs} disabled={loading} className="btn-outline">
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
-          </button>
+          <>
+            {/* Every entry matching the filters below, as an official report */}
+            <button type="button" onClick={() => exportAll("excel")} disabled={!!exporting || loading || !totalLogs}
+              className="btn-outline" title="Export the filtered audit log to Excel">
+              {exporting === "excel" ? <Loader2 size={14} className="animate-spin" /> : <ExcelIcon size={15} />} Excel
+            </button>
+            <button type="button" onClick={() => exportAll("pdf")} disabled={!!exporting || loading || !totalLogs}
+              className="btn-outline" title="Export the filtered audit log to PDF">
+              {exporting === "pdf" ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} PDF
+            </button>
+            <button type="button" onClick={fetchLogs} disabled={loading} className="btn-outline">
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+            </button>
+          </>
         )}
       />
 
@@ -157,7 +219,7 @@ export default function AuditLog() {
                   {fmtDate(log.created_at)}
                   <span className="cell-sub">{log.created_at ? fmtClock(log.created_at) : ""}</span>
                 </td>
-                <td className="whitespace-nowrap font-medium">{log.user_name ?? `#${log.user_id}`}</td>
+                <td className="whitespace-nowrap font-medium">{userLabel(log)}</td>
                 {isCentral && (
                   <td className="whitespace-nowrap">
                     {orDash(log.unit_name ?? log.unit_db)}

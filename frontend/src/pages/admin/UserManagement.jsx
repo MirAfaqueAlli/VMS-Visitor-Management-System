@@ -339,7 +339,15 @@ function UserSlideOver({
 
 // ── Main Page ───────────────────────────────────────────────────────────────
 export default function UserManagement({ initialTab = "employees" }) {
-  const { user: currentUser, isUnitAdmin, refreshUser } = useAuth();
+  const { user: currentUser, isUnitAdmin, refreshUser, unitProfile, activeUnit } = useAuth();
+  // Is this row the signed-in user? Unit users: their own id. A super admin's central id
+  // means nothing in a unit DB (it can equal some unit user's id) — for them, only their
+  // own Admin host profile in this unit counts, matched by its employee code.
+  const isCentralUser = ['super_admin', 'global_auditor'].includes(currentUser?.role_type);
+  const isMe = (u) => (isCentralUser
+    ? !!u.is_admin_profile && !!unitProfile && String(unitProfile.unit_id) === String(activeUnit?.id)
+      && u.employee_code === unitProfile.employee_code
+    : u.id === currentUser?.id);
   // The route decides which page this is (App.jsx keys each one, so state never leaks)
   const activeTab = initialTab === "security" ? "security" : "employees";
   const isSecurity = activeTab === "security";
@@ -564,8 +572,8 @@ export default function UserManagement({ initialTab = "employees" }) {
                 >
                   <td>
                     <span className={`font-medium ${u.is_active ? "" : "text-muted"}`}>{u.full_name}</span>
-                    {u.id === currentUser?.id && <span className="ml-1.5"><Tag tone="brand">You</Tag></span>}
-                    {u.is_admin_profile && <span className="ml-1.5"><Tag tone="info">Admin host</Tag></span>}
+                    {isMe(u) && <span className="ml-1.5"><Tag tone="brand">You</Tag></span>}
+                    {!!u.is_admin_profile && <span className="ml-1.5"><Tag tone="info">Admin host</Tag></span>}
                     <span className="cell-sub">{u.email}</span>
                   </td>
                   <td className="mono">{u.employee_code}</td>
@@ -580,7 +588,7 @@ export default function UserManagement({ initialTab = "employees" }) {
                   )}
                   <td>{u.is_active ? <State tone="success">Active</State> : <State tone="neutral">Inactive</State>}</td>
                   <td>
-                    {u.is_active && u.id !== currentUser?.id && !u.is_admin_profile && (u.role_type !== "unit_admin" || currentUser?.role_type === "super_admin") && (
+                    {!!u.is_active && !isMe(u) && !u.is_admin_profile && (u.role_type !== "unit_admin" || currentUser?.role_type === "super_admin") && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setDeactivatingId(u.id); }}
@@ -606,7 +614,7 @@ export default function UserManagement({ initialTab = "employees" }) {
         onClose={() => { setPanelOpen(false); setEditUser(null); }}
         onSuccess={async () => {
           await fetchData();
-          if (editUser && editUser.id === currentUser?.id) await refreshUser();
+          if (editUser && isMe(editUser)) await refreshUser();
         }}
         editUser={editUser}
         departments={departments}
@@ -615,7 +623,7 @@ export default function UserManagement({ initialTab = "employees" }) {
         designations={designations}
         onDepartmentChange={fetchDesignations}
         activeTab={activeTab}
-        isSelfEdit={!!editUser && editUser.id === currentUser?.id}
+        isSelfEdit={!!editUser && isMe(editUser)}
       />
 
       <Modal

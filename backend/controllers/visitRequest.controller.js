@@ -1063,7 +1063,11 @@ const getRequest = async (req, res) => {
       (req.user.email && request.visitor_email && request.visitor_email.toLowerCase() === req.user.email.toLowerCase()) ||
       (req.user.phone && request.visitor_phone && request.visitor_phone === req.user.phone)
     );
-    const isHost = !crossUnitId && request.host_user_id === actorId;
+    // A super admin's profile id means something only in the unit it belongs to — never
+    // match it against another unit's users (ids repeat across unit DBs)
+    const actorInThisUnit = !isSuperAdmin(req.user)
+      || (!!superProfile && (personal || req.unitDbName === superProfile.unit_db));
+    const isHost = !crossUnitId && actorInThisUnit && request.host_user_id === actorId;
 
     if (!crossUnitId && isEmployee(req.user) && !isHost && !isVisitor && request.requester_user_id !== actorId) {
       return sendError(res, 'Visit request not found.', 404);

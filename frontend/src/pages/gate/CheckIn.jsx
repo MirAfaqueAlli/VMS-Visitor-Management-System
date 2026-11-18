@@ -17,6 +17,7 @@ import {
 } from "../../components/ui";
 import { fmtDate, fmtTime } from "../../lib/format";
 import { idProofLabel } from "../../lib/idProof";
+import SquareCropModal from "../../components/SquareCropModal";
 
 // ── QR scan modes for Step 1 ──────────────────────────────────────────────────
 const VERIFY_MODES = [
@@ -73,6 +74,7 @@ export default function CheckIn() {
   const [captureMode,  setCaptureMode]  = useState(null); // null | 'camera' | 'preview'
   const cameraStreamRef = useRef(null); // useRef — no stale-closure on stop
   const [photoDataUrl, setPhotoDataUrl] = useState(null);
+  const [cropSrc, setCropSrc] = useState(null);   // photo waiting to be cropped to a square
   const videoRef  = useRef(null);
   const canvasRef = useRef(null);
   const fileRef   = useRef(null);
@@ -347,23 +349,25 @@ export default function CheckIn() {
     canvas.width  = video.videoWidth  || 640;
     canvas.height = video.videoHeight || 480;
     canvas.getContext("2d").drawImage(video, 0, 0);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-    setPhotoDataUrl(dataUrl);
     stopCamera();
-    setCaptureMode("preview");
-    toast.success("Photo taken.");
+    setCropSrc(canvas.toDataURL("image/jpeg", 0.92));   // crop it to a square first
   };
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    e.target.value = "";   // choosing the same file again still works
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      setPhotoDataUrl(ev.target.result);
-      setCaptureMode("preview");
-      toast.success("Photo added.");
-    };
+    reader.onload = (ev) => setCropSrc(ev.target.result);   // crop it to a square first
     reader.readAsDataURL(file);
+  };
+
+  /** The square chosen in the crop → the check-in photo. */
+  const onCropped = (dataUrl) => {
+    setCropSrc(null);
+    setPhotoDataUrl(dataUrl);
+    setCaptureMode("preview");
+    toast.success("Photo added.");
   };
 
   const retakePhoto = () => {
@@ -441,6 +445,7 @@ export default function CheckIn() {
 
   return (
     <div className="animate-fade-in">
+      <SquareCropModal src={cropSrc} onDone={onCropped} onCancel={() => setCropSrc(null)} title="Crop the visitor photo" />
       <PageHeader title={`Check in ${visitorName}`} />
       {dayBlock && (
         <Note tone={dayBlock.tone} icon={dayBlock.tone === "danger" ? AlertCircle : AlertTriangle} className="mb-5">

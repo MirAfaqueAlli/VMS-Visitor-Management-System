@@ -1,28 +1,15 @@
 // frontend/src/components/PhotoCapture.jsx
-// Visitor photo from the camera or a file, as a square JPEG (centre-cropped, up to 800px).
+// Visitor photo from the camera or a file. Every photo opens in the square crop
+// (SquareCropModal) first, so the saved square JPEG (≤ 800px) is the part chosen.
 // value: data URL or null; onChange(dataUrl | null).
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { Camera, Upload, X, RotateCcw } from "./icons";
-
-const MAX_SIDE = 800;
-
-/**
- * A square JPEG (side ≤ MAX_SIDE) cropped from the centre of an image / video frame —
- * the same crop the server makes, so the preview is what gets saved. Never stretched.
- */
-function toJpeg(source, width, height) {
-  const side = Math.min(width, height);
-  const out = Math.min(MAX_SIDE, side);
-  const canvas = document.createElement("canvas");
-  canvas.width = out;
-  canvas.height = out;
-  canvas.getContext("2d").drawImage(source, (width - side) / 2, (height - side) / 2, side, side, 0, 0, out, out);
-  return canvas.toDataURL("image/jpeg", 0.85);
-}
+import SquareCropModal from "./SquareCropModal";
 
 export default function PhotoCapture({ value, onChange, label = "Visitor photo" }) {
   const [camera, setCamera] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);   // photo waiting to be cropped
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const fileRef = useRef(null);
@@ -52,7 +39,11 @@ export default function PhotoCapture({ value, onChange, label = "Visitor photo" 
   const capture = () => {
     const v = videoRef.current;
     if (!v?.videoWidth) return;
-    onChange(toJpeg(v, v.videoWidth, v.videoHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = v.videoWidth;
+    canvas.height = v.videoHeight;
+    canvas.getContext("2d").drawImage(v, 0, 0);
+    setCropSrc(canvas.toDataURL("image/jpeg", 0.92));
     stop();
   };
 
@@ -61,16 +52,22 @@ export default function PhotoCapture({ value, onChange, label = "Visitor photo" 
     e.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) { toast.error("Choose an image file."); return; }
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => { onChange(toJpeg(img, img.naturalWidth, img.naturalHeight)); URL.revokeObjectURL(url); };
-    img.onerror = () => { toast.error("Could not read this image."); URL.revokeObjectURL(url); };
-    img.src = url;
+    const reader = new FileReader();
+    reader.onload = () => setCropSrc(String(reader.result));
+    reader.onerror = () => toast.error("Could not read this image.");
+    reader.readAsDataURL(file);
   };
+
+  const crop = (
+    <SquareCropModal src={cropSrc}
+      onDone={(dataUrl) => { setCropSrc(null); onChange(dataUrl); }}
+      onCancel={() => setCropSrc(null)} />
+  );
 
   if (value) {
     return (
       <div className="flex items-start gap-3">
+        {crop}
         <img src={value} alt={label} className="w-24 h-24 object-cover rounded border border-line" />
         <div className="pt-1 space-y-1">
           <p className="text-[12px] text-muted">Saved with the request; shown to security at check-in.</p>
@@ -82,6 +79,7 @@ export default function PhotoCapture({ value, onChange, label = "Visitor photo" 
 
   return camera ? (
     <div className="space-y-2 max-w-[420px]">
+      {crop}
       <div className="scan-stage" style={{ minHeight: 220 }}>
         <video ref={videoRef} autoPlay playsInline muted className="w-full max-h-[280px] object-cover" />
       </div>
@@ -92,6 +90,7 @@ export default function PhotoCapture({ value, onChange, label = "Visitor photo" 
     </div>
   ) : (
     <div className="flex flex-wrap gap-2">
+      {crop}
       <button type="button" onClick={start} className="btn-outline btn-sm"><Camera size={13} /> Use camera</button>
       <button type="button" onClick={() => fileRef.current?.click()} className="btn-outline btn-sm"><Upload size={13} /> Upload photo</button>
       <input ref={fileRef} type="file" accept="image/*" capture="user" onChange={onFile} className="hidden" aria-label={label} />

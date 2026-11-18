@@ -17,7 +17,7 @@ import useAuth from '../../hooks/useAuth';
 import { OFFICE_TYPES, officeTypeLabel } from '../../utils/officeTypes';
 import Select from '../../components/Select';
 import Pagination from '../../components/shared/Pagination';
-import { importWithReload } from '../../lib/chunkReload';
+import { exportExcel, exportPDF } from '../../lib/officialReport';
 import {
   PageHeader, Tabs, StatStrip, Stat, SearchInput, SkeletonRows, Status, Empty, ExcelIcon,
 } from '../../components/ui';
@@ -280,256 +280,6 @@ async function fetchAllReportRows(endpoint, params = {}) {
   return [];
 }
 
-// The Excel / PDF libraries are large (~1 MB together), so they are loaded only
-// when an export is actually made — not with the Reports page.
-async function exportExcel(rows, columns, filename, { title, metadata } = {}) {
-  let XLSX;
-  try {
-    XLSX = await importWithReload(() => import('xlsx'));
-  } catch (err) {
-    console.error('[Reports] Could not load the Excel exporter:', err);
-    toast.error('Could not create the Excel file. Please try again.');
-    return;
-  }
-  const headerRows = [];
-  if (title) headerRows.push([title]);
-  headerRows.push([`Generated: ${new Date().toLocaleString('en-GB')}`]);
-  if (metadata && typeof metadata === 'object') {
-    Object.entries(metadata).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== '') {
-        headerRows.push([`${k}:`, v]);
-      }
-    });
-  }
-  if (headerRows.length > 0) {
-    headerRows.push([]); // blank separator before headers
-  }
-
-  const tableData = rows.map(r => {
-    const o = {};
-    columns.forEach(c => { o[c.header] = c.accessor(r) ?? ''; });
-    return o;
-  });
-
-  const ws = XLSX.utils.aoa_to_sheet(headerRows);
-  XLSX.utils.sheet_add_json(ws, tableData, {
-    origin: headerRows.length > 0 ? `A${headerRows.length + 1}` : 'A1'
-  });
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Report');
-  const cleanFilename = (filename || 'report').replace(/[^a-zA-Z0-9_-]/g, '_');
-  XLSX.writeFile(wb, `${cleanFilename}.xlsx`);
-}
-
-async function exportPDF(rows, columns, title, filename, { metadata } = {}) {
-  let jsPDF, autoTable;
-  try {
-    [{ jsPDF }, { default: autoTable }] = await Promise.all([importWithReload(() => import('jspdf')), importWithReload(() => import('jspdf-autotable'))]);
-  } catch (err) {
-    console.error('[Reports] Could not load the PDF exporter:', err);
-    toast.error('Could not create the PDF file. Please try again.');
-    return;
-  }
-  const doc = new jsPDF({ orientation: 'landscape' });
-  doc.setFontSize(14);
-  doc.text(title, 14, 16);
-  doc.setFontSize(9);
-  doc.setTextColor(100);
-  let y = 22;
-  doc.text(`Generated: ${new Date().toLocaleString('en-GB')}`, 14, y);
-
-  if (metadata && typeof metadata === 'object') {
-    const metaEntries = Object.entries(metadata).filter(([_, v]) => v !== undefined && v !== null && v !== '');
-    if (metaEntries.length > 0) {
-      y += 5;
-      const metaText = metaEntries.map(([k, v]) => `${k}: ${v}`).join('   |   ');
-      doc.setFontSize(8);
-      doc.setTextColor(70);
-      doc.text(metaText, 14, y);
-    }
-  }
-
-  autoTable(doc, {
-    startY: y + 5,
-    head: [columns.map(c => c.header)],
-    body: rows.map(r => columns.map(c => c.accessor(r) ?? '')),
-    styles: { fontSize: 8, cellPadding: 2 },
-    headStyles: { fillColor: [99, 102, 241], fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [248, 249, 253] },
-  });
-  const cleanFilename = (filename || 'report').replace(/[^a-zA-Z0-9_-]/g, '_');
-  doc.save(`${cleanFilename}.pdf`);
-}
-
-// ─────────────────────── single-visit detail export ───────────────────────────
-/** Full detail of one visit: visitor, host, gate pass, check-in/out, approvals. */
-async function fetchVisitDetail(id, unitDb) {
-  const params = {};
-  if (unitDb) params.unit_db = unitDb;
-  const res = await apiClient.get(`/reports/visit-detail/${id}`, { params });
-  return res.data?.data ?? null;
-}
-
-const detailVal = (v) => (v === undefined || v === null || v === '' ? '—' : String(v));
-const detailDateTime = (v) => (v ? new Date(v).toLocaleString('en-GB') : '—');
-const detailDateSlug = (v) => {
-  if (!v) return '';
-  // The visit's day in India time (the API sends DATE columns as UTC timestamps:
-  // 15 Nov arrives as 2026-11-14T18:30:00Z — slicing it would name the file 14 Nov)
-  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return '';
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
-};
-
-function buildVisitDetailRows(detail) {
-  const rows = [];
-  const add = (section, field, value) => rows.push({ section, field, value: detailVal(value) });
-
-  const v = detail.visit || {};
-  const visitor = detail.visitor || {};
-  const host = detail.host || {};
-
-  add('Unit', 'Unit', detail.unit_name);
-
-  add('Visit', 'Visit ID', v.id);
-  add('Visit', 'Status', v.status);
-  add('Visit', 'Category', CATEGORY_LABELS[v.visit_category] ?? v.visit_category);
-  add('Visit', 'Request Source', v.request_source);
-  add('Visit', 'Purpose', v.purpose);
-  add('Visit', 'Visit Date', fmt(v.visit_date));
-  add('Visit', 'Start Time', fmtTime(v.visit_start_time));
-  add('Visit', 'End Time', fmtTime(v.visit_end_time));
-  add('Visit', 'Company', v.company_name);
-  add('Visit', 'Vendor Email', v.vendor_email);
-  add('Visit', 'Service Type', v.service_type);
-  add('Visit', 'Work Order Ref', v.work_order_ref);
-  add('Visit', 'Accompanying Count', v.accompanying_count);
-  add('Visit', 'Approved At', detailDateTime(v.approved_at));
-  add('Visit', 'Created At', detailDateTime(v.created_at));
-  add('Visit', 'Last Updated', detailDateTime(v.updated_at));
-
-  add('Visitor', 'Name', visitor.full_name);
-  add('Visitor', 'Phone', visitor.phone);
-  add('Visitor', 'Email', visitor.email);
-  add('Visitor', 'Address', visitor.address);
-  add('Visitor', 'Visitor Type', visitor.visitor_type);
-  add('Visitor', 'ID Proof Type', v.id_proof_type);
-  add('Visitor', 'ID Proof Number', v.id_proof_number);
-
-  add('Host', 'Name', host.full_name);
-  add('Host', 'Employee Code', host.employee_code);
-  add('Host', 'Department', host.department);
-  add('Host', 'Designation', host.designation);
-  add('Host', 'Email', host.email);
-  add('Host', 'Phone', host.phone);
-  add('Host', 'Unit', host.unit);
-
-  const gp = detail.gate_pass;
-  if (gp) {
-    add('Gate pass', 'Pass Number', gp.pass_number);
-    add('Gate pass', 'Status', gp.status);
-    add('Gate pass', 'Issued At', detailDateTime(gp.issued_at));
-    add('Gate pass', 'Issued By', gp.issued_by);
-    add('Gate pass', 'Printed', gp.is_printed ? 'Yes' : 'No');
-    add('Gate pass', 'QR Expires At', detailDateTime(gp.qr_expires_at));
-    add('Gate pass', 'Checkout Method', gp.checkout_method);
-  } else {
-    add('Gate pass', 'Pass Number', 'No gate pass issued');
-  }
-
-  (detail.visit_logs || []).forEach((log, i) => {
-    const many = (detail.visit_logs || []).length > 1;
-    const s = many ? `Check-in / out #${i + 1}` : 'Check-in / out';
-    add(s, 'Check-in At', detailDateTime(log.check_in_at));
-    add(s, 'Check-out At', detailDateTime(log.check_out_at));
-    add(s, 'Status', log.status);
-    add(s, 'Checked In By', log.checked_in_by_name);
-    add(s, 'Checked Out By', log.checked_out_by_name);
-    add(s, 'ID Verified Type', log.id_verified_type);
-    add(s, 'ID Verified Number', log.id_verified_number);
-    add(s, 'Remarks', log.remarks);
-  });
-
-  (detail.approvals || []).forEach((a, i) => {
-    const many = (detail.approvals || []).length > 1;
-    const s = many ? `Approval #${i + 1}` : 'Approval';
-    add(s, 'Action', a.action);
-    add(s, 'By', a.acted_by_name);
-    add(s, 'At', detailDateTime(a.created_at));
-    add(s, 'Remarks', a.remarks);
-  });
-
-  (detail.companions || []).forEach((c, i) => {
-    const many = (detail.companions || []).length > 1;
-    const s = many ? `Companion #${i + 1}` : 'Companion';
-    add(s, 'Name', c.full_name);
-    add(s, 'ID Type', c.id_type);
-    add(s, 'ID Number', c.id_number);
-  });
-
-  if (detail.rejection) {
-    add('Rejection', 'Reason', detail.rejection.rejection_reason);
-    add('Rejection', 'By', detail.rejection.rejected_by_name);
-    add('Rejection', 'At', detailDateTime(detail.rejection.rejected_at));
-  }
-
-  return rows;
-}
-
-const VISIT_DETAIL_COLS = [
-  { header: 'Section', accessor: r => r.section },
-  { header: 'Field',   accessor: r => r.field },
-  { header: 'Value',   accessor: r => r.value },
-];
-
-async function exportVisitDetail(row, format) {
-  const detail = await fetchVisitDetail(row.id, row.unit_db);
-  if (!detail) {
-    toast.error('Could not load this visit.');
-    return false;
-  }
-  const visitorName = detail.visitor?.full_name || detail.visit?.visitor_name || 'Visitor';
-  const datePart = detailDateSlug(detail.visit?.visit_date);
-  const filename = `Visit_${detail.id}_${visitorName}_${datePart}`;
-  const title = `Visit Details - ${visitorName}`;
-  const rows = buildVisitDetailRows(detail);
-  const metadata = {
-    'Visit ID': detail.id,
-    'Unit': detail.unit_name,
-    'Visitor': visitorName,
-    'Visit Date': fmt(detail.visit?.visit_date),
-  };
-
-  if (format === 'excel') {
-    await exportExcel(rows, VISIT_DETAIL_COLS, filename, { title, metadata });
-  } else {
-    await exportPDF(rows, VISIT_DETAIL_COLS, title, filename, { metadata });
-  }
-  return true;
-}
-
-/** Per-row download: exports only the visit in that row (never the whole report). */
-async function downloadVisitRow(row, format, setDownloadingKey) {
-  if (!row?.id) {
-    toast.error('This row has no visit to download.');
-    return;
-  }
-  const key = `${format}-${row.id}`;
-  try {
-    setDownloadingKey(key);
-    toast.loading('Preparing visit details...', { id: 'visit-detail-dl' });
-    const ok = await exportVisitDetail(row, format);
-    toast.dismiss('visit-detail-dl');
-    if (ok) toast.success('Visit details downloaded.');
-  } catch (e) {
-    toast.dismiss('visit-detail-dl');
-    toast.error('Failed to download visit details: ' + (e?.message || 'Error'));
-  } finally {
-    setDownloadingKey('');
-  }
-}
 
 // ─────────────────────────── reusable table + pagination ─────────────────────
 function ReportTable({ cols, rows, loading, page, setPage, totalPages, total, emptyMsg = 'No records for these filters.' }) {
@@ -780,19 +530,6 @@ function EmployeeReport({ isCentral }) {
     { key: 'visit_category',  label: 'Type', render: r => <CatBadge cat={r.visit_category} /> },
     { key: 'visit_date',      label: 'Date', render: r => fmt(r.visit_date) },
     { key: 'status',          label: 'Status', render: r => <SBadge status={r.status} /> },
-    {
-      key: 'actions',
-      label: 'Report',
-      render: r => (
-        <DownloadPair
-          label={`details of ${r.visitor_name || 'this visit'}`}
-          onExcel={() => downloadVisitRow(r, 'excel', setDownloadingKey)}
-          onPdf={() => downloadVisitRow(r, 'pdf', setDownloadingKey)}
-          busyExcel={downloadingKey === `excel-${r.id}`}
-          busyPdf={downloadingKey === `pdf-${r.id}`}
-        />
-      ),
-    },
   ].filter(Boolean);
 
   return (
@@ -984,19 +721,6 @@ function DepartmentReport({ isCentral }) {
     { key: 'visit_category',  label: 'Type',       render: r => <CatBadge cat={r.visit_category} /> },
     { key: 'visit_date',      label: 'Date',       render: r => fmt(r.visit_date) },
     { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
-    {
-      key: 'actions',
-      label: 'Report',
-      render: r => (
-        <DownloadPair
-          label={`details of ${r.visitor_name || 'this visit'}`}
-          onExcel={() => downloadVisitRow(r, 'excel', setDownloadingKey)}
-          onPdf={() => downloadVisitRow(r, 'pdf', setDownloadingKey)}
-          busyExcel={downloadingKey === `excel-${r.id}`}
-          busyPdf={downloadingKey === `pdf-${r.id}`}
-        />
-      ),
-    },
   ].filter(Boolean);
 
   return (
@@ -1605,7 +1329,6 @@ function VisitHistoryReport({ isCentral }) {
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(false);
   const [exportingAll, setExportingAll] = useState(false);
-  const [downloadingKey, setDownloadingKey] = useState('');
   const [page, setPage]   = useState(1);
   const [total, setTotal] = useState(0);
   const limit = 50;
@@ -1698,19 +1421,6 @@ function VisitHistoryReport({ isCentral }) {
     { key: 'check_in_time',   label: 'In',         render: r => fmtTime(r.check_in_time) },
     { key: 'check_out_time',  label: 'Out',        render: r => fmtTime(r.check_out_time) },
     { key: 'status',          label: 'Status',     render: r => <SBadge status={r.status} /> },
-    {
-      key: 'actions',
-      label: 'History',
-      render: r => (
-        <DownloadPair
-          label={`details of ${r.visitor_name || 'this visit'}`}
-          onExcel={() => downloadVisitRow(r, 'excel', setDownloadingKey)}
-          onPdf={() => downloadVisitRow(r, 'pdf', setDownloadingKey)}
-          busyExcel={downloadingKey === `excel-${r.id}`}
-          busyPdf={downloadingKey === `pdf-${r.id}`}
-        />
-      ),
-    },
   ].filter(Boolean);
 
   return (

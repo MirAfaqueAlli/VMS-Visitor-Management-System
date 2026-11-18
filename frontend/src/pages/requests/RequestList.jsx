@@ -39,7 +39,11 @@ const last10 = (p) => String(p || "").replace(/\D/g, "").slice(-10);
  */
 function relationTo(r, user) {
   if (!user) return null;
-  const isMe = (id) => id != null && Number(id) === Number(user.id);
+  // A super admin's / global auditor's login id is a central id: in a unit DB it can equal
+  // some other user's id. For them only the API's my_role (their own unit profile) and
+  // their email / mobile say "you".
+  const central = ["super_admin", "global_auditor"].includes(user.role_type);
+  const isMe = (id) => !central && id != null && Number(id) === Number(user.id);
   const emailMatch = user.email && r.visitor_email && r.visitor_email.toLowerCase() === user.email.toLowerCase();
   const phoneMatch = user.phone && r.visitor_phone && last10(r.visitor_phone) === last10(user.phone);
   // Rows from another unit's database: ids there aren't ours, so only contact details tell.
@@ -300,7 +304,9 @@ export default function RequestList({ personal = false } = {}) {
             aria-label="Employee" style={{ width: 210 }}>
             <option value="">All employees</option>
             {unitEmployees.map((emp) => {
-              const isMe = emp.id === user?.id || (emp.email && user?.email && emp.email.toLowerCase() === user.email.toLowerCase());
+              // A super admin's login id means nothing in a unit DB — only their profile's email can match
+              const isMe = (!["super_admin", "global_auditor"].includes(user?.role_type) && emp.id === user?.id)
+                || (emp.email && user?.email && emp.email.toLowerCase() === user.email.toLowerCase());
               return (
                 <option key={emp.id} value={emp.id}>
                   {emp.full_name}{isMe ? " (you)" : ""}{emp.department_name ? ` · ${emp.department_name}` : ""}

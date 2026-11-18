@@ -31,15 +31,18 @@ import { fmtDate } from '../lib/format';
 /** The visit day as "15 Nov 2026" — socket payloads carry it as a raw date / UTC timestamp. */
 const day = (d) => (d ? fmtDate(d) : '');
 
-// Request detail link; cross_unit_id = the request lives in another unit's DB
-const requestLink = (data) => {
+// Request detail link; cross_unit_id = the request lives in another unit's DB;
+// personal = a super admin acting as their unit employee profile
+const requestLink = (data, personal = false) => {
   const base = `/requests/${data.visit_request_id ?? ''}`;
-  return data.cross_unit_id ? `${base}?unit_id=${data.cross_unit_id}` : base;
+  return data.cross_unit_id ? `${base}?unit_id=${data.cross_unit_id}` : personal ? `${base}?personal=1` : base;
 };
 
 export default function NotificationManager() {
   const { notify, permission } = useWebNotification();
-  const { isSecurity, isReceptionist } = useAuth();
+  const { isSecurity, isReceptionist, isSuperAdmin, hasUnitProfile } = useAuth();
+  // A super admin's alerts come from their unit employee profile — open their personal pages
+  const personal = isSuperAdmin && hasUnitProfile;
 
   // Notifications allowed (now, or later from the browser's site settings) → this browser also
   // gets push, so alerts arrive while VMS is minimised / closed and on phones
@@ -67,8 +70,8 @@ export default function NotificationManager() {
     const body = isSpot
       ? `${data.visitor_name ?? 'A visitor'} is at the gate/reception waiting for your approval.`
       : `${data.visitor_name ?? 'A visitor'} has requested a visit${data.visit_date ? ` on ${day(data.visit_date)}` : ''}.`;
-    notify(title, body, makeOpts('visit-request-new', '/approvals'));
-  }, [notify]), [notify]);
+    notify(title, body, makeOpts('visit-request-new', personal ? '/my/approvals' : '/approvals'));
+  }, [notify, personal]), [notify, personal]);
 
   // ── Request approved or hosted ──────────────────────────────────────────
   // Received by: employee who initiated the visit (or employee who was hosted, or security for SPOT)
@@ -86,9 +89,9 @@ export default function NotificationManager() {
         : isSpot
           ? `${data.visitor_name ?? 'The walk-in visitor'} was approved${data.approved_by ? ` by ${data.approved_by}` : ''}${data.pass_number ? ` · Gate pass ${data.pass_number}` : ''} — they can be checked in now.`
           : `Your visit on ${day(data.visit_date)} has been approved${data.approved_by ? ` by ${data.approved_by}` : ''}${data.pass_number ? `. Gate Pass: ${data.pass_number}` : ''}.`;
-    const targetUrl = data.pass_number ? `/passes/pass/${data.pass_number}` : requestLink(data);
+    const targetUrl = data.pass_number ? `/passes/pass/${data.pass_number}${personal ? '?personal=1' : ''}` : requestLink(data, personal);
     notify(title, body, makeOpts('visit-approved', targetUrl));
-  }, [notify]), [notify]);
+  }, [notify, personal]), [notify, personal]);
 
   // ── Request rejected ────────────────────────────────────────────────────
   // Received by: employee who initiated the visit (or security for SPOT)
@@ -99,10 +102,10 @@ export default function NotificationManager() {
       ? `${data.visitor_name ?? 'The walk-in visitor'} was declined${data.remarks ? `: "${data.remarks}"` : '.'}`
       : `Your visit request was rejected${data.remarks ? `: "${data.remarks}"` : '.'}`;
     notify(title, body, {
-      ...makeOpts('visit-rejected', requestLink(data)),
+      ...makeOpts('visit-rejected', requestLink(data, personal)),
       requireInteraction: true,
     });
-  }, [notify]), [notify]);
+  }, [notify, personal]), [notify, personal]);
 
   // ── Visitor checked in ──────────────────────────────────────────────────
   // Received by: the host (their visitor arrived) + gate/security staff

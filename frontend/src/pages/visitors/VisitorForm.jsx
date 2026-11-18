@@ -9,6 +9,7 @@ import toast from "react-hot-toast";
 import { getApiErrorMessage } from "../../utils/apiError";
 import Select from "../../components/Select";
 import { PageHeader, Field } from "../../components/ui";
+import SquareCropModal from "../../components/SquareCropModal";
 
 export default function VisitorForm() {
   const navigate = useNavigate();
@@ -28,6 +29,7 @@ export default function VisitorForm() {
 
   const [photo, setPhoto] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [cropSrc, setCropSrc] = useState(null);   // photo waiting to be cropped to a square
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -36,10 +38,19 @@ export default function VisitorForm() {
 
   const handlePhotoChange = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setPhoto(file);
-      setPhotoPreview(URL.createObjectURL(file));
-    }
+    e.target.value = "";   // choosing the same file again still works
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCropSrc(String(reader.result));   // crop it to a square first
+    reader.readAsDataURL(file);
+  };
+
+  /** The square chosen in the crop → uploaded as the visitor photo. */
+  const onCropped = async (dataUrl) => {
+    setCropSrc(null);
+    const blob = await (await fetch(dataUrl)).blob();
+    setPhoto(new File([blob], "visitor-photo.jpg", { type: "image/jpeg" }));
+    setPhotoPreview(dataUrl);
   };
 
   // Reset the input too, so choosing the same file again still works
@@ -74,6 +85,7 @@ export default function VisitorForm() {
 
   return (
     <div className="animate-fade-in">
+      <SquareCropModal src={cropSrc} onDone={onCropped} onCancel={() => setCropSrc(null)} title="Crop the visitor photo" />
       <PageHeader title="Register visitor" />
 
       <form onSubmit={handleSubmit} className="max-w-[1100px]">
