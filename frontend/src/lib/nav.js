@@ -18,6 +18,8 @@ const UNIT_NAV = [
   ] },
   { group: 'Gate', items: [
     { label: 'Gate Security', to: '/gate', end: true, roles: ['security', 'receptionist', 'unit_admin'] },
+    // A host checks their own visitors in / out when security or reception isn't there
+    { label: 'Check-in / out', to: '/gate', end: true, roles: ['employee'] },
     { label: 'Spot Visits',   to: '/gate/walk-ins', roles: ['security', 'receptionist'] },
   ] },
   { group: 'Report', items: [

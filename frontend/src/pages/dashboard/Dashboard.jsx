@@ -667,7 +667,15 @@ function EmployeeDashboard() {
     <div className="animate-fade-in">
       {approvals.modal}
       <PageHeader title="Dashboard" meta={user?.unit_name}
-        actions={<button type="button" className="btn-primary" onClick={() => navigate("/requests/new")}><Plus size={14} /> New request</button>} />
+        actions={(
+          <>
+            <button type="button" className="btn-outline" onClick={() => navigate("/gate")}
+              title="Check your visitors in or out when security or reception is not available">
+              <UserCheck size={14} /> Check-in / out
+            </button>
+            <button type="button" className="btn-primary" onClick={() => navigate("/requests/new")}><Plus size={14} /> New request</button>
+          </>
+        )} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_1fr] gap-3 mb-7">
         <HeroTile label="Waiting for your approval" value={inbox.length} tone={inbox.length > 0 ? "warning" : undefined}

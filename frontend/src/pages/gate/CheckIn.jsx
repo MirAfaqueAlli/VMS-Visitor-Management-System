@@ -2,7 +2,7 @@
 // Gate check-in (DESIGN_RULES §11/§12): visit details tile on the left; on the
 // right three steps — verify the pass, photo (optional), ID — then Check in.
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import {
   Check, AlertCircle, AlertTriangle, Scan, Camera, Upload, X, RotateCcw, QrCode, Keyboard,
   CheckCircle2, ZoomIn, CreditCard, ArrowLeft, Loader2,
@@ -51,6 +51,10 @@ function offDay(request) {
 
 export default function CheckIn() {
   const { requestId } = useParams();
+  // A super admin checking in their own visitor through their unit employee profile
+  const [searchParams] = useSearchParams();
+  const personal   = searchParams.get("personal") === "1";
+  const personalQs = personal ? "?personal=1" : "";
   const navigate      = useNavigate();
   const handedPass    = useLocation().state?.verifiedPass;   // already checked by "Check in by pass"
 
@@ -90,7 +94,7 @@ export default function CheckIn() {
   const fetchRequest = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get(`/visit-requests/${requestId}`);
+      const res = await apiClient.get(`/visit-requests/${requestId}`, { params: personal ? { personal: 1 } : undefined });
       const data = res.data?.data ?? res.data;
       setRequest(data);
       // The ID taken with the request — security checks the card against it
@@ -114,7 +118,7 @@ export default function CheckIn() {
       toast.error("Failed to load visit request.");
       navigate("/requests");
     } finally { setLoading(false); }
-  }, [requestId, navigate, handedPass]);
+  }, [requestId, navigate, handedPass, personal]);
 
   useEffect(() => { fetchRequest(); }, [fetchRequest]);
 
@@ -397,11 +401,11 @@ export default function CheckIn() {
         if (formData.remarks.trim()) fd.append("remarks", formData.remarks.trim());
         const blob = await (await fetch(photoDataUrl)).blob();
         fd.append("photo", blob, "visitor_photo.jpg");
-        await apiClient.post(`/gate/checkin/${requestId}`, fd, {
+        await apiClient.post(`/gate/checkin/${requestId}${personalQs}`, fd, {
           headers: { "Content-Type": "multipart/form-data" },
         });
       } else {
-        await apiClient.post(`/gate/checkin/${requestId}`, {
+        await apiClient.post(`/gate/checkin/${requestId}${personalQs}`, {
           pass_number:        formData.pass_number.trim().toUpperCase(),
           id_verified_type:   formData.id_verified_type,
           id_verified_number: formData.id_verified_number.trim(),
@@ -409,7 +413,8 @@ export default function CheckIn() {
         });
       }
       toast.success("Checked in. The visitor is now on the premises.");
-      navigate("/gate");
+      // A super admin hosting through their unit profile has no gate page — back to the visit
+      navigate(personal ? `/requests/${requestId}?personal=1` : "/gate");
     } catch (err) {
       toast.error(getApiErrorMessage(err, "Check-in failed. Please try again."));
     } finally { setSubmitting(false); }
@@ -680,7 +685,7 @@ export default function CheckIn() {
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
               {submitting ? "Checking in…" : "Check in"}
             </button>
-            <button type="button" onClick={() => navigate("/gate")} className="btn-outline">Cancel</button>
+            <button type="button" onClick={() => navigate(personal ? `/requests/${requestId}?personal=1` : "/gate")} className="btn-outline">Cancel</button>
           </div>
         </form>
       </div>

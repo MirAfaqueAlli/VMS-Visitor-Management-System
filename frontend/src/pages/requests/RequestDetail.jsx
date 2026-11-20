@@ -4,8 +4,9 @@
 // host · visit), vendor details, companions, the timeline and the gate pass.
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2, Briefcase, Clock, ClipboardList, Calendar } from '../../components/icons';
+import { QrCode, Users, Check, X, ShieldOff, Shield, AlertTriangle, CheckCircle2, Briefcase, Clock, ClipboardList, Calendar, LogOut } from '../../components/icons';
 import { toast } from 'react-hot-toast';
+import { getApiErrorMessage } from '../../utils/apiError';
 import apiClient from '../../api/axios';
 import useAuth from '../../hooks/useAuth';
 import { PageHeader, SectionTitle, KV, Status, State, Tag, Empty, Spinner, Modal, Field, Note } from '../../components/ui';
@@ -138,6 +139,8 @@ export default function RequestDetail() {
   const [blocking, setBlocking]         = useState(false);
   const [unblockModal, setUnblockModal] = useState(false);
   const [unblocking, setUnblocking]     = useState(false);
+  const [checkoutModal, setCheckoutModal] = useState(false);
+  const [checkingOut, setCheckingOut]     = useState(false);
   const [approvalConflict, setApprovalConflict] = useState(null); // null | { visitor_name, time_window }
 
   const fetchRequest = useCallback(async () => {
@@ -238,6 +241,19 @@ export default function RequestDetail() {
     } finally { setUnblocking(false); }
   };
 
+  const handleCheckOut = async () => {
+    setCheckingOut(true);
+    try {
+      const qs = (user?.role_type || user?.role) === 'super_admin' ? '?personal=1' : '';
+      await apiClient.post(`/gate/checkout/${request.active_visit_log_id}${qs}`, { visit_log_id: request.active_visit_log_id });
+      toast.success(`${request.visitor_name || 'Visitor'} checked out.`);
+      setCheckoutModal(false);
+      fetchRequest();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Check-out failed. Please try again.'));
+    } finally { setCheckingOut(false); }
+  };
+
   if (loading) return <><PageHeader title="Visit request" /><Spinner label="Loading the request…" /></>;
   if (!request) {
     return (
@@ -268,6 +284,15 @@ export default function RequestDetail() {
                       (request.status === 'APPROVED' && request.pass_number && (isVisitor || isHost || role === 'employee'));
   const isAdmin    = !isCrossUnit && role === 'unit_admin';
   const canApprove = (isHost || isAdmin) && request.status === 'PENDING';
+  // Gate: security / reception / unit admin for any visit; an employee for visits they host
+  // (when security or reception is not around) — the API enforces the same
+  // A super admin counts as the host through their unit employee profile (?personal=1 on the gate calls)
+  const canGate     = !isCrossUnit && (['security', 'receptionist', 'unit_admin'].includes(role)
+                      || (['employee', 'super_admin'].includes(role) && isHost));
+  const gateQs      = role === 'super_admin' ? '?personal=1' : '';
+  const canCheckIn  = canGate && ['APPROVED', 'SCHEDULED'].includes(request.status) && !!request.pass_number
+                      && (request.gate_pass_status ?? 'ISSUED') === 'ISSUED' && request.visit_day === 'today';
+  const canCheckOut = canGate && !!request.active_visit_log_id;
   const isBlocked  = !!request.host_block_id;
   const canBlock   = (isHost || isAdmin) && !!request.visitor_phone;
   const companions = request.companions ?? [];
@@ -288,6 +313,17 @@ export default function RequestDetail() {
           <>
             {canViewPass && request.status === 'APPROVED' && request.pass_number && (
               <button type="button" className="btn-outline" onClick={() => navigate(passLink)}><QrCode size={14} /> Open gate pass</button>
+            )}
+            {canCheckIn && (
+              <button type="button" className="btn-primary" onClick={() => navigate(`/gate/checkin/${request.id}${gateQs}`)}
+                title="Verify the visitor's ID and let them in">
+                <Check size={14} /> Check in
+              </button>
+            )}
+            {canCheckOut && (
+              <button type="button" className="btn-primary" onClick={() => setCheckoutModal(true)}>
+                <LogOut size={14} /> Check out
+              </button>
             )}
             {canBlock && !isBlocked && (
               <button type="button" className="btn-danger" onClick={() => { setBlockModal(true); setBlockReason(''); }}
@@ -558,6 +594,25 @@ export default function RequestDetail() {
         )}
       >
         <p className="text-[12.5px] text-ink-2">They will be able to send visit requests to you again.</p>
+      </Modal>
+
+      {/* ── Check out ────────────────────────────────────────────────────────── */}
+      <Modal
+        open={checkoutModal}
+        onClose={() => setCheckoutModal(false)}
+        busy={checkingOut}
+        width={420}
+        title={`Check out ${request.visitor_name || 'the visitor'}?`}
+        footer={(
+          <>
+            <button type="button" className="btn-outline" onClick={() => setCheckoutModal(false)} disabled={checkingOut}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={handleCheckOut} disabled={checkingOut}>
+              <LogOut size={14} /> {checkingOut ? 'Checking out…' : 'Check out'}
+            </button>
+          </>
+        )}
+      >
+        <p className="text-[12.5px] text-ink-2">The gate pass and its QR code stop working as soon as the visitor is checked out.</p>
       </Modal>
     </div>
   );

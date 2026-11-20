@@ -2,18 +2,20 @@
 // Gate home (DESIGN_RULES §6/§8): who is on the premises, with direct or QR
 // check-out. The QR check-out modal lives in components/gate/QRCheckoutModal.
 import { useState, useEffect, useCallback } from "react";
-import { LogOut, QrCode, Loader2, RefreshCw, Users } from "../../components/icons";
+import { useNavigate } from "react-router-dom";
+import { LogOut, QrCode, Loader2, RefreshCw, Users, Clock, Check } from "../../components/icons";
 import apiClient from "../../api/axios";
 import toast from "react-hot-toast";
 import { getApiErrorMessage } from "../../utils/apiError";
 import useSocketEvent from "../../hooks/useSocketEvent";
+import useAuth from "../../hooks/useAuth";
 import {
   PageHeader, SectionTitle, StatStrip, Stat, Th, SkeletonRows, Empty, Field, Modal, Live,
 } from "../../components/ui";
 import useSort from "../../lib/useSort";
 import usePaged from "../../lib/usePaged";
 import Pagination from "../../components/shared/Pagination";
-import { fmtClock, relTime, orDash } from "../../lib/format";
+import { fmtClock, fmtTime, relTime, orDash } from "../../lib/format";
 import PassLookupModal from "../../components/gate/PassLookupModal";
 import QRCheckoutModal from "../../components/gate/QRCheckoutModal";
 
@@ -21,6 +23,11 @@ import QRCheckoutModal from "../../components/gate/QRCheckoutModal";
 // CheckOut — main page
 // ─────────────────────────────────────────────────────────────────────────────
 export default function CheckOut() {
+  const navigate = useNavigate();
+  const { hasRole } = useAuth();
+  // An employee works this page only for the visitors they host (the API scopes the lists
+  // and refuses anyone else's) — for when security or reception is not available
+  const isHost = hasRole("employee");
   const [activeVisitors,  setActiveVisitors]  = useState([]);
   const [approvedToday,   setApprovedToday]   = useState([]);
   const [loading,         setLoading]         = useState(true);
@@ -112,7 +119,8 @@ export default function CheckOut() {
   return (
     <div className="animate-fade-in">
       <PageHeader
-        title="Gate security"
+        title={isHost ? "Check-in / out" : "Gate security"}
+        meta={isHost ? "Your visitors, when security or reception is not available" : undefined}
         actions={(
           <>
             <button type="button" onClick={fetchGateDashboard} disabled={loading} className="btn-outline">
@@ -130,6 +138,45 @@ export default function CheckOut() {
         <Stat label="On premises" value={activeVisitors.length} unit="visitors" loading={loading} />
         <Stat label="Expected today" value={approvedToday.length} unit="not yet arrived" loading={loading} />
       </StatStrip>
+
+      {isHost && (
+        <>
+          <SectionTitle icon={Clock} title="Expected today" meta={loading ? null : `${approvedToday.length}`} />
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr><th>Visitor</th><th>Time</th><th className="text-right">Check in</th></tr></thead>
+              <tbody>
+                {loading ? (
+                  <SkeletonRows rows={2} cols={3} />
+                ) : approvedToday.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="!p-0">
+                      <Empty icon={Clock} title="No one expected today" hint="Your approved visits for today appear here." />
+                    </td>
+                  </tr>
+                ) : approvedToday.map((v) => (
+                  <tr key={v.id}>
+                    <td>
+                      <span className="font-medium">{orDash(v.visitor_name)}</span>
+                      {v.visitor_phone && <span className="tabular text-muted"> · {v.visitor_phone}</span>}
+                      <span className="cell-sub">{v.pass_number ? <span className="mono">{v.pass_number}</span> : "No gate pass yet"}</span>
+                    </td>
+                    <td className="tabular whitespace-nowrap">{v.visit_start_time ? fmtTime(v.visit_start_time) : "Any time"}</td>
+                    <td>
+                      <div className="flex justify-end">
+                        <button type="button" onClick={() => navigate(`/gate/checkin/${v.id}`)} className="btn-primary btn-sm"
+                          disabled={!v.pass_number} title={v.pass_number ? "Verify the visitor's ID and let them in" : "The gate pass has not been issued yet"}>
+                          <Check size={13} /> Check in
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       <SectionTitle icon={Users} title="On premises"
         meta={loading ? null : activeVisitors.length ? <span className="inline-flex items-center gap-2">{activeVisitors.length} inside <Live>LIVE</Live></span> : "0 inside"} />

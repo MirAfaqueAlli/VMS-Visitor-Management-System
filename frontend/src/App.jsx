@@ -10,6 +10,7 @@ import { ThemeProvider }  from "./context/ThemeContext";
 import AppLayout      from "./components/Layout/AppLayout";
 import ProtectedRoute from "./components/Layout/ProtectedRoute";
 import RouteError     from "./components/RouteError";
+import useAuth        from "./hooks/useAuth";
 import { lazyWithReload } from "./lib/chunkReload";
 
 // ── Lazy page imports — each becomes a separate JS chunk ─────────────────────
@@ -71,11 +72,20 @@ function S({ children }) {
   return <Suspense fallback={<PageLoader />}>{children}</Suspense>;
 }
 
+// ── "/" entry point: staff who are signed in go to their dashboard; everyone
+// else lands on the public visitor portal (sign-in / register for visitors).
+function RootRedirect() {
+  const { isLoading, isAuthenticated } = useAuth();
+  if (isLoading) return <PageLoader />;
+  return <Navigate to={isAuthenticated ? "/dashboard" : "/public-request"} replace />;
+}
+
 // ── Role groups ───────────────────────────────────────────────────────────────
 // super_admin oversees units (view + user/department setup) and, when joined to a
 // unit from their Profile page, can also create requests and approve as its employee.
 const ADMIN_ROLES    = ["super_admin", "unit_admin"];
-const GATE_ROLES     = ["security", "receptionist", "unit_admin"];
+// Employees can check in / out the visitors they host (the API enforces "their own")
+const GATE_ROLES     = ["security", "receptionist", "unit_admin", "employee"];
 const APPROVAL_ROLES = ["super_admin", "unit_admin", "employee"];
 const REPORT_ROLES   = ["unit_admin", "unit_auditor", "global_auditor", "super_admin"];
 const CREATE_ROLES   = ["super_admin", "unit_admin", "employee", "security", "receptionist"];
@@ -86,7 +96,8 @@ const router = createBrowserRouter([
     errorElement: <RouteError />,
     children: [
       // ── Public pages ────────────────────────────────────────────────────────────
-      { path: "/setup",           element: <S><Setup /></S> },
+      { index: true,              element: <RootRedirect /> },
+      { path: "/setup",          element: <S><Setup /></S> },
       { path: "/login",           element: <S><Login /></S> },
       { path: "/login/:unitCode", element: <S><Login /></S> },
       { path: "/register",        element: <S><RegisterOrganization /></S> },
@@ -104,7 +115,6 @@ const router = createBrowserRouter([
           {
             element: <AppLayout />,
             children: [
-              { index: true,            element: <Navigate to="/dashboard" replace /> },
               { path: "dashboard",      element: <S><Dashboard /></S> },
               { path: "unit-dashboard", element: <S><UnitDashboard /></S> },
               { path: "profile",        element: <S><Profile /></S> },
@@ -156,12 +166,25 @@ const router = createBrowserRouter([
               // Gate
               {
                 path: "gate",
-                element: <ProtectedRoute roles={GATE_ROLES} />,
                 children: [
-                  { index: true,                element: <S><CheckOut /></S> },
-                  { path: "checkin/:requestId", element: <S><CheckIn /></S> },
-                  { path: "walk-ins",           element: <S><MyWalkIns /></S> },
-                  { path: "pass/:passNumber",   element: <S><GatePass /></S> },
+                  {
+                    element: <ProtectedRoute roles={GATE_ROLES} />,
+                    children: [
+                      { index: true,              element: <S><CheckOut /></S> },
+                      {
+                        path: "walk-ins",
+                        element: <ProtectedRoute roles={["security", "receptionist", "unit_admin"]} />,
+                        children: [{ index: true, element: <S><MyWalkIns /></S> }],
+                      },
+                      { path: "pass/:passNumber", element: <S><GatePass /></S> },
+                    ],
+                  },
+                  // A super admin may check in a visitor they host (through their unit employee profile)
+                  {
+                    path: "checkin/:requestId",
+                    element: <ProtectedRoute roles={[...GATE_ROLES, "super_admin"]} />,
+                    children: [{ index: true, element: <S><CheckIn /></S> }],
+                  },
                 ],
               },
 

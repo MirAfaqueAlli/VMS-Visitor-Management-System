@@ -1144,8 +1144,21 @@ const getRequest = async (req, res) => {
         }
       } catch (_) { /* summary only */ }
     }
+    // The visitor inside right now (for the page's Check out button and timeline)
+    let activeLog = null;
+    if (!crossUnitId) {
+      const [[log]] = await db.query(
+        `SELECT vl.id, vl.check_in_at, u.full_name AS checked_in_by_name
+           FROM visit_logs vl LEFT JOIN users u ON u.id = vl.checked_in_by
+          WHERE vl.visit_request_id = ? AND vl.status = 'ACTIVE' ORDER BY vl.id DESC LIMIT 1`, [id]
+      );
+      activeLog = log || null;
+    }
     return sendSuccess(res, {
       ...request,
+      active_visit_log_id: activeLog?.id ?? null,
+      checked_in_at: request.checked_in_at ?? activeLog?.check_in_at ?? null,
+      checked_in_by_name: request.checked_in_by_name ?? activeLog?.checked_in_by_name ?? null,
       my_role: isHost ? 'HOST' : 'VISITOR',
       // The visitor's ID proof and photo on record (request → portal profile → last visit):
       // the ID full for the gate / admins, masked for others

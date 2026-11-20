@@ -17,15 +17,21 @@ const { squarePhoto }            = require('../utils/photo.util');
 const { formatDate }             = require('../utils/displayFormat.util');
 
 
+// An employee may run the gate only for visitors they host — when security or
+// reception is not around. Every other gate role works for the whole unit.
+const isEmployee = (user) => user?.role_type === 'employee';
+const notHostOf = (user, hostUserId) => isEmployee(user) && String(hostUserId) !== String(user.id);
+const NOT_YOUR_VISITOR = 'You can check in or check out only visitors you are hosting.';
+
 // ── getDashboard ──────────────────────────────────────────────────────────────
 const getDashboard = async (req, res) => {
   try {
     // Employees see only visits they host; every other role allowed on this route
     // (admins, gate staff, auditors) sees the whole unit. Parameterised — previously
     // department_id was pasted into the SQL and became NaN (crash) for users without one.
-    const isEmployee  = req.user.role_type === 'employee';
-    const scopeSql    = isEmployee ? ' AND vr.host_user_id = ? ' : '';
-    const scopeParams = isEmployee ? [req.user.id] : [];
+    const hostOnly    = isEmployee(req.user);
+    const scopeSql    = hostOnly ? ' AND vr.host_user_id = ? ' : '';
+    const scopeParams = hostOnly ? [req.user.id] : [];
 
     const [
       [yetToCome],
@@ -178,6 +184,11 @@ const checkIn = async (req, res) => {
 
     const request = vrRows[0];
 
+    if (notHostOf(req.user, request.host_user_id)) {
+      conn.release();
+      return sendError(res, NOT_YOUR_VISITOR, 403);
+    }
+
     // An ID already on record (request, portal profile or an earlier visit) is what the
     // card is checked against — the gate can't replace it, only enter one when there is none
     const onRecord = await visitorOnRecord(req.db, request);
@@ -223,7 +234,8 @@ const checkIn = async (req, res) => {
     }
 
     // Department isolation — non-admin security/receptionist sees only their dept
-    if (!isSuperAdmin(req.user) && !isUnitAdmin(req.user)) {
+    // (a host employee was already checked above: it is their own visitor)
+    if (!isSuperAdmin(req.user) && !isUnitAdmin(req.user) && !isEmployee(req.user)) {
       if (req.user.department_id && request.department_id !== req.user.department_id) {
         conn.release();
         return sendError(res, 'Access denied. This visit belongs to a different department.', 403);
@@ -563,13 +575,16 @@ const checkOut = async (req, res) => {
     let logRows;
     if (visit_log_id) {
       [logRows] = await req.db.query(
-        "SELECT * FROM visit_logs WHERE id = ? AND status = 'ACTIVE'",
+        `SELECT vl.*, vr.host_user_id FROM visit_logs vl
+         JOIN visit_requests vr ON vr.id = vl.visit_request_id
+         WHERE vl.id = ? AND vl.status = 'ACTIVE'`,
         [visit_log_id]
       );
     } else {
       [logRows] = await req.db.query(
-        `SELECT vl.* FROM visit_logs vl
+        `SELECT vl.*, vr.host_user_id FROM visit_logs vl
          JOIN gate_passes gp ON gp.id = vl.gate_pass_id
+         JOIN visit_requests vr ON vr.id = vl.visit_request_id
          WHERE gp.pass_number = ? AND vl.status = 'ACTIVE'`,
         [pass_number]
       );
@@ -580,6 +595,7 @@ const checkOut = async (req, res) => {
     }
 
     const visitLog       = logRows[0];
+    if (notHostOf(req.user, visitLog.host_user_id)) return sendError(res, NOT_YOUR_VISITOR, 403);
     const checkOutTime   = new Date();
     const checkInTime    = new Date(visitLog.check_in_at);
     const visitRequestId = visitLog.visit_request_id;
@@ -824,7 +840,7 @@ const checkOutByQR = async (req, res) => {
     }
 
     const [passRows] = await req.db.query(
-      `SELECT gp.*, vr.id AS visit_request_id
+      `SELECT gp.*, vr.id AS visit_request_id, vr.host_user_id
        FROM gate_passes gp
        JOIN visit_requests vr ON vr.id = gp.visit_request_id
        WHERE gp.pass_number = ? AND gp.status = 'USED'
@@ -837,6 +853,7 @@ const checkOutByQR = async (req, res) => {
     }
 
     const gatePass = passRows[0];
+    if (notHostOf(req.user, gatePass.host_user_id)) return sendError(res, NOT_YOUR_VISITOR, 403);
 
     // ── 2. Validate QR is within its 24-hour validity window ──────────────────
     if (!gatePass.qr_expires_at || new Date() > new Date(gatePass.qr_expires_at)) {
@@ -999,7 +1016,7 @@ const lookupPass = async (req, res) => {
     }
 
     const [rows] = await req.db.query(
-      `SELECT vr.id, vr.status, vr.visit_date, vr.visit_start_time, vr.visit_category,
+      `SELECT vr.id, vr.host_user_id, vr.status, vr.visit_date, vr.visit_start_time, vr.visit_category,
               COALESCE(vr.visitor_name, vr.company_name) AS visitor_name, vr.company_name,
               gp.pass_number, gp.status AS pass_status, h.full_name AS host_name,
               (SELECT vl.status FROM visit_logs vl WHERE vl.visit_request_id = vr.id ORDER BY vl.id DESC LIMIT 1) AS log_status,
@@ -1013,6 +1030,7 @@ const lookupPass = async (req, res) => {
     if (!rows.length) return sendError(res, `No gate pass ${passNumber} was issued in this unit.`, 404);
 
     const v = rows[0];
+    if (notHostOf(req.user, v.host_user_id)) return sendError(res, NOT_YOUR_VISITOR, 403);
     const date = formatDate(v.visit_date);
     const day = visitDay(v.visit_date);
     let verdict = 'ok';
